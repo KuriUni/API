@@ -1,0 +1,112 @@
+<!doctype html>
+    <html lang="ja">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+        <meta name="theme-color" content="#f3f7f8">
+        <meta name="description" content="TUTI License API v2 の端末認証・セッション管理ガイド">
+        <title>ライセンスAPI v2 ガイド | TUTI LICENSE</title>
+        <style>
+            :root{color-scheme:light;--ink:#142b35;--muted:#617780;--line:#dce7e8;--paper:#fff;--wash:#f3f7f8;--brand:#087e74;--brand-dark:#06675f;--soft:#e8f5f3}
+            *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--wash);color:var(--ink);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Kaku Gothic ProN",Meiryo,sans-serif;line-height:1.65;-webkit-font-smoothing:antialiased}
+            .wrap{width:min(100% - 36px,1040px);margin:0 auto;padding:28px 0 60px}.topline{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;font-weight:700;letter-spacing:.04em}.mark{display:grid;place-items:center;width:34px;height:34px;border-radius:11px;background:linear-gradient(145deg,#38b8a5,var(--brand));color:#fff;font-weight:900}.topline small{display:block;color:#8b9da3;font-size:9px;letter-spacing:.14em}
+            .hero{position:relative;overflow:hidden;margin:22px 0 16px;padding:clamp(24px,5vw,48px);border-radius:24px;background:linear-gradient(120deg,#102c38,#164d55 70%,#087e74);color:white;box-shadow:0 18px 48px #10354020}.hero:after{content:"";position:absolute;width:280px;height:280px;right:-65px;top:-130px;border:1px solid #ffffff28;border-radius:50%;box-shadow:0 0 0 32px #ffffff09,0 0 0 68px #ffffff06}.eyebrow{margin:0 0 9px;color:#a8e6db;font-size:10px;font-weight:850;letter-spacing:.16em}.hero h1{position:relative;z-index:1;margin:0;font-size:clamp(27px,5vw,42px);line-height:1.2;letter-spacing:-.04em}.hero p{position:relative;z-index:1;max-width:680px;margin:13px 0 0;color:#d1e4e5;font-size:14px}.version{display:inline-flex;align-items:center;margin-top:20px;padding:5px 10px;border:1px solid #ffffff35;border-radius:999px;color:#e8fffa;font-size:10px;font-weight:750;letter-spacing:.08em}
+            .flow{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0 30px}.flow-item{display:flex;align-items:center;gap:11px;min-width:0;padding:13px 15px;border:1px solid var(--line);border-radius:14px;background:#ffffffc9}.flow-item b{display:block;font-size:12px}.flow-item small{display:block;color:var(--muted);font-size:10px}.flow-num{flex:none;display:grid;place-items:center;width:29px;height:29px;border-radius:9px;background:var(--soft);color:var(--brand-dark);font-size:12px;font-weight:850}
+            .section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:15px;margin:30px 2px 12px}.section-head h2{margin:0;font-size:19px;letter-spacing:-.025em}.section-head p{margin:3px 0 0;color:var(--muted);font-size:12px}.endpoint-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}.endpoint{min-width:0;padding:19px;border:1px solid var(--line);border-radius:17px;background:var(--paper);box-shadow:0 5px 18px #15333c08}.endpoint-head{display:flex;align-items:center;gap:9px;margin-bottom:11px}.method{padding:4px 7px;border-radius:6px;background:var(--soft);color:var(--brand-dark);font:800 9px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em}.endpoint h3{margin:0;font-size:15px}.endpoint-path{display:block;overflow-wrap:anywhere;margin:0 0 10px;color:#31525a;font:600 11px ui-monospace,SFMono-Regular,Menlo,monospace}.endpoint p{margin:0 0 12px;color:var(--muted);font-size:11px}.fields{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 13px;padding:0;list-style:none}.fields li{padding:4px 7px;border:1px solid #e5eded;border-radius:7px;color:#526870;background:#fafcfc;font:600 9px ui-monospace,SFMono-Regular,Menlo,monospace}.fields li.required{border-color:#b8e4dc;background:#f0faf8;color:var(--brand-dark)}details{border-top:1px solid #edf1f2;padding-top:10px}summary{color:var(--brand-dark);font-size:10px;font-weight:750;cursor:pointer}pre{overflow:auto;margin:10px 0 0;padding:13px;border:1px solid #203d44;border-radius:11px;background:#10232a;color:#d9f1ec;font:11px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;tab-size:2}.note{display:flex;gap:11px;margin-top:17px;padding:15px 16px;border:1px solid #d6e9e5;border-radius:14px;background:#f2faf8}.note-icon{flex:none;display:grid;place-items:center;width:25px;height:25px;border-radius:8px;background:#ddf1ec;color:var(--brand-dark);font-weight:900}.note p{margin:0;color:#506971;font-size:11px}.note b{color:var(--ink)}footer{margin-top:27px;padding-top:16px;border-top:1px solid var(--line);color:#84979d;font-size:10px}a{color:var(--brand-dark)}:focus-visible{outline:3px solid #0a887c66;outline-offset:3px}
+            .quickstart label{display:inline-block;margin:8px 8px 4px 0;font-size:12px;font-weight:700}.quickstart input:not([type=checkbox]),.quickstart select{display:block;width:min(100%,420px);padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink);font:inherit}.quickstart input[type=checkbox]{width:18px;height:18px;vertical-align:middle}.quickstart .actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.quickstart button{padding:10px 13px;border:0;border-radius:9px;background:var(--brand);color:#fff;font-weight:750;cursor:pointer}.quickstart button:focus-visible{outline:3px solid #0a887c66;outline-offset:3px}.quickstart #builder-result{white-space:pre-wrap;overflow-wrap:anywhere}.quickstart{margin:18px 0 28px;padding:clamp(17px,3vw,25px);border:1px solid #b9ded8;border-radius:18px;background:linear-gradient(135deg,#fff,#f1faf8)}.quickstart h2{margin:0;font-size:18px}.quickstart>p{margin:5px 0 16px;color:var(--muted);font-size:12px}.quicksteps{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:0 0 15px;padding:0;list-style:none;counter-reset:step}.quicksteps li{padding:11px;border-radius:11px;background:#fff;border:1px solid var(--line);font-size:11px}.quicksteps b{display:block;margin-bottom:2px}.quick-command{margin-top:10px}.quick-command h3{margin:0 0 6px;font-size:12px}.quickstart pre{margin-top:6px}.quickstart .hint{margin:10px 0 0;color:var(--muted);font-size:11px}.quickstart .hint strong{color:var(--ink)}
+            @media(max-width:680px){.wrap{width:min(100% - 26px,1040px);padding-top:17px}.hero{border-radius:18px}.flow{grid-template-columns:1fr;gap:7px;margin-bottom:24px}.flow-item{padding:10px 12px}.endpoint-grid{grid-template-columns:1fr}.endpoint{padding:16px}.section-head{display:block}.section-head p{margin-top:4px}.quicksteps{grid-template-columns:1fr}}
+            @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+        </style>
+            <link rel="stylesheet" href="api-guide.css?v=20261020-modern-2">
+    </head>
+    <body>
+        <main class="wrap">
+            <div class="topline"><span class="mark" aria-hidden="true">T</span><span>TUTI LICENSE<small>DEVELOPER API</small></span></div>
+            <section class="hero" aria-labelledby="page-title">
+                <p class="eyebrow">LICENSE OPERATIONS</p>
+                <h1 id="page-title">ライセンスAPI v2</h1>
+                <p>ライセンスキーで端末を認証し、端末単位のセッションを管理するAPIです。認証後はアクセストークンを使って状態を確認し、更新トークンでセッションを更新します。</p>
+                <span class="version">REST API · v2.0</span>
+            </section>
+            <section class="flow" aria-label="基本的な利用手順">
+                <div class="flow-item"><span class="flow-num">1</span><span><b>端末を認証</b><small>ライセンスキーと端末識別子を送信</small></span></div>
+                <div class="flow-item"><span class="flow-num">2</span><span><b>セッションを確認</b><small>アクセストークンで利用状態を確認</small></span></div>
+                <div class="flow-item"><span class="flow-num">3</span><span><b>セッションを更新</b><small>更新トークンで継続利用</small></span></div>
+            </section>
+            <section class="quickstart" aria-labelledby="quickstart-title">
+                <h2 id="quickstart-title">まずはMacの「ターミナル」で認証を試す</h2>
+                <p>JSONをどこかの画面に貼るのではなく、下のコマンドをターミナルへ貼り付けてAPIへ送信します。実際のライセンスキーに置き換えてください。</p>
+                <ol class="quicksteps">
+                    <li><b>1. ターミナルを開く</b>Macの「アプリケーション」→「ユーティリティ」→「ターミナル」</li>
+                    <li><b>2. 値を置き換える</b><code>license_key</code>を発行済みキーに変更。端末ごとに同じ<code>device_fingerprint</code>を使います。</li>
+                    <li><b>3. 実行して結果を見る</b>コマンドを貼り付けてReturn。成功すると<code>success: true</code>とセッション情報が返ります。</li>
+                </ol>
+                <div class="quick-command"><h3>送信内容（URL・POST・JSONヘッダー・本文を指定済み）</h3><pre><code>curl -sS -X POST 'https://2415.jp/license/api/v2/activate.php' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "api_action": "activate",
+    "license_key": "ここを発行済みライセンスキーに置き換える",
+    "device_fingerprint": "PC-001-UNIQUE-ID",
+    "device_label": "PC-001",
+    "app_version": "1.0.0"
+  }'</code></pre></div>
+                <p class="hint"><strong>成功後:</strong> 応答の<code>session.access_token</code>は状態確認に、<code>session.refresh_token</code>はセッション更新に使います。実際のトークンは他人に見せないでください。APIクライアントへ組み込む場合は、次の各操作のJSON本文を同じURLへPOSTします。</p>
+            </section>
+            <section class="quickstart" id="request-builder" aria-labelledby="builder-title"><h2 id="builder-title">リクエストを作成・送信</h2><p>値を入力するとJSON本文を作成します。送信先はこのテストサイトです。テスト用DBが未設定のため、現在は書き込み操作が拒否されます。</p><label for="builder-action">操作</label> <select id="builder-action"><option value="activate">端末を認証</option><option value="verify">セッションを確認</option><option value="refresh">セッションを更新</option><option value="deactivate">端末を解除</option></select><div id="builder-fields" class="quicksteps"></div><p><label><input id="builder-live" type="checkbox"> このテストサイトへ送信することを理解しました</label></p><div class="actions"><button id="builder-copy" type="button">JSONをコピー</button><button id="builder-curl-copy" type="button">curlをコピー</button><button id="builder-send" type="button">APIへ送信</button></div><pre id="builder-curl" aria-live="polite"></pre><pre id="builder-json" aria-live="polite"></pre><pre id="builder-result" aria-live="polite">送信結果はここに表示されます。</pre><p><b>このタブの直近API履歴</b>（入力内容やトークンは保存しません）</p><ol id="builder-history"></ol></section>
+            <script>
+            (()=>{const defs={activate:['license_key','device_fingerprint','device_label','app_version'],verify:['access_token','device_fingerprint'],refresh:['refresh_token','device_fingerprint'],deactivate:['refresh_token','device_fingerprint']};const names={license_key:'ライセンスキー',device_fingerprint:'端末識別子',device_label:'端末名',app_version:'アプリ版',access_token:'アクセストークン',refresh_token:'更新トークン'};const action=document.querySelector('#builder-action'),fields=document.querySelector('#builder-fields'),preview=document.querySelector('#builder-json'),result=document.querySelector('#builder-result');let values={device_fingerprint:'PC-001-UNIQUE-ID',device_label:'PC-001',app_version:'1.0.0'};const history=document.querySelector('#builder-history');function record(status,body){let data={};try{data=JSON.parse(body)}catch{}const row={time:new Date().toLocaleTimeString(),action:action.value,status,error_id:typeof data.error_id==='string'?data.error_id:'',error_code:typeof data.error_code==='string'?data.error_code:''};let items=[];try{items=JSON.parse(sessionStorage.getItem('tuti-api-history')||'[]')}catch{}items.unshift(row);items=items.slice(0,5);try{sessionStorage.setItem('tuti-api-history',JSON.stringify(items))}catch{}history.textContent='';for(const item of items){const li=document.createElement('li');li.textContent=item.time+' · '+item.action+' · HTTP '+item.status+(item.error_code?' · '+item.error_code:'')+(item.error_id?' · error_id '+item.error_id:'');history.append(li)}}function historyLoad(){try{for(const item of JSON.parse(sessionStorage.getItem('tuti-api-history')||'[]')){const li=document.createElement('li');li.textContent=item.time+' · '+item.action+' · HTTP '+item.status+(item.error_code?' · '+item.error_code:'')+(item.error_id?' · error_id '+item.error_id:'');history.append(li)}}catch{}}historyLoad();function render(){fields.replaceChildren();for(const key of defs[action.value]){const label=document.createElement('label');label.textContent=names[key]||key;const input=document.createElement('input');input.type=key.includes('token')||key==='license_key'?'password':'text';input.autocomplete='off';input.placeholder=names[key]||key;input.value=values[key]||'';input.addEventListener('input',()=>{values[key]=input.value;update()});label.append(input);fields.append(label)}update()}function payload(){const out={api_action:action.value};for(const key of defs[action.value])if(values[key])out[key]=values[key];return out}function update(){const body=JSON.stringify(payload(),null,2);preview.textContent=body;const escaped=body.replace(/'/g,"'\\''");document.querySelector('#builder-curl').textContent="curl -sS -X POST '"+location.origin+location.pathname+"' -H 'Content-Type: application/json' -d '"+escaped+"'"}action.addEventListener('change',render);document.querySelector('#builder-copy').addEventListener('click',async()=>{await navigator.clipboard.writeText(JSON.stringify(payload(),null,2));result.textContent='JSON本文をコピーしました。'});document.querySelector('#builder-curl-copy').addEventListener('click',async()=>{await navigator.clipboard.writeText(document.querySelector('#builder-curl').textContent);result.textContent='curlコマンドをコピーしました。'});document.querySelector('#builder-send').addEventListener('click',async()=>{if(!document.querySelector('#builder-live').checked){result.textContent='送信前に確認欄へチェックしてください。';return}if(!confirm('テスト用APIへ送信します。テスト用DBが未設定のため、現在は書き込み操作が拒否されます。続けますか？'))return;result.textContent='送信中…';try{const response=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload())});const body=await response.text();let formatted=body;try{formatted=JSON.stringify(JSON.parse(body),null,2)}catch{}record(response.status,body);let advice='';try{const parsed=JSON.parse(body);const code=String(parsed.error_code||parsed.error||'');if(code==='RATE_LIMITED'||response.status===429)advice='\n短時間に繰り返し送信せず、時間をおいてから再試行してください。';else if(response.status===401||response.status===403)advice='\n認証情報、ライセンス状態、必要な権限を確認してください。';else if(response.status>=500)advice='\nサーバー側の一時障害の可能性があります。error_idを控えて管理者へ共有してください。';else if(response.status>=400)advice='\n入力項目と形式を確認してください。';if(parsed.error_id)advice+='\nエラー診断ID: '+parsed.error_id}catch{}result.textContent='HTTP '+response.status+advice+'\n'+formatted}catch(error){result.textContent='通信エラー: '+error.message}});render()})();
+            </script>
+            <div class="section-head"><div><h2>操作とリクエスト項目</h2><p>すべて同じエンドポイントへPOSTします。Content-Typeはapplication/jsonです。</p></div></div>
+            <section class="endpoint-grid" aria-label="API操作一覧">
+                <article class="endpoint">
+                    <div class="endpoint-head"><span class="method">POST</span><h3>端末を認証</h3></div>
+                    <code class="endpoint-path">/license/api/v2/activate.php</code>
+                    <p>ライセンスと端末を紐づけ、アクセストークンと更新トークンを発行します。</p>
+                    <ul class="fields"><li class="required">api_action: activate</li><li class="required">license_key</li><li class="required">device_fingerprint</li><li>device_label</li><li>app_version</li></ul>
+                    <details><summary>JSONリクエスト例を表示</summary><pre><code>{
+  "api_action": "activate",
+  "license_key": "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX",
+  "device_fingerprint": "stable-device-id",
+  "device_label": "PC-001",
+  "app_version": "1.0.0"
+}</code></pre></details>
+                </article>
+                <article class="endpoint">
+                    <div class="endpoint-head"><span class="method">POST</span><h3>セッションを確認</h3></div>
+                    <code class="endpoint-path">/license/api/v2/activate.php</code>
+                    <p>アクセストークンと端末識別子を使って、セッションとライセンス状態を確認します。</p>
+                    <ul class="fields"><li class="required">api_action: verify</li><li class="required">access_token</li><li class="required">device_fingerprint</li></ul>
+                    <details><summary>JSONリクエスト例を表示</summary><pre><code>{
+  "api_action": "verify",
+  "access_token": "ACCESS_TOKEN",
+  "device_fingerprint": "stable-device-id"
+}</code></pre></details>
+                </article>
+                <article class="endpoint">
+                    <div class="endpoint-head"><span class="method">POST</span><h3>セッションを更新</h3></div>
+                    <code class="endpoint-path">/license/api/v2/activate.php</code>
+                    <p>更新トークンでセッションを更新します。認証時と同じ端末識別子が必要です。</p>
+                    <ul class="fields"><li class="required">api_action: refresh</li><li class="required">refresh_token</li><li class="required">device_fingerprint</li></ul>
+                    <details><summary>JSONリクエスト例を表示</summary><pre><code>{
+  "api_action": "refresh",
+  "refresh_token": "REFRESH_TOKEN",
+  "device_fingerprint": "stable-device-id"
+}</code></pre></details>
+                </article>
+                <article class="endpoint">
+                    <div class="endpoint-head"><span class="method">POST</span><h3>端末を解除</h3></div>
+                    <code class="endpoint-path">/license/api/v2/activate.php</code>
+                    <p>対象の端末セッションを解除します。認証済みの更新トークンと端末識別子、またはライセンスキーと端末IDで指定できます。</p>
+                    <ul class="fields"><li class="required">api_action: deactivate</li><li>refresh_token + device_fingerprint</li><li>license_key + device_id</li></ul>
+                    <details><summary>ライセンスキーと端末IDを使う例</summary><pre><code>{
+  "api_action": "deactivate",
+  "license_key": "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX",
+  "device_id": 123
+}</code></pre></details>
+                </article>
+            </section>
+            <aside class="note"><span class="note-icon" aria-hidden="true">i</span><p><b>トークンの取り扱い</b><br>アクセストークンと更新トークンは認証情報です。平文ログや共有ストレージへ保存せず、安全な端末ストレージで管理してください。旧 <code>/license/api/activate.php</code> もこのv2処理へ転送されます。</p></aside>
+            <footer>TUTI LICENSE · APIリクエストと応答はJSON形式です。</footer>
+        </main>
+    </body>
+    </html>

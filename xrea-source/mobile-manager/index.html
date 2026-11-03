@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f3f7f7">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>TUTI BaaS | モバイル管理</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="app.css?v=20261022-sso-only-1">
+  <link rel="stylesheet" href="refresh.css?v=20261020-modern-2">
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="#home" aria-label="ホーム"><span class="brand-mark">T</span><span>TUTI <b>BAAS</b></span></a><button id="refresh" class="icon-button" aria-label="画面を更新" title="更新">↻</button></header>
+  <main>
+    <section id="home" class="view active">
+      <div class="eyebrow">TUTI BAAS · WORKSPACE</div><h1>ワークスペース</h1><p class="muted" id="tenant-name">APIに接続して利用状況を確認</p>
+      <div class="hero"><div><span class="eyebrow light">現在の接続</span><h2 id="connection-state">未接続</h2><span id="environment" class="pill">接続設定が必要です</span></div><div class="hero-orb" aria-hidden="true">✦</div></div>
+      <div class="section-title"><h2>利用状況</h2><button class="text-button" data-action="refresh">更新</button></div>
+      <div class="stats"><article class="stat"><span>製品</span><strong id="products-count">—</strong><small>登録済み</small></article><article class="stat"><span>ライセンス</span><strong id="licenses-count">—</strong><small>発行済み</small></article><article class="stat"><span>有効</span><strong id="active-count">—</strong><small>利用可能</small></article></div>
+      <div class="section-title"><h2>よく使う操作</h2></div>
+      <div class="home-actions">
+        <button class="quick-card home-action" data-page="licenses"><span class="quick-icon violet" aria-hidden="true">⌕</span><span><b>ライセンスを探す</b><small>ラベル・IDから検索して状態を確認</small></span><span class="arrow" aria-hidden="true">›</span></button>
+        <button class="quick-card home-action" data-page="products"><span class="quick-icon cyan" aria-hidden="true">▦</span><span><b>製品を確認</b><small>テナントに登録された製品一覧</small></span><span class="arrow" aria-hidden="true">›</span></button>
+        
+        <a id="sso-admin-login" class="quick-card admin-card home-action" href="https://2415.jp/license/admin_api.php?admin_sso_start=1&amp;target=mobile"><span class="quick-icon admin-icon" aria-hidden="true">↗</span><span><b>SSO IDで管理者ログイン</b><small>sso.2415.jp のIDで本人確認</small></span><span class="arrow" aria-hidden="true">›</span></a>
+        <a class="quick-card admin-card home-action" href="https://sso.2415.jp/recover"><span class="quick-icon admin-icon" aria-hidden="true">?</span><span><b>SSO ID・パスキーを再設定</b><small>復旧キーとメール認証で再設定</small></span><span class="arrow" aria-hidden="true">›</span></a>
+        <button class="quick-card home-action" data-page="settings"><span class="quick-icon cyan" aria-hidden="true">⚙</span><span><b>接続を設定</b><small>API URL・環境・テナントキーを管理</small></span><span class="arrow" aria-hidden="true">›</span></button>
+      </div>
+    </section>
+    <section id="products" class="view"><div class="eyebrow">CATALOG</div><h1>製品</h1><p class="muted">接続中のテナントに登録された製品</p><label class="search"><span aria-hidden="true">⌕</span><input id="product-search" type="search" placeholder="製品名・コードで検索"></label><div id="product-list" class="list"></div><button id="products-more" class="more hidden">さらに読み込む</button></section>
+    <section id="licenses" class="view"><div class="eyebrow">LICENSES</div><h1>ライセンス</h1><p class="muted">検索と有効状態の確認</p><form id="license-search-form" class="search"><span>⌕</span><input id="license-search" type="search" placeholder="ラベルまたはライセンスID"><button aria-label="検索">検索</button></form><div id="license-list" class="list"></div><button id="licenses-more" class="more hidden">さらに読み込む</button></section>
+    <section id="settings" class="view"><div class="eyebrow">CONNECTION</div><h1>接続設定</h1><p class="muted">キーはこのブラウザーのメモリーだけに保持されます。</p><form id="settings-form" class="form-card"><label>API Base URL<input id="base-url" type="url" placeholder="https://example.com/api/baas/v1" required autocomplete="url"></label><label>環境<select id="env"><option value="production">Production</option><option value="sandbox">Sandbox</option></select></label><label>テナント API キー<input id="api-key" type="password" placeholder="baas_prod_…" required autocomplete="off" autocapitalize="none" spellcheck="false"></label><button class="primary">接続して保存</button><button id="disconnect" type="button" class="secondary">切断してキーを消去</button></form><p class="security-note">HTTPS接続を使用してください。キーはページを閉じると消去されます。ホーム画面への追加後も、API通信にはインターネット接続が必要です。</p></section>
+    <section id="admin" class="view"><div class="eyebrow">ADMIN MODE · SSO</div><div class="admin-heading"><div><h1>管理者ワークスペース</h1><p id="admin-session-status" class="muted">SSO ID・Passkeyで安全に管理 · セッションは30分無操作で終了</p></div><div><a id="admin-sso-account" class="small-button hidden" href="https://sso.2415.jp/account" target="_blank" rel="noopener">SSO ID・端末管理</a><button id="admin-logout" class="small-button">ログアウト</button></div></div><label class="form-card">操作するテナント<select id="admin-tenant-picker"><option value="">テナントを選択</option></select></label><section id="admin-tenant-summary" class="form-card admin-tenant-summary" aria-live="polite"><p id="admin-tenant-details" class="security-note">テナントを選ぶと契約と利用状況を表示します。</p><p id="admin-tenant-impact" class="security-note">停止するとテナントAPIキーも停止します。再開時は失効していないキーが再有効化されます。</p><button id="admin-tenant-toggle" type="button" class="secondary hidden">テナントを停止</button></section>
+      <nav class="admin-tools-nav" aria-label="管理機能"><button class="active" type="button" data-admin-panel="licenses" aria-pressed="true">ライセンス</button><button type="button" data-admin-panel="billing" aria-pressed="false">請求書</button><button type="button" data-admin-panel="tenants" aria-pressed="false">テナント</button></nav>
+      <div id="admin-panel-billing" class="admin-panel">
+      <div class="section-title"><h2>請求書を作成・管理</h2><button id="admin-invoice-refresh" class="text-button" type="button">更新</button></div>
+      <p id="invoice-mode-note" class="security-note">管理者がテナント別に請求書を作成・発行します。発行後は契約者ポータルに表示されます。</p>
+      <form id="admin-invoice-form" class="form-card invoice-form">
+        <label>請求先テナント<select id="invoice-tenant" required><option value="">読み込み中…</option></select></label>
+        <label>対象月<input id="invoice-period" type="month" required></label>
+        <div class="invoice-form-pair"><label>発行日<input id="invoice-issue-date" type="date" required></label><label>支払期限<input id="invoice-due-date" type="date" required></label></div>
+        <label>請求先名<input id="invoice-customer" maxlength="160" required></label>
+        <label>発行者名<input id="invoice-issuer" maxlength="160" value="TUTI License" required></label>
+        <label>適格請求書発行事業者登録番号<input id="invoice-registration" maxlength="32" placeholder="任意"></label>
+        <div class="invoice-form-pair"><label>消費税率（%）<input id="invoice-tax" type="number" min="0" max="100" step="0.01" value="10" required></label><label>調整額（円）<input id="invoice-adjustment" type="number" min="-999999999" max="999999999" step="0.001" value="0" required></label></div>
+        <label>備考<textarea id="invoice-notes" maxlength="2000" rows="3"></textarea></label>
+        <div class="invoice-buttons"><button id="invoice-preview" type="button" class="secondary">内容をプレビュー</button><button id="invoice-draft" type="button" class="secondary">下書き保存</button><button id="invoice-issue" type="button" class="primary">確定して発行</button></div>
+        <div id="invoice-preview-result" class="invoice-preview hidden" aria-live="polite"></div>
+      </form>
+      <div class="section-title"><h2>請求書の履歴</h2></div><div id="admin-invoice-list" class="list"><div class="empty">請求書を読み込んでいます…</div></div>
+      </div>
+      <div id="admin-panel-tenants" class="admin-panel">
+      <div class="section-title"><h2>新しいテナントを登録</h2></div>
+      <form id="admin-create-tenant" class="form-card">
+        <label>テナント名<input id="new-tenant-name" name="name" maxlength="160" required autocomplete="organization" placeholder="例：サンプル株式会社"></label>
+        <label>テナントID（slug）<input id="new-tenant-slug" name="slug" required minlength="2" maxlength="63" pattern="[a-z0-9][a-z0-9-]{1,62}" autocapitalize="none" spellcheck="false" placeholder="例：sample-company"><small>英小文字・数字・ハイフン。2〜63文字。</small></label>
+        <label>プラン<select id="new-tenant-plan" name="plan_code"><option value="trial">Trial · 製品1 / ライセンス100</option><option value="standard" selected>Standard · 製品5 / ライセンス1,000</option><option value="business">Business · 製品20 / ライセンス10,000</option><option value="enterprise">Enterprise · 製品100 / ライセンス100,000</option></select></label>
+        <button id="admin-create-tenant-submit" class="primary" type="submit">テナントを作成</button>
+        <small class="form-hint">作成時に既定の製品も1つ登録されます。作成操作は監査ログに記録されます。</small>
+      </form>
+      </div>
+      <div id="admin-panel-licenses" class="admin-panel active">
+      <div class="section-title"><h2>ライセンスを管理</h2></div><a class="quick-card admin-card" href="../admin_api.php"><span class="quick-icon admin-icon" aria-hidden="true">▤</span><span><b>管理センターを開く</b><small>監査ログ・端末・電話認証などの詳細機能</small></span><span class="arrow" aria-hidden="true">›</span></a><form id="admin-search-form" class="search"><span aria-hidden="true">⌕</span><input id="admin-search" type="search" placeholder="ラベルまたはライセンスID"><button>検索</button></form><div id="admin-license-list" class="list"><div class="empty">ライセンスを読み込んでいます…</div></div><button id="admin-more" class="more hidden">さらに読み込む</button>
+      </div></section>
+  </main>
+  <nav class="tabbar" aria-label="メインメニュー"><button class="tab active" data-page="home"><span>⌂</span>ホーム</button><button class="tab" data-page="products"><span>▦</span>製品</button><button class="tab" data-page="licenses"><span>⌕</span>ライセンス</button><button id="admin-tab" class="tab hidden" data-page="admin"><span>🔐</span>管理</button><button class="tab" data-page="settings"><span>⚙</span>設定</button></nav>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="app.js" defer></script>
+</body>
+</html>

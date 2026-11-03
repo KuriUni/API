@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'">
+  <meta name="theme-color" content="#112f35">
+  <title>TUTI Operations</title>
+  <link rel="stylesheet" href="app.css?v=1">
+  <script src="app.js?v=1" defer></script>
+</head>
+<body>
+  <div id="login-gate" class="login-gate hidden">
+    <div class="gate-brand"><span class="mark">T</span><span>TUTI <b>OPERATIONS</b></span></div>
+    <section class="gate-card"><p class="eyebrow">SECURE WORKSPACE</p><h1>運用コンソール</h1><p>コアサーバーのSSO IDで認証し、XREA環境のテナント・ライセンス・監査を管理します。</p><a class="button primary" id="login-link" href="../admin_api.php?admin_sso_start=1&amp;return_app=ops">SSO IDでログイン <span>→</span></a><small>ログイン後、この独立運用アプリへ戻ります。</small></section>
+  </div>
+  <div id="app-shell" class="shell hidden">
+    <aside class="sidebar">
+      <a class="brand" href="./"><span class="mark">T</span><span>TUTI <b>OPERATIONS</b></span></a>
+      <div class="side-label">WORKSPACE</div>
+      <nav id="navigation">
+        <button class="nav-item active" data-view="overview"><span class="nav-icon">◫</span>概要</button>
+        <button class="nav-item" data-view="tenants"><span class="nav-icon">▦</span>テナント</button>
+        <button class="nav-item" data-view="licenses"><span class="nav-icon">⌑</span>ライセンス</button>
+        <button class="nav-item" data-view="audit"><span class="nav-icon">≋</span>監査ログ</button>
+      </nav>
+      <div class="side-foot"><span class="online-dot"></span><span id="session-label">SSOセッション確認中</span></div>
+      <a class="back-link" href="../admin_api.php">既存の管理センターへ ↗</a>
+    </aside>
+    <main class="main">
+      <header class="topbar"><div><span class="crumb">XREA / OPERATIONS</span><h1 id="page-title">概要</h1></div><div class="top-actions"><span id="connection-badge" class="badge pending">接続確認中</span><button id="logout" class="quiet">ログアウト</button></div></header>
+      <section id="view-overview" class="view">
+        <div class="welcome-row"><div><p class="eyebrow">OPERATIONS OVERVIEW</p><h2>運用状況を確認</h2><p>SSO IDとXREA管理APIの状態をまとめて確認できます。</p></div><button id="refresh-overview" class="button secondary">更新</button></div>
+        <div class="metric-grid"><article class="metric-card"><span>サービス準備状態</span><strong id="health-value">—</strong><small id="health-detail">確認中</small></article><article class="metric-card"><span>管理API接続</span><strong id="api-value">—</strong><small id="api-detail">確認中</small></article><article class="metric-card"><span>テナント</span><strong id="tenant-count">—</strong><small>アクセス可能な契約先</small></article><article class="metric-card"><span>ライセンス</span><strong id="license-count">—</strong><small>現在の検索条件の合計</small></article></div>
+        <section class="panel"><div class="panel-head"><div><p class="eyebrow">QUICK ACCESS</p><h2>運用メニュー</h2></div></div><div class="quick-grid"><button data-goto="tenants"><b>テナント管理</b><span>契約先を検索・作成</span><i>→</i></button><button data-goto="licenses"><b>ライセンス管理</b><span>発行・検索・状態変更</span><i>→</i></button><button data-goto="audit"><b>監査ログ</b><span>管理操作の履歴を確認</span><i>→</i></button></div></section>
+        <div id="overview-message" class="notice hidden"></div>
+      </section>
+      <section id="view-tenants" class="view hidden">
+        <div class="panel"><div class="panel-head"><div><p class="eyebrow">CUSTOMERS</p><h2>テナント一覧</h2></div><button id="refresh-tenants" class="button secondary">更新</button></div><div class="toolbar"><input id="tenant-search" type="search" placeholder="名前・slugで検索"><span id="tenant-count-label" class="muted"></span></div><div id="tenants-table" class="table-wrap"><div class="loading">読み込み中…</div></div><div class="pager"><button id="tenant-prev" class="secondary" disabled>前へ</button><span id="tenant-page">1</span><button id="tenant-next" class="secondary" disabled>次へ</button></div></div>
+        <section class="panel"><div class="panel-head"><div><p class="eyebrow">NEW CUSTOMER</p><h2>テナントを作成</h2></div></div><form id="create-tenant-form" class="form-grid"><label>テナント名<input name="tenant_name" maxlength="160" required></label><label>Slug<input name="tenant_slug" maxlength="63" pattern="[a-z0-9][a-z0-9-]{1,62}" required placeholder="example-company"></label><label>プラン<select name="plan_code"><option value="standard">standard</option><option value="trial">trial</option><option value="business">business</option><option value="enterprise">enterprise</option></select></label><button class="button primary" type="submit">テナントを作成</button></form><p class="help">作成操作はXREA管理APIへ記録され、監査ログに残ります。</p></section>
+      </section>
+      <section id="view-licenses" class="view hidden">
+        <div class="panel"><div class="panel-head"><div><p class="eyebrow">LICENSE OPERATIONS</p><h2>ライセンス一覧</h2></div><button id="refresh-licenses" class="button secondary">検索</button></div><div class="filter-row"><input id="license-search" type="search" placeholder="ID・ラベル・テナント・製品"><select id="license-status"><option value="">すべての状態</option><option value="active">有効</option><option value="paused">一時停止</option><option value="revoked">失効</option><option value="expired">期限切れ</option><option value="expiring">30日以内に期限切れ</option></select></div><div id="licenses-table" class="table-wrap"><div class="loading">読み込み中…</div></div><div class="pager"><button id="license-prev" class="secondary" disabled>前へ</button><span id="license-page">1</span><button id="license-next" class="secondary" disabled>次へ</button></div></div>
+        <section class="panel"><div class="panel-head"><div><p class="eyebrow">ISSUE</p><h2>ライセンスを発行</h2></div></div><form id="issue-license-form" class="form-grid"><label>テナントID<input name="tenant_id" type="number" min="1" required></label><label>製品ID<input name="product_id" type="number" min="1" required></label><label>発行モード<select name="license_mode"><option value="single">単一端末</option><option value="volume">複数端末</option><option value="evaluation">評価版</option></select></label><label>ラベル<input name="label" maxlength="100"></label><label class="volume-field hidden">最大端末数<input name="max_devices" type="number" min="2" max="500" value="10"></label><label class="evaluation-field hidden">評価日数<input name="evaluation_days" type="number" min="1" max="3650" value="30"></label><label>有効期限（任意）<input name="expires_at" type="datetime-local"></label><button class="button primary" type="submit">発行する</button></form><div id="issued-license" class="issued-box hidden"></div><p class="help">発行キーは一度だけ表示されます。対象テナントと製品IDを確認してから実行してください。</p></section>
+      </section>
+      <section id="view-audit" class="view hidden"><div class="panel"><div class="panel-head"><div><p class="eyebrow">AUDIT TRAIL</p><h2>監査ログ</h2></div><button id="refresh-audit" class="button secondary">更新</button></div><div class="filter-row"><input id="audit-search" type="search" placeholder="対象ID・リクエストID"><input id="audit-event" type="search" placeholder="イベント名"><input id="audit-from" type="date"><input id="audit-to" type="date"></div><div id="audit-table" class="table-wrap"><div class="loading">読み込み中…</div></div><div class="pager"><button id="audit-prev" class="secondary" disabled>前へ</button><span id="audit-page">1</span><button id="audit-next" class="secondary" disabled>次へ</button></div></div></section>
+      <div id="toast" role="status" aria-live="polite"></div>
+    </main>
+  </div>
+</body>
+</html>

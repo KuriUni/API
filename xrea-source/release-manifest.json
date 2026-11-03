@@ -1,0 +1,634 @@
+{
+    "schema": 1,
+    "release_id": "product-key-v8-inline-fastpath-20261103T103213Z-b618cf793f",
+    "framework": "fastapi",
+    "layout": "existing-public-root",
+    "generated_at_utc": "2026-11-03T10:32:13Z",
+    "files": [
+        {
+            "path": "admin-api-workbench.css",
+            "size": 8864,
+            "sha256": "60954776aeaf097da567a1bff0967fcc604b41b5a962d78f9a829246faeaf34b"
+        },
+        {
+            "path": "admin-center-modern.css",
+            "size": 49023,
+            "sha256": "3ab2e3a00a501c523f26fe00a5a8c5e545dd3d83525cd42a978ef7117716f6e2"
+        },
+        {
+            "path": "admin-center-ops.css",
+            "size": 11787,
+            "sha256": "40683f5af5b23831a54c759a54a936de73b744eef8740a240620075e8e887be1"
+        },
+        {
+            "path": "admin-center.css",
+            "size": 30397,
+            "sha256": "7995739ad6561b55d98d99e43d612a63e2eb53e948dae46b420cedb912739402"
+        },
+        {
+            "path": "admin-center.js",
+            "size": 51334,
+            "sha256": "28355c405f0acff2509b397eb2799d2eaea77c24fbc316de836b82a34d16bf29"
+        },
+        {
+            "path": "admin-invoices.css",
+            "size": 16535,
+            "sha256": "410aa81336bf59b7945dc87b09700bf6c349c7a8c38c56509b18dde2e6ee239f"
+        },
+        {
+            "path": "admin-invoices.js",
+            "size": 14908,
+            "sha256": "60ec54f5d31b34c60fe2e0a43a40e3745e9344ff55cd585433b7d2454df51cc2"
+        },
+        {
+            "path": "admin-login.css",
+            "size": 14881,
+            "sha256": "462eaa20582dc6d2f900024b1a028bcd2895f37c45584f6ae0e2e84280f60963"
+        },
+        {
+            "path": "admin-login.js",
+            "size": 2841,
+            "sha256": "2eb83c4c1645111e729347fa5342576d8e1a86fc2a6f471975471f9f7dc4e1b9"
+        },
+        {
+            "path": "admin_api/admin-center.js",
+            "size": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+            "path": "admin_api/invoices.css",
+            "size": 4769,
+            "sha256": "abec04cf6c9515094237c04240c200d1188de8a7a77194ac0bc6d0609dd2201c"
+        },
+        {
+            "path": "admin_api/ui.css",
+            "size": 16171,
+            "sha256": "9e9786de2277f50983f17a66bbf82757e62d7bf1aa4c67e3a2a3ceacc2e3e491"
+        },
+        {
+            "path": "admin_api_handlers.py",
+            "size": 200869,
+            "sha256": "2570cd5dc94e38b00c9b1df0b52be7f0ecd6cf901032fb6a18eb25edaf623f6b"
+        },
+        {
+            "path": "admin_core.py",
+            "size": 8865,
+            "sha256": "96df8dbd3c528bd367e30346e26bcb8dc1f3e1e97874d5893d18f3b93e4f97f1"
+        },
+        {
+            "path": "admin_oidc.py",
+            "size": 23952,
+            "sha256": "5c192be28673e9593e1ad136c61b152de4266c84f3c60d336e1b076c693458da"
+        },
+        {
+            "path": "android-card-read-fallback.js",
+            "size": 817,
+            "sha256": "d4530aab8ac9f9768ff7afe1d907bf21b6cb292bd760f8dd4e7df654c212ae5b"
+        },
+        {
+            "path": "api-catalog/docs.html",
+            "size": 1045,
+            "sha256": "92b3b47a4a8adcbb4fece46c2b143d3c8ae298dc069b856f42a2d3de677b214c"
+        },
+        {
+            "path": "api-catalog/openapi.json",
+            "size": 153306,
+            "sha256": "6066958dcbbced1f9bda9da0a93762e1ccc60ee0f35d57fcea8ef8fea15b8a54"
+        },
+        {
+            "path": "api-catalog/redoc.html",
+            "size": 923,
+            "sha256": "f7268327a34119169ae958f656f6d000a25f7ae8ab7dce56231bd091f98dfb4e"
+        },
+        {
+            "path": "api/v2/activate.html",
+            "size": 20767,
+            "sha256": "2213f6f1dcf0fc7d5581c476426ce151addd83225a96bec45320afbee9972848"
+        },
+        {
+            "path": "api/v2/api-guide.css",
+            "size": 4150,
+            "sha256": "cbcdd2c42954a9cb83826b6cb838fac8bf67d5f60fc3ee46628ff5feae7d1122"
+        },
+        {
+            "path": "api/v2/phone_activate.html",
+            "size": 23269,
+            "sha256": "d3b4f0c9e39bf74934152a81d7599e105c574193cb374a9c204c4a77169c2245"
+        },
+        {
+            "path": "api_catalog.py",
+            "size": 1112,
+            "sha256": "76fae0b1e7961c7e73874e3a6dfaa9993febdebbf89d4443db5e0d53a6e8ddd1"
+        },
+        {
+            "path": "app.py",
+            "size": 39393,
+            "sha256": "b1b103d22ce842faaf514b2d96ce1af0ebf9da51bcee01291f9ae73d7c0505be"
+        },
+        {
+            "path": "app_sso.py",
+            "size": 11752,
+            "sha256": "d83df6d3b0ba136864b1cab3ac6bc257b10afb78505d8c1b30a5985ac60b92ad"
+        },
+        {
+            "path": "asgi.py",
+            "size": 5957,
+            "sha256": "067ba398c393093ce0d557eb25e66299e1ce7c1cedf930c99bec6f6d12e87d1f"
+        },
+        {
+            "path": "audit.py",
+            "size": 6799,
+            "sha256": "e9ab72d6be2c6ba00299f5b773e57fad6af829223c67ed8ce34af937f2a424d3"
+        },
+        {
+            "path": "auto_handlers.py",
+            "size": 11287,
+            "sha256": "a0a2b8433ca8d77feead42cb8208963b28c5a6879a4af16411f3185500f631de"
+        },
+        {
+            "path": "baas_handlers.py",
+            "size": 165650,
+            "sha256": "1d82201d3ef48f932c1271f395f5f898f2b3dee411b43f7714d14c858dcc5383"
+        },
+        {
+            "path": "baas_issuance_handlers.py",
+            "size": 49282,
+            "sha256": "2454cfa7b82653b31e4d5167e25c45a9cfdaf317576022bf1e98408a7f8f64c0"
+        },
+        {
+            "path": "baas_v7_handlers.py",
+            "size": 13585,
+            "sha256": "ab86f3944b415181b4f684b0b809bc1d68df9acfca3186a01f7ac1ae7cb95071"
+        },
+        {
+            "path": "baas_v8_handlers.py",
+            "size": 36656,
+            "sha256": "b618cf793ffdc516aa2a5c6c12cd13e49a465f98ecb9c217e9900bcb2cc04c62"
+        },
+        {
+            "path": "billing-rules.json",
+            "size": 31443,
+            "sha256": "dd61aff130138c842723c6141a364aed5844f6647c2f29361b58d7558d191cb1"
+        },
+        {
+            "path": "billing_policy.py",
+            "size": 6932,
+            "sha256": "27051cad07f1c494abe4fe5f725b24a054635f9a651015701cc96e6669194e83"
+        },
+        {
+            "path": "card-result-viewer.js",
+            "size": 3713,
+            "sha256": "2f9dd037f2f215d8234ef5e21fd861c15c2165d67e84c95db064fa54d63e18ae"
+        },
+        {
+            "path": "card_result_handlers.py",
+            "size": 8994,
+            "sha256": "3842d03682b545b1f178b8289d45f5ad03e0388fbe48596f1b767a72ac28167a"
+        },
+        {
+            "path": "card_result_page.html",
+            "size": 1474,
+            "sha256": "52d6820f71db7f13241737dfeaa437456041d21d835b08505aaa2b62e2f7aec8"
+        },
+        {
+            "path": "common-id-sso-demo/demo.css",
+            "size": 2531,
+            "sha256": "dee5afd0c4026d4406310c8deea4488376fb85c2c28ea3f305d25e03cdfc71a6"
+        },
+        {
+            "path": "common_id_demo_handlers.py",
+            "size": 15829,
+            "sha256": "ccec877b4aadb1377ffb64052044923ce016e4ca63f00c654a795065004489e4"
+        },
+        {
+            "path": "common_id_sso_handlers.py",
+            "size": 18955,
+            "sha256": "c0ab8852de8d04e878a0666886f8e8049c4dbc0ac0207c117caba160aed2595c"
+        },
+        {
+            "path": "core.py",
+            "size": 10879,
+            "sha256": "a745d6ae76c5bc83e5142ddcd2d747e5cfe9a3903753a0bd22a9bf7834bf4bcd"
+        },
+        {
+            "path": "database.py",
+            "size": 10321,
+            "sha256": "6af8436b477cd6c6a8d604085791cda37941f3424f39c1b3b61f24365238ef08"
+        },
+        {
+            "path": "db/migrations/029_product_key_issuance_v8_standalone.sql",
+            "size": 2671,
+            "sha256": "8c2782c7d403cca2449cead9c6f48244269f52b296634a47e2a49dd21cd4449b"
+        },
+        {
+            "path": "deployment_settings.py",
+            "size": 3357,
+            "sha256": "9ea1a727137015c4e076e3e2c1843e725d82188e2de98095f6f64d3b89a8c2f1"
+        },
+        {
+            "path": "fastapi_cgi.py",
+            "size": 987,
+            "sha256": "425d62d9b5257a31414dc673244c460b68349190edd77e89fa149383a8d909e2"
+        },
+        {
+            "path": "federation_handlers.py",
+            "size": 21206,
+            "sha256": "eeacd02dfc6eacabe738e4763948dba984e361f5eaa28b8e4753eb6a2ee5b328"
+        },
+        {
+            "path": "file_locking.py",
+            "size": 1723,
+            "sha256": "ccb9e39e4e133f79404941f96b613a086a867bbbe76e20f9f9c0c148d0e00ac3"
+        },
+        {
+            "path": "generate_key_handlers.py",
+            "size": 24073,
+            "sha256": "80f6ccf081a97f20895d49b17f602694ca8e228bf44f25ff590039ee05d80bfb"
+        },
+        {
+            "path": "ha/android-card-read.html",
+            "size": 1231,
+            "sha256": "1cfae97304e3e1fe0f9b5cb4431cbd2b689b4de73cdb40b5a752ee855620af3e"
+        },
+        {
+            "path": "ha/mobile-face-ui.css",
+            "size": 2197,
+            "sha256": "6d3d968ca4271280d37547ff675c252a509584d6adfb7b7f454d90fc7ad9d419"
+        },
+        {
+            "path": "ha_android_card_read.py",
+            "size": 2654,
+            "sha256": "945ed7ed2ea1acc2601c2a0982b8b36359b9c002b119aff8d65346a41b3fcaa3"
+        },
+        {
+            "path": "ha_batch_issue.py",
+            "size": 21769,
+            "sha256": "9546ff5a9613970aee82841e3616a3a21f76c103b8c7380fb800167c55b1b35b"
+        },
+        {
+            "path": "ha_billing_admin.py",
+            "size": 26185,
+            "sha256": "0e4d3da6d3f3e8c40853a2783c5790b59b8a88ecdabe554e58ff4ea639e49ad7"
+        },
+        {
+            "path": "ha_export.py",
+            "size": 12095,
+            "sha256": "0966ef29fc76057c73cc1c8a3414213848704c29c953919333db786e707baf62"
+        },
+        {
+            "path": "ha_failback.py",
+            "size": 8747,
+            "sha256": "fcb7068f981c736898da69e20e8f648b4aead158a86397f45594d90513251a15"
+        },
+        {
+            "path": "ha_handlers.py",
+            "size": 58594,
+            "sha256": "a0bff197f3f6aae2280ff69c21f9e78a36f631a66507151ba3749083db799022"
+        },
+        {
+            "path": "ha_issuance_worker.py",
+            "size": 4096,
+            "sha256": "390639eebebd6dbed0698bfa4ea1b6767702749fdfb359ff5ea1d677506f5f7f"
+        },
+        {
+            "path": "ha_issue_license.py",
+            "size": 11556,
+            "sha256": "e1a8432a71aae998bfcbf24ef32eb47a317b3ac7f361bc76dfd88e9aed822876"
+        },
+        {
+            "path": "ha_legacy_issuance_worker.py",
+            "size": 26836,
+            "sha256": "3047f49f9812f8deafa491544d4e70342ebae4f10b014a8abca473c810d346c7"
+        },
+        {
+            "path": "ha_license_admin.py",
+            "size": 20544,
+            "sha256": "7ddc2ac5cdc68e4e90684d04e7c1dd76a56654960a31569e0cc32e71ec95dfb8"
+        },
+        {
+            "path": "ha_license_lookup.py",
+            "size": 5616,
+            "sha256": "a4e0cfa4a56d0fa0e74cf6090f8240aaf6e79a3765113b58938b8efc9a259b93"
+        },
+        {
+            "path": "ha_migrate.py",
+            "size": 1723,
+            "sha256": "ef695785f81a96100929b3ae17f25e7702abef53b84856ded36472b9f9f40f18"
+        },
+        {
+            "path": "ha_mobile_face.py",
+            "size": 11189,
+            "sha256": "8579c712b186be4a5afa8accb20f0806774e946a8eedda6667ead9f8bb4709d2"
+        },
+        {
+            "path": "ha_mode.py",
+            "size": 13489,
+            "sha256": "3d7bd9ff148b2266a2f7983f4142091453479571ccee8299a8985213ed36fa3b"
+        },
+        {
+            "path": "ha_product_key_v8_worker.py",
+            "size": 8330,
+            "sha256": "b2c41fc248c930e08167565d22c8914c387913647d0d9f933c6acd58a24eb840"
+        },
+        {
+            "path": "ha_snapshot.py",
+            "size": 15172,
+            "sha256": "4a923245f6c4332ba9c1d272bb507da7e83050598c8e711767a1ffb93f34e4ba"
+        },
+        {
+            "path": "ha_tenant_admin.py",
+            "size": 40395,
+            "sha256": "ba290a1242f72ce3ccc8561ea124057519d92a39a8f660002eaac06b9a423e2b"
+        },
+        {
+            "path": "ha_webhook_dispatch.py",
+            "size": 11912,
+            "sha256": "197c27de0b61f4907da467e425046f4945988feeb76f5241481572a2ec0d8c1b"
+        },
+        {
+            "path": "http-error-catalog.json",
+            "size": 4877,
+            "sha256": "678fcb531ae9cead1c58dd2aab087537174b1ad79c135f3ba16f1be8a8b57d40"
+        },
+        {
+            "path": "http-error-templates.json",
+            "size": 26375,
+            "sha256": "c128c2e7f9d9dec366a74af298e2a740d57c4a8f9a5f64601f851a161a25d578"
+        },
+        {
+            "path": "http_error_handlers.py",
+            "size": 6166,
+            "sha256": "e03fe4fd09e69d25d2511c7bc28aafac9b717ea2820cdbc56785e18eab52402d"
+        },
+        {
+            "path": "http_utils.py",
+            "size": 5972,
+            "sha256": "2aceb78286f22454d8cf97eb43cb0ef7e5a78155f8dc389d1a53cd28148d23fc"
+        },
+        {
+            "path": "idempotency_crypto.py",
+            "size": 1298,
+            "sha256": "61d86ea3df31ecdb0aa96cbf080bfc93b68171a1f206995f3bd381ef8ba768dc"
+        },
+        {
+            "path": "index.cgi",
+            "size": 5813,
+            "sha256": "0bae111bfa398bbe925d48285b83bd9c6165f15008d8ece3db011a9241e8b00d"
+        },
+        {
+            "path": "license-center.css",
+            "size": 12737,
+            "sha256": "c6ca4d51635258e9de7c98b9ed181a081484ef57e69a9022fdf5c4a45550f748"
+        },
+        {
+            "path": "migration_config.py",
+            "size": 5227,
+            "sha256": "71f8c37a358f41e21bf2eeca9c179a369a096a758464e802e93666548c70beeb"
+        },
+        {
+            "path": "mnsl-android-card-read.js",
+            "size": 11450,
+            "sha256": "2674437307b4596a8852cb4240e918d4040275468da39206bb822397fee55e39"
+        },
+        {
+            "path": "mnsl-card-auth.js",
+            "size": 6401,
+            "sha256": "b727153d15a52d5bc6c32a987de5b65fd04972c35e957232bb154a319aa0e096"
+        },
+        {
+            "path": "mnsl_android_card_read_handlers.py",
+            "size": 10349,
+            "sha256": "48fb009919fcb12f645143366402f682974afd06f62741194b326160d0185f8a"
+        },
+        {
+            "path": "mnsl_app_sso.py",
+            "size": 21172,
+            "sha256": "54772bdc577b876ebecac26486efc8db8e5ffac4cebaf419933fce2270b62581"
+        },
+        {
+            "path": "mnsl_card_auth_handlers.py",
+            "size": 10434,
+            "sha256": "61d16f109850bdd0b0abe49801517bbd0b5eafb0640259bf06adda7b484b0f38"
+        },
+        {
+            "path": "mnsl_handlers.py",
+            "size": 16738,
+            "sha256": "414ccd3021bdb90bcc745b11c7c603efd8c4cae7c777f47b3c46a1cecde6667b"
+        },
+        {
+            "path": "mobile-manager/app.css",
+            "size": 10032,
+            "sha256": "ea14997b0a7c425ab9e2366be3aa602839cb06af687800b0994851c3c48d42d6"
+        },
+        {
+            "path": "mobile-manager/app.js",
+            "size": 38940,
+            "sha256": "d854cbfd8567f6805cc1fe341fcdc10346704b7b316b94cc5eb6787b4d5eb60d"
+        },
+        {
+            "path": "mobile-manager/index.html",
+            "size": 12090,
+            "sha256": "f123c87e147409d89efa6fcccb94bfaaa8f8b4699f0656a197d446cce2154dfb"
+        },
+        {
+            "path": "mobile-manager/manifest.webmanifest",
+            "size": 252,
+            "sha256": "7f046df79e0209fd84f668d54e405097c04c8f86d065bf3931302e75175738a1"
+        },
+        {
+            "path": "mobile-manager/refresh.css",
+            "size": 13154,
+            "sha256": "3c8496eec1ce4846ed8758097563f9bc311d86417c8925314a9b86ae3be7031a"
+        },
+        {
+            "path": "mobile-manager/sw.js",
+            "size": 1046,
+            "sha256": "9c3e9e5a43929e33c936892d8a8ee3192066e5c8143098cec7f04d1b9a5a556a"
+        },
+        {
+            "path": "mobile_admin_auth.py",
+            "size": 14074,
+            "sha256": "fa0aa4c4ab4dae1387aa0b0b9db83004616213282d9707979ff7f17d556b99c9"
+        },
+        {
+            "path": "mobile_face_page.html",
+            "size": 11521,
+            "sha256": "1f01f4b6b6cb8a2d58f13797cc603f4785783dd53fa64ab48cac70646b550fe6"
+        },
+        {
+            "path": "native_http.py",
+            "size": 7915,
+            "sha256": "491261c35fd99bdd84a8c30f7e37ca5a8b265a6ed9c7465f562fce852042e86d"
+        },
+        {
+            "path": "native_routes.py",
+            "size": 17711,
+            "sha256": "3ca460a95a5a1dcfc1b29d2e7ceea9eb5d420c6b0daea5c78682ca9609f69caf"
+        },
+        {
+            "path": "native_v3.py",
+            "size": 20813,
+            "sha256": "edc5541b9d1cd6ea0c43653ed6348b944b2ac5c43fd17db0ee8025c606b66c16"
+        },
+        {
+            "path": "offline_key_handlers.py",
+            "size": 5900,
+            "sha256": "945229d3fce4b3256384e4690a9936857d9bd3a6949ee9f7888e90e63c7ef9b4"
+        },
+        {
+            "path": "offline_phone_handlers.py",
+            "size": 17643,
+            "sha256": "e78239b2a937c2a8d5595d5ed2011aaa8f96c849d4d332b506a3209d97a36d91"
+        },
+        {
+            "path": "openapi-catalog.json",
+            "size": 151876,
+            "sha256": "f3e9d2df22fe625cea401bac6aa3ed6c415022874a81b76d1a75713b7ad35b15"
+        },
+        {
+            "path": "passkey_handlers.py",
+            "size": 35267,
+            "sha256": "405bd917a23d20d3f81aa3cad2277a837e8d4a0bdc6a35839cbba3da867c1035"
+        },
+        {
+            "path": "path_utils.py",
+            "size": 559,
+            "sha256": "194d8556d71b0be889006864d66a1baf17210036af15056a82be114797feb2c6"
+        },
+        {
+            "path": "phone_admin_handlers.py",
+            "size": 11832,
+            "sha256": "a0fadb69629a873a14c446640db26a0e1a469c396a2de371e352f634080651db"
+        },
+        {
+            "path": "phone_handlers.py",
+            "size": 47024,
+            "sha256": "aac1362d6ab9cd5db98457e7f78a720e9ab73a072f7e991a82a480411eab9fb7"
+        },
+        {
+            "path": "portal_key_policy.py",
+            "size": 9097,
+            "sha256": "54b45615af2e6b73c8adac265ac5c7d7d5525827b64af54ca7bec9e901bb51b3"
+        },
+        {
+            "path": "portal_passkey_handlers.py",
+            "size": 47005,
+            "sha256": "3ac7b5945e7925bbe50bce5bb30698f06d5fea6d48c66dd2370ef2d916a04558"
+        },
+        {
+            "path": "product_key_v8_storage.py",
+            "size": 3947,
+            "sha256": "95ca0fc2d0de633c5460e4615a868264a28d9c01ead66d7ffd73b9f410cdd17a"
+        },
+        {
+            "path": "py36_compat.py",
+            "size": 1609,
+            "sha256": "e1cba698083e8236cf4bb5f23decb61d062314afef9f51c5ee6a1c3836f7b98d"
+        },
+        {
+            "path": "reception.js",
+            "size": 1942,
+            "sha256": "b953a5e9c46454f04d55c2cd801ad5890388848fe6faf48acac3ccac92bdcee0"
+        },
+        {
+            "path": "request_metrics.py",
+            "size": 8688,
+            "sha256": "21473804675cf5b9ef167ee7dd16e320ca581086a9393a879c64e7f219e3e184"
+        },
+        {
+            "path": "requirements.txt",
+            "size": 198,
+            "sha256": "77a0d797716df6dc46dad9334a39deeba7bc8c20063ff54d7ad3092436e058aa"
+        },
+        {
+            "path": "retired_auth.py",
+            "size": 2803,
+            "sha256": "c6412106c7d5137d3fa556438a21175dd6f7a6bb3ac88aad3ba823cb63f57d12"
+        },
+        {
+            "path": "routes.json",
+            "size": 37565,
+            "sha256": "7b623e439e725ed9fcd3b761983bc253f081023f5be50e572b70d6cd2a02e115"
+        },
+        {
+            "path": "schema39-install.sql",
+            "size": 44433,
+            "sha256": "c7cae35a4bc4c4ab29dc273502743211d680d3538b476228a4f1d93eeb36635e"
+        },
+        {
+            "path": "schema39-plan.json",
+            "size": 35795,
+            "sha256": "5a92517bc5b1dc77c4c47259118316201ae39ee9cbef472b4035d8c670f89b4f"
+        },
+        {
+            "path": "schema39_storage.py",
+            "size": 5789,
+            "sha256": "e7ad6f1f2d00d46b4cdd790cf9c57c2a18bc8e58d4530300de6e2f53c47feb97"
+        },
+        {
+            "path": "service_handlers.py",
+            "size": 12595,
+            "sha256": "954d3b9b4c0cdf71cf1a9cd812e6091a1e614583c1eace68aa4bf19b552ae918"
+        },
+        {
+            "path": "tenant-center.css",
+            "size": 9468,
+            "sha256": "d4b7d9e1cb3dca68966b48b0f34f153513b8f383f431d6d6949151d866330806"
+        },
+        {
+            "path": "tenant-portal/app.css",
+            "size": 36548,
+            "sha256": "5e57fdf1e9127ef00758a752b5fa3d04224c21e4b2697cafe3b78f49ac9e7a1f"
+        },
+        {
+            "path": "tenant-portal/app.js",
+            "size": 104774,
+            "sha256": "1f2c0602e49b0a2b3b7d3dc09e2649cf660c6286292cafe84abef9633ccebf68"
+        },
+        {
+            "path": "tenant-portal/index.html",
+            "size": 11078,
+            "sha256": "d1c4a33870a119453e1a5c72d6480ecf5801d65a702d618e918f29b9d42f20d6"
+        },
+        {
+            "path": "tenant-portal/refresh.css",
+            "size": 7327,
+            "sha256": "084618956213f41b4837c1bbc821f25e3f337099974f9989db346f2d25fddf08"
+        },
+        {
+            "path": "tenant_sso_contracts.py",
+            "size": 2965,
+            "sha256": "1ab7f8e15bf023dde0b3a851e40e76bd51b98af7e173eb63158228e33f9f3bd7"
+        },
+        {
+            "path": "v2_handlers.py",
+            "size": 56393,
+            "sha256": "dabaa4295197b3d5781c7a5e7b67955d8bbdbc4484ba0aa20df376d93d5629e3"
+        },
+        {
+            "path": "v3_crypto.py",
+            "size": 5092,
+            "sha256": "babac65bdc525ba8f7854ad687eaf470caaac21b4103c37e27e631dd50e28436"
+        },
+        {
+            "path": "v3_handlers.py",
+            "size": 39573,
+            "sha256": "c05460b9e3b26b13d60055f4df47f3f25616439b1ecacd37502bbc77c8f46563"
+        },
+        {
+            "path": "web_passkey_auth.py",
+            "size": 5897,
+            "sha256": "f91eafcc72425cbfff58b77f58c673f0cef4606646391c8a00caa54aec6e02bf"
+        },
+        {
+            "path": "web_passkey_manage.py",
+            "size": 7218,
+            "sha256": "adbebc277d73b0ac36dbe1d66928d9eaffcfaa16f36870d39da2c417e0624505"
+        },
+        {
+            "path": "wsgi_input.py",
+            "size": 883,
+            "sha256": "48757ff56ca1c5154800194efc9427729495b0c9e8238d25dea3d21b64642c10"
+        }
+    ]
+}

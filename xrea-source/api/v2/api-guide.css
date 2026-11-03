@@ -1,0 +1,23 @@
+/* Consistent, task-oriented presentation for the interactive API guides. */
+:root{--ink:#17323b;--muted:#657d83;--line:#dce8e7;--wash:#f2f7f6;--paper:#fff;--brand:#087d70;--brand-dark:#06675e;--soft:#e7f5f1;color-scheme:light}
+body{background:var(--wash);color:var(--ink)}.wrap{width:min(1100px,calc(100% - 36px));padding:23px 0 55px}
+.topline{color:#426168}.mark{background:linear-gradient(145deg,#2cb9a1,#08766a);border-radius:10px;box-shadow:0 4px 10px #087d7024}
+.hero{border:1px solid #1b5960;border-radius:20px;background:linear-gradient(120deg,#12343c,#12584f 70%,#087d70);box-shadow:0 14px 34px #103c4220}.hero:after{opacity:.65}
+.hero h1{font-size:clamp(27px,4vw,40px);line-height:1.2}.hero p{max-width:790px;color:#e1efed;font-size:13px;line-height:1.75}.version{border:1px solid #ffffff42;border-radius:99px;background:#ffffff12}
+.flow{gap:9px}.flow-item{min-height:66px;border:1px solid var(--line);border-radius:12px;background:#fff;box-shadow:0 3px 12px #173b4305}.flow-num{background:#e7f5f1;color:#087d70}
+.section-head{margin:24px 0 12px}.section-head h2{color:#203f46}.section-head p{color:#71868b;font-size:11px}
+.quickstart{border-color:#c5e4dc;border-radius:15px;background:linear-gradient(145deg,#fff,#f2faf7);box-shadow:0 5px 17px #173b4306}.quickstart h2{color:#173a40;font-size:16px}.quickstart>p{font-size:11px;line-height:1.7}
+.quicksteps li{border-color:#e2ebea;border-radius:10px;color:#47636a;line-height:1.55}.quicksteps b{color:#24474e}.quick-command pre,.quickstart pre{max-height:360px;overflow:auto;border:1px solid #dce8e7;border-radius:10px;background:#17323b;color:#e8f3f1;padding:13px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;line-height:1.65}
+.quickstart label{color:#47636a}.quickstart input:not([type=checkbox]),.quickstart select{min-height:42px;border-color:#d3e1df;border-radius:9px}.quickstart input:focus,.quickstart select:focus{outline:3px solid #087d7018;border-color:var(--brand)}.quickstart input[type=checkbox]{accent-color:#087d70}
+.quickstart .actions button{min-height:40px;border-radius:9px;background:#087d70;transition:background .15s,transform .15s}.quickstart .actions button:hover{background:#06675e;transform:translateY(-1px)}
+.endpoint-grid{gap:11px}.endpoint{border-color:var(--line);border-radius:13px;box-shadow:0 4px 15px #173b4305}.endpoint h3{color:#23444a}.method{border-radius:6px;background:#e4f3ee;color:#087064}.endpoint-path{border-radius:7px;background:#f0f6f4;color:#32565d}.fields li{border-radius:7px;background:#f2f7f6;color:#527076}.fields li.required{background:#e7f5f1;color:#087064}
+.endpoint details{border-color:#e3ebea;border-radius:9px}.endpoint details summary{color:#315860}.endpoint pre{max-height:300px;overflow:auto;border-radius:9px;background:#17323b;color:#e8f3f1;white-space:pre-wrap;overflow-wrap:anywhere}
+.note{border:1px solid #cce3dc;border-radius:12px;background:#eef8f4}.note-icon{background:#d9f0e8;color:#087064}.note p{color:#4f6a6f}.note b{color:#24464b}
+footer{border-color:var(--line);color:#82969a}a{color:#087064}a:hover{color:#055a52}
+:focus-visible{outline:3px solid #087d7070!important;outline-offset:3px!important}
+@media(max-width:680px){.wrap{width:calc(100% - 24px);padding:14px 0 38px}.hero{padding:22px 17px;border-radius:16px}.hero p{font-size:12px}.flow-item{min-height:0}.quickstart{padding:16px}.quickstart .actions{display:grid;grid-template-columns:1fr}.quickstart .actions button{width:100%}.quickstart pre{font-size:10px}.endpoint{padding:14px}.endpoint-grid{gap:9px}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+
+@media(min-width:681px) and (max-width:1100px){.wrap{width:min(100% - 52px,980px)}.endpoint-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.quicksteps{gap:10px}}
+@media(min-width:1101px){.wrap{width:min(1180px,calc(100% - 72px))}.endpoint-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media print{body{background:#fff!important}.wrap{width:100%;padding:0}.hero{print-color-adjust:exact;-webkit-print-color-adjust:exact}.quickstart,.endpoint{break-inside:avoid;box-shadow:none}}

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#142d36">
+  <title>業務運用 | 2415</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/">業務<span>運用</span></a><div class="user"><span id="identity">SSO IDで安全にログイン</span><button id="logout" class="quiet hidden">ログアウト</button></div></header>
+  <main>
+    <section id="welcome" class="welcome"><div class="welcome-copy"><div class="eyebrow">WORKSPACE / OPERATIONS</div><h1>毎日の記録を、<br><em>ひとつの場所に。</em></h1><p>勤怠と業務報告を日別に記録し、月次の状況をすぐ確認できます。</p><a class="primary login" href="/auth/login">SSO IDでログイン <span>→</span></a><small>ログイン後、SSO IDの本人識別子を従業員IDとして使用します。</small></div><div class="hero-card"><div class="hero-day">DAILY LOG</div><div class="hero-row"><span>出勤</span><strong>09:00</strong></div><div class="hero-row"><span>退勤</span><strong>18:00</strong></div><div class="hero-row"><span>作業時間</span><strong>8.0 <small>時間</small></strong></div><div class="hero-task">今日の業務を記録する</div></div></section>
+    <section id="workspace" class="hidden">
+      <div class="heading"><div><div class="eyebrow">YOUR WORKSPACE</div><h1>業務管理</h1></div><div class="period"><button id="prev" aria-label="前月">←</button><strong id="month-label"></strong><button id="next" aria-label="翌月">→</button></div></div>
+      <div class="summary-grid"><article class="metric"><span>勤務入力日数</span><strong id="days">0</strong><small>日</small></article><article class="metric"><span>勤務時間合計</span><strong id="hours">0.00</strong><small>時間</small></article><article class="metric"><span>8時間超過日</span><strong id="overtime">0</strong><small>日</small></article><article class="metric warning"><span>入力確認</span><strong id="issues">0</strong><small>件</small></article></div>
+      <div class="toolbar"><h2>日別の勤務記録</h2><div><button id="check" class="secondary">入力チェック</button><button id="pdf" class="secondary">PDF出力</button><button id="export" class="secondary">CSVを書き出す</button></div></div>
+      <div id="issue-list" class="issue-list hidden"></div><div id="entries" class="entries"></div>
+      <footer>データは日付ごとに保存されます。年月を移動しても過去の記録は残ります。</footer>
+    </section>
+    <div id="toast" role="status" aria-live="polite"></div>
+  </main>
+</body>
+</html>

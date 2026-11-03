@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#101b2d">
+  <meta name="description" content="TUTI BaaS 契約者ポータル">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <title>TUTI BaaS 契約者ポータル</title>
+  <link rel="stylesheet" href="app.css?v=20260930-7">
+  <script src="app.js?v=20260930-8" defer></script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="./"><span class="brand-mark">T</span><span><b>TUTI BaaS</b><small>契約者ポータル</small></span></a><div class="top-right"><span id="connection-state" class="connection-state"><i></i>未接続</span><button id="disconnect" class="button button-quiet hidden" type="button">切断</button></div></header>
+  <main>
+    <section id="connect-view" class="connect-layout">
+      <div class="intro"><p class="eyebrow">TENANT WORKSPACE</p><h1>契約者ポータル</h1><p class="intro-copy">製品、ライセンス、利用状況をひとつの画面で管理します。</p><div class="trust-note"><span>◇</span><p><b>APIキーはこの画面に保存されません</b><br>接続中だけメモリーに保持し、切断またはページを閉じると消去します。</p></div></div>
+      <form id="connect-form" class="connect-card">
+        <div class="card-heading"><span class="step">01</span><div><h2>テナントに接続</h2><p>管理者から発行されたTenant APIキーを入力してください。</p></div></div>
+        <label for="base-url">API接続先</label><input id="base-url" type="url" value="https://2415.jp/license" required autocomplete="url" spellcheck="false">
+        <label for="environment">環境</label><select id="environment"><option value="production">Production</option><option value="sandbox">Sandbox</option></select>
+        <label for="api-key">Tenant APIキー</label><input id="api-key" type="password" placeholder="baas_prod_… または baas_sandbox_…" required autocomplete="off" autocapitalize="none" spellcheck="false">
+        <button class="button button-primary button-wide" type="submit">安全に接続 <span aria-hidden="true">→</span></button>
+        <p id="connect-error" class="form-error" role="alert"></p>
+        <p class="form-foot">接続にはテナントに紐づくAPIキーが必要です。キーの権限に応じて利用できる機能が変わります。</p>
+      </form>
+    </section>
+    <section id="portal-view" class="portal hidden">
+      <aside class="sidebar"><div class="tenant-badge"><span class="tenant-icon">⌂</span><div><small>接続中のテナント</small><b id="tenant-name">—</b></div></div><nav id="navigation" aria-label="ポータルメニュー"><button class="nav-item active" data-page="overview"><span>◫</span>概要</button><button class="nav-item" data-page="products"><span>◇</span>製品</button><button class="nav-item" data-page="licenses"><span>▤</span>ライセンス</button><button class="nav-item" data-page="billing"><span>◷</span>利用・請求</button><button class="nav-item" data-page="audit"><span>≋</span>操作履歴</button></nav><div class="side-note">通信はHTTPSで保護されます。キーは端末へ保存されません。</div></aside>
+      <div class="workspace"><header class="page-header"><div><p class="eyebrow">TENANT WORKSPACE / <span id="env-label">PRODUCTION</span></p><h1 id="page-title" tabindex="-1">概要</h1><p id="page-subtitle">テナントの利用状況を確認できます。</p></div><button id="refresh" type="button" class="button button-secondary" aria-label="表示内容を更新">↻ 更新</button></header><div id="notice" class="notice hidden" role="status" aria-live="polite"></div><div id="page-content" role="region" aria-labelledby="page-title" aria-busy="false"></div></div>
+    </section>
+  </main>
+  <footer><span>TUTI BaaS</span><span>APIキーはブラウザー内に保存されません</span></footer>
+</body>
+</html>

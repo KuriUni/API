@@ -1,0 +1,14 @@
+:root{--brand:#087d70;--ink:#17323b;--muted:#617b81;--line:#dce8e7;--wash:#f2f7f6}
+body{background:radial-gradient(circle at 15% 0,#dff3ed 0,transparent 32%),var(--wash);color:var(--ink)}
+.wrap{max-width:620px;padding-top:calc(20px + env(safe-area-inset-top))}
+.card{border-color:var(--line);border-radius:18px;box-shadow:0 8px 24px #16343a0b}.pill{background:#e7f5f1;color:#087064}
+.videoWrap{border:1px solid #d4e5e2;border-radius:16px;background:#17323b}.cue{background:#17323be8;border:1px solid #ffffff24;backdrop-filter:blur(8px);font-size:clamp(16px,4vw,19px)}
+.autoBadge{background:#118866ed;box-shadow:0 3px 10px #102a3040}.dot{background:#dce8e7}.dot.on{background:#d49a26;box-shadow:0 0 0 4px #d49a261a}.dot.done{background:#168860}
+button{min-height:48px;border-radius:11px;background:#087d70;box-shadow:0 4px 12px #087d701b}button:hover{background:#06675e}.status{border:1px solid var(--line);background:#f7faf9;color:#38575c}.ok{border-color:#c9e8d4;background:#eaf7ef;color:#176747}.warn{border-color:#f0d9aa;background:#fff8e8;color:#805b19}.privacy{font-size:11px;line-height:1.75;color:#607a80}
+.skip-link{position:fixed;z-index:10;top:8px;left:8px;padding:10px 13px;border-radius:8px;background:#17323b;color:#fff;transform:translateY(-160%)}.skip-link:focus{transform:translateY(0)}
+:focus-visible{outline:3px solid #087d7070!important;outline-offset:3px!important}
+@media(max-width:420px){.wrap{padding-inline:11px}.card{padding:14px;border-radius:15px}.cue{left:8px;right:8px;bottom:9px;padding:10px}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;transition:none!important}}
+
+@media(min-width:700px){.wrap{max-width:760px}.card{padding:22px}.videoWrap{max-height:72vh}.video{aspect-ratio:4/3;max-height:68vh}}
+@media(min-width:700px) and (orientation:landscape){.wrap{display:grid;grid-template-columns:minmax(280px,.8fr) minmax(340px,1.2fr);grid-template-rows:auto auto;gap:14px;max-width:1100px}.wrap>.card:nth-child(2){grid-column:1;grid-row:1}.wrap>.card:nth-child(3){grid-column:2;grid-row:1/span 2}.wrap>.card:nth-child(4){grid-column:1;grid-row:2}.wrap>.card{min-width:0}.video{height:min(68vh,720px);aspect-ratio:auto}}

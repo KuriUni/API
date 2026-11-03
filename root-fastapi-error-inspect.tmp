@@ -1,0 +1,1 @@
+{"type": "KeyError", "frames": [{"file": "index.cgi", "line": 67}, {"file": "fastapi_cgi.py", "line": 7}, {"file": "asgi.py", "line": 128}, {"file": "asgi.py", "line": 122}, {"file": "native_routes.py", "line": 260}, {"file": "native_routes.py", "line": 126}]}

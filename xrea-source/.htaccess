@@ -1,0 +1,148 @@
+Options +ExecCGI
+AddHandler cgi-script .cgi
+DirectoryIndex index.cgi
+Options -Indexes
+DirectoryIndex index.cgi
+
+# Keep the original status using a local Apache error document.
+# Release targets serve this application under /license/.
+ErrorDocument 400 /license/error.php
+ErrorDocument 401 /license/error.php
+ErrorDocument 403 /license/error.php
+ErrorDocument 404 /license/error.php
+ErrorDocument 405 /license/error.php
+ErrorDocument 408 /license/error.php
+ErrorDocument 409 /license/error.php
+ErrorDocument 410 /license/error.php
+ErrorDocument 413 /license/error.php
+ErrorDocument 414 /license/error.php
+ErrorDocument 415 /license/error.php
+ErrorDocument 422 /license/error.php
+ErrorDocument 429 /license/error.php
+ErrorDocument 500 /license/error.php
+ErrorDocument 501 /license/error.php
+ErrorDocument 502 /license/error.php
+ErrorDocument 503 /license/error.php
+ErrorDocument 504 /license/error.php
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    # BEGIN TUTI ROOT FASTAPI
+    RewriteCond %{HTTP_HOST} ^(?:2415\.jp|backup\.2415\.jp|main\.2415\.jp)(?::[0-9]+)?$ [NC]
+    RewriteCond %{HTTPS} !=on
+    RewriteCond %{HTTP:CF-Visitor} !https [NC]
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L,NE]
+    RewriteCond %{HTTP_HOST} ^(?:2415\.jp|backup\.2415\.jp|main\.2415\.jp)(?::[0-9]+)?$ [NC]
+    RewriteRule ^(?:config(?:\.example)?\.php|ha/role\.php)$ - [R=404,L]
+    RewriteCond %{HTTP_HOST} ^(?:2415\.jp|backup\.2415\.jp|main\.2415\.jp)(?::[0-9]+)?$ [NC]
+    RewriteRule ^(?:_fastapi(?:/|$)|\.well-known/openid-configuration$) /license/index.cgi [QSA,L]
+    RewriteCond %{HTTP_HOST} ^(?:2415\.jp|backup\.2415\.jp|main\.2415\.jp)(?::[0-9]+)?$ [NC]
+    RewriteRule ^(?:.*\.(?:py|pyc|pyo|json|sql|pem|key|xml|log|bak|old|md|zip)|\..*)$ - [R=404,L,NC]
+    # Legacy .php-shaped URLs are compatibility routes handled by Python CGI, never PHP.
+    RewriteCond %{HTTP_HOST} ^(?:2415\.jp|backup\.2415\.jp|main\.2415\.jp)(?::[0-9]+)?$ [NC]
+    RewriteRule \.(?:php[0-9]?|phtml|phar)(?:/|$) /license/index.cgi [QSA,L,NC]
+    RewriteCond %{HTTP_HOST} ^(?:2415\.jp|backup\.2415\.jp|main\.2415\.jp)(?::[0-9]+)?$ [NC]
+    RewriteRule ^(?:index\.cgi|root-(?:install|canary)-[a-f0-9]+\.cgi)$ - [L]
+    RewriteCond %{HTTP_HOST} ^(?:2415\.jp|backup\.2415\.jp|main\.2415\.jp)(?::[0-9]+)?$ [NC]
+    RewriteRule ^ /license/index.cgi [QSA,L]
+    # END TUTI ROOT FASTAPI
+
+    # BEGIN TUTI FULL NATIVE 20261027T165820Z-abee004f
+    RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
+    RewriteCond %{HTTPS} !=on
+    RewriteCond %{HTTP:CF-Visitor} !https [NC]
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L,NE]
+    RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
+    RewriteRule ^python-(?:migration|production(?:-[A-Za-z0-9]+)*)(?:/|$) - [L]
+    RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
+    RewriteRule ^(?:config(?:\.example)?\.php|ha/role\.php)$ - [R=404,L]
+    RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
+    RewriteRule ^$ python-production/native-full-20261027T165820Z-abee004f.cgi [QSA,L,NC]
+    RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
+    RewriteRule ^(?:tenant-portal|mobile-manager)(?:/|$) python-production/native-full-20261027T165820Z-abee004f.cgi [QSA,L,NC]
+    RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
+    RewriteRule \.(?:php[0-9]?|phtml|phar)(?:/|$) python-production/native-full-20261027T165820Z-abee004f.cgi [QSA,L,NC]
+    RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
+    RewriteRule ^_fastapi(?:/|$) python-production/native-full-20261027T165820Z-abee004f.cgi [QSA,L,NC]
+    RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
+    RewriteRule ^_migration/health$ python-production/native-full-20261027T165820Z-abee004f.cgi [QSA,L,NC]
+    RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
+    RewriteRule ^\.well-known/openid-configuration$ python-production/native-full-20261027T165820Z-abee004f.cgi [QSA,L,NC]
+    # END TUTI FULL NATIVE
+
+    # BEGIN TUTI PYTHON PRODUCTION 20261026T110652Z-39224254
+    RewriteCond %{HTTPS} !=on
+    RewriteCond %{HTTP:CF-Visitor} !https [NC]
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L,NE]
+    RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
+    RewriteRule ^python-(?:migration|production(?:-[A-Za-z0-9]+)*)(?:/|$) - [L]
+    RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
+    RewriteRule ^(?:config(?:\.example)?\.php|ha/role\.php)$ - [R=404,L]
+    RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
+    RewriteRule ^$ python-production-full-20261026t110652z/index.cgi [QSA,L]
+    RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
+    RewriteRule ^(?:tenant-portal|mobile-manager)(?:/|$) python-production-full-20261026t110652z/index.cgi [QSA,L]
+    RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
+    RewriteRule ^api/v3/index\.php$ python-production/fastapi-v3-20261027T042838Z-b0b2a2ff.cgi [QSA,L]
+    RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
+    RewriteRule ^api/v3/offline-public-key\.php$ python-production/fastapi-key-20261027T092524Z-2b110710.cgi [QSA,L]
+    RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
+    RewriteRule \.(?:php[0-9]?|phtml|phar)(?:/|$) python-production-full-20261026t110652z/index.cgi [QSA,L,NC]
+    RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
+    RewriteRule ^_fastapi(?:/|$) python-production/index.cgi [QSA,L]
+    RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
+    RewriteRule ^_migration/health$ python-production-full-20261026t110652z/index.cgi [QSA,L]
+    # END TUTI PYTHON PRODUCTION
+
+
+    # Enforce TLS while respecting HTTPS terminated by a reverse proxy. The
+    # CF-Visitor condition avoids redirect loops when Cloudflare uses Flexible
+    # TLS between the edge and this origin.
+    RewriteCond %{HTTPS} !=on
+    RewriteCond %{HTTP:CF-Visitor} !https [NC]
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L,NE]
+
+    # Application roots supported by the release targets: /license and /.
+    # The marker contains no secrets and is created only by authenticated mode.php.
+    RewriteCond %{DOCUMENT_ROOT}/license/.tuti-maintenance -f [OR]
+    RewriteCond %{DOCUMENT_ROOT}/.tuti-maintenance -f
+    RewriteRule !^(?:maintenance\.php$|admin_api\.php$|ha/(?:mode|status|health|release|export|import|sync|retry-sync|failback-operation|audit-recent|audit-verify|migrate|restore-test|retention)\.php$) maintenance.php [END]
+
+    # Retired authentication URLs share one Python CGI implementation.
+    RewriteRule ^ha/(?:passkey|passkey-callback|passkey-ha-callback|passkey-keyadmin-callback|passkey_api|web-passkey-manage|passkey-federation)\.php$ python-endpoints/legacy-auth.cgi [L]
+    RewriteRule ^api/baas/v1/(?:portal-passkey|common-id-sso)\.php$ python-endpoints/legacy-auth.cgi [L]
+
+    # Rules are relative to this app's document root, whether the host maps it
+    # to /license or to the root of sso.2415.jp.
+    RewriteRule ^(?:build|dist|__pycache__|logs|tests|docs|client_app|db)(?:/|$) - [R=404,L,NC]
+    RewriteRule ^admin_api(?:/|$) - [R=404,L,NC]
+    RewriteRule ^api/v2/(?!activate\.php$|phone_activate\.php$|boot_activate\.php$|reissue\.php$) - [R=404,L,NC]
+    RewriteRule ^\.well-known/openid-configuration$ api/baas/v1/common-id-sso.php?action=discovery [L,QSA]
+    RewriteRule ^(?:.*\.(?:py|pyc|pyo|spec|docx|sql|pem|xml|json|log|bak|old|orig|save|md)|.*~)$ - [R=404,L,NC]
+</IfModule>
+
+<IfModule mod_headers.c>
+    Header always set Strict-Transport-Security "max-age=31536000"
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set Content-Security-Policy "base-uri 'self'; object-src 'none'; frame-ancestors 'none'"
+    Header always set Referrer-Policy "same-origin"
+    Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(self)"
+</IfModule>
+
+<FilesMatch "^(config\.php|config\.example\.php|install\.sql|setup\.lock)$">
+    Require all denied
+</FilesMatch>
+
+<FilesMatch "(?i)^(?:\..*|.*\.(?:zip|sql|pem|xml|json|log|bak|old|orig|save))$">
+    Require all denied
+</FilesMatch>
+
+
+<FilesMatch "^(phone_private\.pem|phone_public\.xml)$">
+    Require all denied
+</FilesMatch>
+
+<FilesMatch "(?i)^(?:\.git|\.env|composer\.(?:json|lock)|package-lock\.json)$">
+    Require all denied
+</FilesMatch>

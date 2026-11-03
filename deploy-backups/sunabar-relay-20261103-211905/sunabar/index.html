@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101d31">
+  <meta name="description" content="APIキー・Sandbox API不要。ブラウザー内だけでBaaSの操作を試せるSunabarシミュレーター。">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Sunabar — BaaS API Playground</title>
+  <link rel="stylesheet" href="sunabar.css">
+  <script src="sunabar.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="Sunabar home"><span class="brand-mark">S</span><span>sunabar<span class="brand-light">.playground</span></span></a>
+    <div class="top-status"><span class="local-indicator"><i></i> LOCAL SIMULATION</span><button id="reset" class="button button-quiet" type="button">セッションをリセット</button></div>
+  </header>
+
+  <main class="shell">
+    <section class="hero">
+      <div class="hero-copy"><p class="eyebrow">TUTI BAAS · INTERACTIVE SANDBOX</p><h1>APIキーなしで、<br><span>まず触ってみる。</span></h1><p>リクエストを送って、レスポンスを見て、動きを確かめる。サーバー接続もアカウント登録もいらないAPIプレイグラウンド。</p><div class="hero-tags"><span>登録不要</span><span>APIキー不要</span><span>本番に接続しない</span></div></div>
+      <div class="hero-console" aria-hidden="true"><div class="console-head"><span></span><span></span><span></span><b>request.js</b></div><pre><span class="code-muted">// ブラウザー内でシミュレーション</span>
+<span class="code-purple">const</span> result = sunabar.simulate({
+  method: <span class="code-green">'POST'</span>,
+  path: <span class="code-green">'/mock/v1/licenses'</span>,
+  body: { product_id: <span class="code-number">101</span> }
+});
+
+<span class="code-muted">// APIキーなしで結果を確認</span>
+<span class="code-blue">console</span>.log(result.status); <span class="code-muted">// 201</span></pre></div>
+    </section>
+
+    <div class="notice"><span class="notice-icon">i</span><div><b>これはローカルシミュレーターです</b><p>データはこのブラウザーのセッション内だけで保持されます。実際のAPI、契約、ライセンス、課金には一切影響しません。</p></div><span class="notice-lock">NETWORK OFF</span></div>
+
+    <section class="workspace-grid">
+      <aside class="sidebar">
+        <div class="side-title">PLAYGROUND <span>3 OPERATIONS</span></div>
+        <button class="operation active" data-operation="products"><span class="operation-icon">▦</span><span><b>製品一覧</b><small>GET · 製品データを取得</small></span><span class="chevron">›</span></button>
+        <button class="operation" data-operation="issue"><span class="operation-icon">＋</span><span><b>ライセンス発行</b><small>POST · デモキーを作成</small></span><span class="chevron">›</span></button>
+        <button class="operation" data-operation="verify"><span class="operation-icon">✓</span><span><b>ライセンス確認</b><small>POST · キーの状態を確認</small></span><span class="chevron">›</span></button>
+        <div class="side-foot"><span class="storage-dot"></span><span>SESSION STORAGE<br><b>このタブを閉じると消去</b></span></div>
+      </aside>
+
+      <section class="request-panel" aria-labelledby="operation-title">
+        <div class="panel-heading"><div><p class="eyebrow">REQUEST BUILDER</p><h2 id="operation-title">製品一覧を取得</h2></div><span id="method-badge" class="method-badge get">GET</span></div>
+        <p id="operation-description" class="panel-description">サンプルテナントで利用できる製品を取得します。</p>
+        <div class="endpoint-bar"><span class="endpoint-host">sunabar.local</span><span class="endpoint-path" id="endpoint-path">/api/baas/v1/products</span><button id="copy-path" class="copy-button" type="button" title="パスをコピー">⧉</button></div>
+
+        <div class="request-fields" id="request-fields"></div>
+        <div class="body-heading"><label for="request-body">REQUEST BODY</label><button id="reset-body" type="button" class="text-button">サンプルに戻す</button></div>
+        <div class="editor-wrap"><div class="line-number">1<br>2<br>3<br>4<br>5<br>6</div><textarea id="request-body" spellcheck="false" aria-label="JSONリクエスト本文"></textarea></div>
+        <div class="request-actions"><span class="auth-note"><span>⌑</span> Authorization header <b>不要</b></span><button id="send" class="button button-primary" type="button"><span>▶</span> リクエストを実行</button></div>
+        <p id="form-error" class="form-error" role="alert"></p>
+      </section>
+
+      <section class="response-panel" aria-labelledby="response-title">
+        <div class="response-heading"><div><p class="eyebrow">RESPONSE</p><h2 id="response-title">結果をここに表示</h2></div><button id="copy-response" class="copy-button" type="button" title="レスポンスをコピー" disabled>⧉</button></div>
+        <div class="response-meta"><span id="response-status" class="status-empty">未実行</span><span id="response-time">— ms</span><button id="response-tab" class="response-tab active" type="button">JSON</button></div>
+        <pre id="response-json" class="response-json"><span class="json-placeholder">左の操作を選び、リクエストを実行してください。</span></pre>
+        <div class="response-footer"><span><i></i> simulated response</span><span id="response-size">—</span></div>
+        <div class="history-block"><div class="history-title"><b>このセッションの履歴</b><button id="clear-history" class="text-button" type="button">消去</button></div><div id="history-list" class="history-list"><p class="empty-history">まだ実行したリクエストはありません。</p></div></div>
+      </section>
+    </section>
+
+    <section class="how-section"><div><p class="eyebrow">HOW SUNABAR WORKS</p><h2>本物のAPIキーを入れる必要はありません。</h2><p>Sunabarは画面上の操作からモックレスポンスを生成するフロントエンドシミュレーターです。ネットワーク通信を行わないため、認証情報の設定も、Sandbox APIの契約やキー発行も必要ありません。</p></div><div class="steps"><article><span>01</span><b>操作を選ぶ</b><p>製品取得・発行・確認から選択。</p></article><article><span>02</span><b>内容を編集</b><p>JSONを変更して入力検証を試す。</p></article><article><span>03</span><b>結果を確認</b><p>成功・入力エラーのJSON応答を見る。</p></article></div></section>
+    <footer><span>Sunabar · TUTI BaaS Playground</span><span>LOCAL ONLY · REAL API IS NEVER CALLED</span></footer>
+  </main>
+</body>
+</html>

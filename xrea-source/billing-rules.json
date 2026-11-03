@@ -1,0 +1,990 @@
+{
+  "schema": 12,
+  "pricing_revision": "2026-10-02-progressive-issuance-v1",
+  "mode": "TEST_ONLY",
+  "production_ready": false,
+  "currency": "JPY",
+  "credit_definition": "1 Credit = 1 JPY equivalent",
+  "billing_unit_definition": "1000 billing units = 1 Credit",
+  "api_pricing_models": {
+    "license.issue.v6.submit": {
+      "basis": "per request, based on requested key count",
+      "production_formula": "2.000 Cr minimum through 200 keys; 0.010 Cr/key from 201–25,000; 0.006 Cr/key from 25,001–50,000; 0.004 Cr/key from 50,001–100,000",
+      "sandbox_multiplier": "0.1"
+    },
+    "license.issue.v7.submit": {
+      "basis": "same progressive schedule, 10% discount",
+      "max_keys_per_request": 1000,
+      "sandbox_multiplier": "0.1"
+    },
+    "license.issue.v8.submit": {
+      "basis": "per request, based on requested key count",
+      "production_formula": "2.000 Cr minimum through 200 keys; 0.010 Cr/key from 201–25,000; 0.006 Cr/key from 25,001–50,000; 0.004 Cr/key from 50,001–100,000",
+      "sandbox_multiplier": "0.1"
+    }
+  },
+  "v4_speed_surcharge_policy": {
+    "fixed_chunk_range_removed": true,
+    "default_chunk": "auto_max",
+    "effective_chunk_capped_by_job_count": true,
+    "max_multiplier": 20.0,
+    "tiers": [
+      {
+        "lane": "Light",
+        "max_chunk": 100,
+        "multiplier": 1.0,
+        "code": "1x"
+      },
+      {
+        "lane": "Middle",
+        "max_chunk": 250,
+        "multiplier": 1.5,
+        "code": "1_5x"
+      },
+      {
+        "lane": "High",
+        "max_chunk": 400,
+        "multiplier": 2.0,
+        "code": "2x"
+      },
+      {
+        "lane": "Max",
+        "max_chunk": 500,
+        "multiplier": 3.0,
+        "code": "3x"
+      },
+      {
+        "lane": "Maxx5",
+        "max_chunk": 2500,
+        "multiplier": 5.0,
+        "code": "5x"
+      },
+      {
+        "lane": "Max10",
+        "max_chunk": 5000,
+        "multiplier": 10.0,
+        "code": "10x"
+      },
+      {
+        "lane": "Max20",
+        "max_chunk": null,
+        "multiplier": 20.0,
+        "code": "20x"
+      }
+    ]
+  },
+  "jpki_policy": {
+    "mock_available": false,
+    "sandbox_uses_real_verification_path": true
+  },
+  "mnsl_policy": {
+    "local_card_read_is_free": true,
+    "local_card_artifact_reads_are_free": true,
+    "terms_consent_jpki_is_free": true,
+    "granular_pipeline_billing": true,
+    "local_only_capture_is_free": true,
+    "ios_randomizer_billing_unit": "completed_secure_identity_session",
+    "ios_randomizer_frames_per_session": 5,
+    "ios_randomizer_per_frame_billing": false,
+    "ios_randomizer_bundle_includes": [
+      "encrypted_transfer",
+      "session_protection",
+      "anti_replay_and_abuse_controls",
+      "audit",
+      "random_action_validation"
+    ],
+    "ios_randomizer_no_automatic_face_liveness_double_charge": true
+  },
+  "status_policy": {
+    "billable_status_min": 200,
+    "billable_status_max": 499,
+    "non_billable_status_codes": [
+      429
+    ],
+    "non_billable_status_ranges": [
+      [
+        500,
+        599
+      ]
+    ]
+  },
+  "operation_map": {
+    "status": "health.ha_status",
+    "products.list": "product.list",
+    "products.create": "product.create",
+    "products.update": "product.update",
+    "products.archive": "product.archive",
+    "products.restore": "product.restore",
+    "licenses.list": "license.list",
+    "licenses.issue": "license.issue.v1",
+    "licenses.issue.replay": "license.issue.v1.replay",
+    "licenses.issue.v2": "license.issue.v2",
+    "licenses.issue.v2.replay": "license.issue.v2.replay",
+    "licenses.issue.auto.assess": "license.issue.auto.assess",
+    "licenses.issue.v3": "license.issue.v3",
+    "licenses.issue.v3.replay": "license.issue.v3.replay",
+    "licenses.issue.v4.submit": "license.issue.v4.submit",
+    "licenses.issue.v4.submit.speed.1x": "license.issue.v4.submit",
+    "licenses.issue.v4.submit.speed.1_5x": "license.issue.v4.submit.speed.1_5x",
+    "licenses.issue.v4.submit.speed.2x": "license.issue.v4.submit.speed.2x",
+    "licenses.issue.v4.submit.speed.3x": "license.issue.v4.submit.speed.3x",
+    "licenses.issue.v4.submit.speed.5x": "license.issue.v4.submit.speed.5x",
+    "licenses.issue.v4.submit.speed.10x": "license.issue.v4.submit.speed.10x",
+    "licenses.issue.v4.submit.speed.20x": "license.issue.v4.submit.speed.20x",
+    "licenses.issue.v4.replay": "license.issue.v4.replay",
+    "licenses.issue.v4.status": "license.issue.v4.status",
+    "licenses.issue.v4.list": "license.issue.v4.list",
+    "licenses.issue.v4.results": "license.issue.v4.results",
+    "licenses.issue.v4.cancel": "license.issue.v4.cancel",
+    "licenses.issue.v6.submit.tier.1_100": "license.issue.v6.submit.tier.1_100",
+    "licenses.issue.v6.submit.tier.101_1000": "license.issue.v6.submit.tier.101_1000",
+    "licenses.issue.v6.submit.tier.1001_10000": "license.issue.v6.submit.tier.1001_10000",
+    "licenses.issue.v6.submit.tier.10001_25000": "license.issue.v6.submit.tier.10001_25000",
+    "licenses.issue.v6.submit.tier.25001_50000": "license.issue.v6.submit.tier.25001_50000",
+    "licenses.issue.v6.submit.tier.50001_100000": "license.issue.v6.submit.tier.50001_100000",
+    "licenses.issue.v7.submit.tier.1_100": "license.issue.v7.submit.tier.1_100",
+    "licenses.issue.v7.submit.tier.101_1000": "license.issue.v7.submit.tier.101_1000",
+    "licenses.issue.v7.replay": "license.issue.v6.replay",
+    "licenses.issue.v6.replay": "license.issue.v6.replay",
+    "licenses.issue.v6.status": "license.issue.v6.status",
+    "licenses.issue.v6.results": "license.issue.v6.results",
+    "licenses.issue.v6.cancel": "license.issue.v6.cancel",
+    "licenses.issue.v6.legacy_transfer.v2": "license.issue.v6.legacy_transfer.v2",
+    "licenses.issue.v6.legacy_transfer.v3": "license.issue.v6.legacy_transfer.v3",
+    "licenses.issue.v6.legacy_transfer.v4": "license.issue.v6.legacy_transfer.v4",
+    "licenses.issue.v6.legacy_transfer.v5": "license.issue.v6.legacy_transfer.v5",
+    "licenses.issue.v6.beta": "license.issue.v6",
+    "benchmark.issue.v6": "benchmark.issue.v6",
+    "benchmark.issue.v1": "benchmark.issue.v1",
+    "benchmark.issue.v1.replay": "benchmark.issue.replay",
+    "benchmark.issue.v1.batch": "benchmark.issue.v1.batch",
+    "benchmark.issue.v2": "benchmark.issue.v2",
+    "benchmark.issue.v2.replay": "benchmark.issue.replay",
+    "benchmark.issue.v3": "benchmark.issue.v3",
+    "benchmark.issue.v3.replay": "benchmark.issue.replay",
+    "benchmark.issue.v4.submit.speed.1x": "benchmark.issue.v4.submit",
+    "benchmark.issue.v4.submit.speed.1_5x": "benchmark.issue.v4.submit.speed.1_5x",
+    "benchmark.issue.v4.submit.speed.2x": "benchmark.issue.v4.submit.speed.2x",
+    "benchmark.issue.v4.submit.speed.3x": "benchmark.issue.v4.submit.speed.3x",
+    "benchmark.issue.v4.submit.speed.5x": "benchmark.issue.v4.submit.speed.5x",
+    "benchmark.issue.v4.submit.speed.10x": "benchmark.issue.v4.submit.speed.10x",
+    "benchmark.issue.v4.submit.speed.20x": "benchmark.issue.v4.submit.speed.20x",
+    "benchmark.issue.v4.replay": "benchmark.issue.replay",
+    "licenses.update": "license.update",
+    "licenses.activate": "license.activate",
+    "licenses.deactivate": "license.deactivate",
+    "licenses.revoke_all_devices": "device.revoke_all",
+    "licenses.revoke_device": "device.revoke",
+    "licenses.restore_device": "device.restore",
+    "licenses.delete": "license.delete",
+    "licenses.delete.replay": "license.delete.replay",
+    "licenses.bulk_delete": "license.delete",
+    "licenses.bulk_delete.replay": "license.delete.replay",
+    "batch.issue": "license.issue.v1.batch",
+    "audit.list": "audit.list",
+    "billing.summary": "billing.summary",
+    "billing.invoices": "audit.query",
+    "tenant.export": "tenant.export",
+    "sandbox_keys.list": "api_key.sandbox.list",
+    "sandbox_keys.issue": "api_key.sandbox.issue",
+    "sandbox_keys.rotate": "api_key.sandbox.rotate",
+    "sandbox_keys.revoke": "api_key.sandbox.revoke",
+    "sample_sdk_keys.list": "api_key.sample_sdk.list",
+    "sample_sdk_keys.issue": "api_key.sample_sdk.issue",
+    "sample_sdk_keys.rotate": "api_key.sample_sdk.rotate",
+    "sample_sdk_keys.revoke": "api_key.sample_sdk.revoke",
+    "webhooks.list": "webhook.list",
+    "webhooks.create": "webhook.create",
+    "webhooks.update": "webhook.manage",
+    "webhooks.delete": "webhook.delete",
+    "product_key.activate": "product_key.activate",
+    "product_key.status": "product_key.status",
+    "product_key.verify": "product_key.verify",
+    "product_key.refresh": "product_key.refresh",
+    "product_key.deactivate": "product_key.deactivate",
+    "product_key.reissue": "product_key.reissue",
+    "mnsl.session.create": "mnsl.session.create",
+    "mnsl.session.status": "mnsl.session.status",
+    "mnsl.session.heartbeat": "mnsl.session.heartbeat",
+    "mnsl.session.close": "mnsl.session.close",
+    "mnsl.qr.issue": "mnsl.qr.issue",
+    "mnsl.qr.refresh": "mnsl.qr.refresh",
+    "mnsl.qr.consume": "mnsl.qr.consume",
+    "mnsl.android.bind": "mnsl.android.bind",
+    "mnsl.android.handshake": "mnsl.android.handshake",
+    "mnsl.android.payload.receive": "mnsl.android.payload.receive",
+    "mnsl.android.card_read.create": "mnsl.card.read.local",
+    "mnsl.android.card_read.status": "mnsl.card.read.local",
+    "mnsl.card.read.local": "mnsl.card.read.local",
+    "mnsl.card.certificate.read.local": "mnsl.card.certificate.read.local",
+    "mnsl.card.photo.read.local": "mnsl.card.photo.read.local",
+    "mnsl.card.pin_retry.read.local": "mnsl.card.pin_retry.read.local",
+    "mnsl.card_photo.extract": "mnsl.card_photo.extract",
+    "mnsl.card_photo.quality": "mnsl.card_photo.quality",
+    "mnsl.card_photo.face.compare": "mnsl.card_photo.face.compare",
+    "mnsl.card_photo.authenticity.verify": "mnsl.card_photo.authenticity.verify",
+    "mnsl.card_photo.full.verify": "mnsl.card_photo.full.verify",
+    "mnsl.card_photo.verify": "mnsl.card_photo.verify",
+    "mnsl.jpki.challenge.issue": "mnsl.jpki.challenge.issue",
+    "mnsl.jpki.certificate.parse": "mnsl.jpki.certificate.parse",
+    "mnsl.jpki.certificate.validity.verify": "jpki.certificate.verify",
+    "mnsl.jpki.certificate.chain.verify": "jpki.certificate.verify",
+    "mnsl.jpki.certificate.revocation.verify": "jpki.certificate.verify",
+    "mnsl.jpki.user_auth.verify": "jpki.user_auth.verify",
+    "mnsl.jpki.signing_cert.verify": "jpki.signing_certificate.verify",
+    "mnsl.jpki.signature.verify": "jpki.signature.verify",
+    "mnsl.jpki.challenge.verify": "mnsl.jpki.challenge.verify",
+    "mnsl.jpki.full.verify": "jpki.full.verify",
+    "mnsl.jpki.binding.create": "jpki.binding",
+    "mnsl.jpki.binding.verify": "jpki.binding",
+    "mnsl.jpki.binding.refresh": "jpki.binding",
+    "mnsl.jpki.binding.revoke": "jpki.binding",
+    "mnsl.jpki.binding": "jpki.binding",
+    "mnsl.terms.jpki.verify": "mnsl.terms.jpki.verify",
+    "mnsl.terms.signature.store": "mnsl.terms.signature.store",
+    "mnsl.terms.record.verify": "mnsl.terms.record.verify",
+    "mnsl.ios.randomizer.capture": "mnsl.ios.randomizer.capture",
+    "mnsl.face.capture.local": "mnsl.face.capture.local",
+    "mnsl.face.quality": "mnsl.face.quality",
+    "mnsl.face.template.create": "mnsl.face.template.create",
+    "mnsl.face.compare": "mnsl.face.compare",
+    "mnsl.face.verify": "mnsl.face.verify",
+    "mnsl.liveness.challenge": "mnsl.liveness.challenge",
+    "mnsl.liveness.pose.verify": "mnsl.liveness.pose.verify",
+    "mnsl.liveness.sequence.verify": "mnsl.liveness.sequence.verify",
+    "mnsl.liveness.verify": "mnsl.liveness.verify",
+    "mnsl.face_liveness.verify": "mnsl.face_liveness.verify",
+    "mnsl.device.fingerprint.local": "mnsl.device.fingerprint.local",
+    "mnsl.device.attestation.verify": "mnsl.device.attestation.verify",
+    "mnsl.device.bind": "mnsl.device.bind",
+    "mnsl.device.binding.verify": "mnsl.device.binding.verify",
+    "mnsl.device.rebind": "mnsl.device.rebind",
+    "mnsl.device.unbind": "mnsl.device.unbind",
+    "mnsl.login.challenge": "mnsl.login.challenge",
+    "mnsl.login.credential.verify": "mnsl.login.credential.verify",
+    "mnsl.login.verify": "mnsl.login.verify",
+    "mnsl.login.ticket.issue": "mnsl.login.ticket.issue",
+    "mnsl.login.ticket.verify": "mnsl.login.ticket.verify",
+    "mnsl.login.ticket.refresh": "mnsl.login.ticket.refresh",
+    "mnsl.offline.ticket.issue": "mnsl.offline.ticket.issue",
+    "mnsl.offline.ticket.verify": "mnsl.offline.ticket.verify",
+    "mnsl.offline.ticket.refresh": "mnsl.offline.ticket.refresh",
+    "mnsl.offline.ticket.revoke": "mnsl.offline.ticket.revoke",
+    "mnsl.integrity.manifest.verify": "mnsl.integrity.manifest.verify",
+    "mnsl.integrity.binary.verify": "mnsl.integrity.binary.verify",
+    "mnsl.integrity.config.verify": "mnsl.integrity.config.verify",
+    "mnsl.integrity.verify": "mnsl.integrity.verify",
+    "mnsl.consent.integrity.verify": "mnsl.consent.integrity.verify",
+    "licenses.issue.v8.replay": "license.issue.v6.replay",
+    "licenses.issue.v8.status": "license.issue.v6.status",
+    "licenses.issue.v8.results": "license.issue.v6.results",
+    "licenses.issue.v8.cancel": "license.issue.v6.cancel",
+    "licenses.issue.v8.quote": "license.issue.v6.status"
+  },
+  "api_pricing": {
+    "api_key.verify": {
+      "production_units": 50,
+      "sandbox_units": 5
+    },
+    "health.ha_status": {
+      "production_units": 50,
+      "sandbox_units": 5
+    },
+    "license.status": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "license.detail": {
+      "production_units": 200,
+      "sandbox_units": 20
+    },
+    "license.list": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "license.activate": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "license.update": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "license.deactivate": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "license.revoke": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "license.delete": {
+      "production_units": 1000,
+      "sandbox_units": 100
+    },
+    "license.delete.replay": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "license.issue.v1": {
+      "production_units": 2000,
+      "sandbox_units": 200
+    },
+    "license.issue.v1.replay": {
+      "production_units": 200,
+      "sandbox_units": 20
+    },
+    "license.issue.v1.batch": {
+      "production_units": 2000,
+      "sandbox_units": 200
+    },
+    "license.issue.v2": {
+      "production_units": 2000,
+      "sandbox_units": 200
+    },
+    "license.issue.v2.replay": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "license.issue.auto.assess": {
+      "production_units": 50,
+      "sandbox_units": 5
+    },
+    "license.issue.v3": {
+      "production_units": 10000,
+      "sandbox_units": 1000
+    },
+    "license.issue.v3.replay": {
+      "production_units": 1000,
+      "sandbox_units": 100
+    },
+    "license.issue.v4.submit": {
+      "production_units": 200000,
+      "sandbox_units": 20000
+    },
+    "license.issue.v4.submit.speed.1_5x": {
+      "production_units": 300000,
+      "sandbox_units": 30000
+    },
+    "license.issue.v4.submit.speed.2x": {
+      "production_units": 400000,
+      "sandbox_units": 40000
+    },
+    "license.issue.v4.submit.speed.3x": {
+      "production_units": 600000,
+      "sandbox_units": 60000
+    },
+    "license.issue.v4.submit.speed.5x": {
+      "production_units": 1000000,
+      "sandbox_units": 100000
+    },
+    "license.issue.v4.submit.speed.10x": {
+      "production_units": 2000000,
+      "sandbox_units": 200000
+    },
+    "license.issue.v4.submit.speed.20x": {
+      "production_units": 4000000,
+      "sandbox_units": 400000
+    },
+    "license.issue.v4.replay": {
+      "production_units": 20000,
+      "sandbox_units": 2000
+    },
+    "license.issue.v4.status": {
+      "production_units": 200,
+      "sandbox_units": 20
+    },
+    "license.issue.v4.list": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "license.issue.v4.results": {
+      "production_units": 1000,
+      "sandbox_units": 100
+    },
+    "license.issue.v4.cancel": {
+      "production_units": 2000,
+      "sandbox_units": 200
+    },
+    "license.issue.v6.submit.tier.1_100": {
+      "production_units": 2000,
+      "sandbox_units": 200
+    },
+    "license.issue.v6.submit.tier.101_1000": {
+      "production_units": 10000,
+      "sandbox_units": 1000
+    },
+    "license.issue.v6.submit.tier.1001_10000": {
+      "production_units": 100000,
+      "sandbox_units": 10000
+    },
+    "license.issue.v6.submit.tier.10001_25000": {
+      "production_units": 250000,
+      "sandbox_units": 25000
+    },
+    "license.issue.v6.submit.tier.25001_50000": {
+      "production_units": 400000,
+      "sandbox_units": 40000
+    },
+    "license.issue.v6.submit.tier.50001_100000": {
+      "production_units": 600000,
+      "sandbox_units": 60000
+    },
+    "license.issue.v7.submit.tier.1_100": {
+      "production_units": 1800,
+      "sandbox_units": 180
+    },
+    "license.issue.v7.submit.tier.101_1000": {
+      "production_units": 9000,
+      "sandbox_units": 900
+    },
+    "license.issue.v6.replay": {
+      "production_units": 20000,
+      "sandbox_units": 2000
+    },
+    "license.issue.v6.status": {
+      "production_units": 200,
+      "sandbox_units": 20
+    },
+    "license.issue.v6.results": {
+      "production_units": 1000,
+      "sandbox_units": 100
+    },
+    "license.issue.v6.cancel": {
+      "production_units": 2000,
+      "sandbox_units": 200
+    },
+    "license.issue.v6.legacy_transfer.v2": {
+      "production_units": 2000,
+      "sandbox_units": 200
+    },
+    "license.issue.v6.legacy_transfer.v3": {
+      "production_units": 1500,
+      "sandbox_units": 150
+    },
+    "license.issue.v6.legacy_transfer.v4": {
+      "production_units": 1000,
+      "sandbox_units": 100
+    },
+    "license.issue.v6.legacy_transfer.v5": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "license.issue.v6": {
+      "production_units": 200000,
+      "sandbox_units": 20000
+    },
+    "benchmark.issue.v6": {
+      "production_units": 1000,
+      "sandbox_units": 250
+    },
+    "benchmark.issue.v1": {
+      "production_units": 100,
+      "sandbox_units": 25
+    },
+    "benchmark.issue.v1.batch": {
+      "production_units": 100,
+      "sandbox_units": 50
+    },
+    "benchmark.issue.v2": {
+      "production_units": 100,
+      "sandbox_units": 25
+    },
+    "benchmark.issue.v3": {
+      "production_units": 500,
+      "sandbox_units": 125
+    },
+    "benchmark.issue.v4.submit": {
+      "production_units": 1000,
+      "sandbox_units": 250
+    },
+    "benchmark.issue.v4.submit.speed.1_5x": {
+      "production_units": 1500,
+      "sandbox_units": 375
+    },
+    "benchmark.issue.v4.submit.speed.2x": {
+      "production_units": 2000,
+      "sandbox_units": 500
+    },
+    "benchmark.issue.v4.submit.speed.3x": {
+      "production_units": 3000,
+      "sandbox_units": 750
+    },
+    "benchmark.issue.v4.submit.speed.5x": {
+      "production_units": 5000,
+      "sandbox_units": 1250
+    },
+    "benchmark.issue.v4.submit.speed.10x": {
+      "production_units": 10000,
+      "sandbox_units": 2500
+    },
+    "benchmark.issue.v4.submit.speed.20x": {
+      "production_units": 20000,
+      "sandbox_units": 5000
+    },
+    "benchmark.issue.replay": {
+      "production_units": 10,
+      "sandbox_units": 1
+    },
+    "license.reissue": {
+      "production_units": 2000,
+      "sandbox_units": 200
+    },
+    "product.list": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "product.create": {
+      "production_units": 1000,
+      "sandbox_units": 100
+    },
+    "product.update": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "product.archive": {
+      "production_units": 300,
+      "sandbox_units": 30
+    },
+    "product.restore": {
+      "production_units": 300,
+      "sandbox_units": 30
+    },
+    "device.bind": {
+      "production_units": 1000,
+      "sandbox_units": 100
+    },
+    "device.unbind": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "device.revoke_all": {
+      "production_units": 1000,
+      "sandbox_units": 100
+    },
+    "device.revoke": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "device.restore": {
+      "production_units": 800,
+      "sandbox_units": 80
+    },
+    "integrity.verify": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "signature.verify": {
+      "production_units": 3000,
+      "sandbox_units": 500
+    },
+    "certificate.verify": {
+      "production_units": 2000,
+      "sandbox_units": 300
+    },
+    "jpki.certificate.verify": {
+      "production_units": 5000,
+      "sandbox_units": 3500
+    },
+    "jpki.signature.verify": {
+      "production_units": 6000,
+      "sandbox_units": 4000
+    },
+    "jpki.user_auth.verify": {
+      "production_units": 7000,
+      "sandbox_units": 5000
+    },
+    "jpki.signing_certificate.verify": {
+      "production_units": 8000,
+      "sandbox_units": 5500
+    },
+    "jpki.full.verify": {
+      "production_units": 10000,
+      "sandbox_units": 7000
+    },
+    "jpki.binding": {
+      "production_units": 10000,
+      "sandbox_units": 7000
+    },
+    "face.verify": {
+      "production_units": 3000,
+      "sandbox_units": 500
+    },
+    "liveness.verify": {
+      "production_units": 5000,
+      "sandbox_units": 1000
+    },
+    "face_liveness.verify": {
+      "production_units": 7000,
+      "sandbox_units": 1500
+    },
+    "audit.write": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "audit.query": {
+      "production_units": 200,
+      "sandbox_units": 20
+    },
+    "audit.list": {
+      "production_units": 200,
+      "sandbox_units": 20
+    },
+    "billing.summary": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "webhook.delivery": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "webhook.manage": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "webhook.list": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "webhook.create": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "webhook.delete": {
+      "production_units": 300,
+      "sandbox_units": 30
+    },
+    "tenant.create": {
+      "production_units": 5000,
+      "sandbox_units": 500
+    },
+    "tenant.export": {
+      "production_units": 1000,
+      "sandbox_units": 100
+    },
+    "api_key.issue": {
+      "production_units": 1000,
+      "sandbox_units": 100
+    },
+    "api_key.sandbox.list": {
+      "production_units": 50,
+      "sandbox_units": 5
+    },
+    "api_key.sandbox.issue": {
+      "production_units": 1000,
+      "sandbox_units": 100
+    },
+    "api_key.sandbox.rotate": {
+      "production_units": 1500,
+      "sandbox_units": 150
+    },
+    "api_key.sandbox.revoke": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "product_key.activate": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "product_key.status": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "product_key.verify": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "product_key.refresh": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "product_key.deactivate": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "product_key.reissue": {
+      "production_units": 2000,
+      "sandbox_units": 200
+    },
+    "mnsl.session.create": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "mnsl.session.status": {
+      "production_units": 50,
+      "sandbox_units": 5
+    },
+    "mnsl.session.heartbeat": {
+      "production_units": 20,
+      "sandbox_units": 2
+    },
+    "mnsl.session.close": {
+      "production_units": 20,
+      "sandbox_units": 2
+    },
+    "mnsl.qr.issue": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "mnsl.qr.refresh": {
+      "production_units": 50,
+      "sandbox_units": 5
+    },
+    "mnsl.qr.consume": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "mnsl.android.bind": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "mnsl.android.handshake": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "mnsl.android.payload.receive": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "mnsl.card.read.local": {
+      "production_units": 0,
+      "sandbox_units": 0
+    },
+    "mnsl.card.certificate.read.local": {
+      "production_units": 0,
+      "sandbox_units": 0
+    },
+    "mnsl.card.photo.read.local": {
+      "production_units": 0,
+      "sandbox_units": 0
+    },
+    "mnsl.card.pin_retry.read.local": {
+      "production_units": 0,
+      "sandbox_units": 0
+    },
+    "mnsl.card_photo.extract": {
+      "production_units": 200,
+      "sandbox_units": 40
+    },
+    "mnsl.card_photo.quality": {
+      "production_units": 500,
+      "sandbox_units": 100
+    },
+    "mnsl.card_photo.face.compare": {
+      "production_units": 3000,
+      "sandbox_units": 500
+    },
+    "mnsl.card_photo.authenticity.verify": {
+      "production_units": 1500,
+      "sandbox_units": 300
+    },
+    "mnsl.card_photo.full.verify": {
+      "production_units": 5000,
+      "sandbox_units": 1000
+    },
+    "mnsl.card_photo.verify": {
+      "production_units": 5000,
+      "sandbox_units": 1000
+    },
+    "mnsl.jpki.challenge.issue": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "mnsl.jpki.certificate.parse": {
+      "production_units": 200,
+      "sandbox_units": 50
+    },
+    "mnsl.jpki.certificate.validity.verify": {
+      "production_units": 5000,
+      "sandbox_units": 3500
+    },
+    "mnsl.jpki.certificate.chain.verify": {
+      "production_units": 5000,
+      "sandbox_units": 3500
+    },
+    "mnsl.jpki.certificate.revocation.verify": {
+      "production_units": 5000,
+      "sandbox_units": 3500
+    },
+    "mnsl.jpki.user_auth.verify": {
+      "production_units": 7000,
+      "sandbox_units": 5000
+    },
+    "mnsl.jpki.signing_cert.verify": {
+      "production_units": 8000,
+      "sandbox_units": 5500
+    },
+    "mnsl.jpki.signature.verify": {
+      "production_units": 6000,
+      "sandbox_units": 4000
+    },
+    "mnsl.jpki.challenge.verify": {
+      "production_units": 1000,
+      "sandbox_units": 200
+    },
+    "mnsl.jpki.full.verify": {
+      "production_units": 10000,
+      "sandbox_units": 7000
+    },
+    "mnsl.jpki.binding.create": {
+      "production_units": 10000,
+      "sandbox_units": 7000
+    },
+    "mnsl.jpki.binding.verify": {
+      "production_units": 10000,
+      "sandbox_units": 7000
+    },
+    "mnsl.jpki.binding.refresh": {
+      "production_units": 10000,
+      "sandbox_units": 7000
+    },
+    "mnsl.jpki.binding.revoke": {
+      "production_units": 10000,
+      "sandbox_units": 7000
+    },
+    "mnsl.jpki.binding": {
+      "production_units": 10000,
+      "sandbox_units": 7000
+    },
+    "mnsl.terms.jpki.verify": {
+      "production_units": 0,
+      "sandbox_units": 0
+    },
+    "mnsl.terms.signature.store": {
+      "production_units": 0,
+      "sandbox_units": 0
+    },
+    "mnsl.terms.record.verify": {
+      "production_units": 0,
+      "sandbox_units": 0
+    },
+    "mnsl.ios.randomizer.capture": {
+      "production_units": 15000,
+      "sandbox_units": 3000
+    },
+    "mnsl.face.capture.local": {
+      "production_units": 0,
+      "sandbox_units": 0
+    },
+    "mnsl.face.quality": {
+      "production_units": 500,
+      "sandbox_units": 100
+    },
+    "mnsl.face.template.create": {
+      "production_units": 1000,
+      "sandbox_units": 200
+    },
+    "mnsl.face.compare": {
+      "production_units": 3000,
+      "sandbox_units": 500
+    },
+    "mnsl.face.verify": {
+      "production_units": 3000,
+      "sandbox_units": 500
+    },
+    "mnsl.liveness.challenge": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "mnsl.liveness.pose.verify": {
+      "production_units": 1000,
+      "sandbox_units": 200
+    },
+    "mnsl.liveness.sequence.verify": {
+      "production_units": 3000,
+      "sandbox_units": 600
+    },
+    "mnsl.liveness.verify": {
+      "production_units": 4000,
+      "sandbox_units": 750
+    },
+    "mnsl.face_liveness.verify": {
+      "production_units": 6000,
+      "sandbox_units": 1250
+    },
+    "mnsl.device.fingerprint.local": {
+      "production_units": 0,
+      "sandbox_units": 0
+    },
+    "mnsl.device.attestation.verify": {
+      "production_units": 2000,
+      "sandbox_units": 300
+    },
+    "mnsl.device.bind": {
+      "production_units": 1000,
+      "sandbox_units": 100
+    },
+    "mnsl.device.binding.verify": {
+      "production_units": 200,
+      "sandbox_units": 20
+    },
+    "mnsl.device.rebind": {
+      "production_units": 1500,
+      "sandbox_units": 150
+    },
+    "mnsl.device.unbind": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "mnsl.login.challenge": {
+      "production_units": 50,
+      "sandbox_units": 5
+    },
+    "mnsl.login.credential.verify": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "mnsl.login.verify": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "mnsl.login.ticket.issue": {
+      "production_units": 1000,
+      "sandbox_units": 100
+    },
+    "mnsl.login.ticket.verify": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "mnsl.login.ticket.refresh": {
+      "production_units": 200,
+      "sandbox_units": 20
+    },
+    "mnsl.offline.ticket.issue": {
+      "production_units": 1500,
+      "sandbox_units": 150
+    },
+    "mnsl.offline.ticket.verify": {
+      "production_units": 100,
+      "sandbox_units": 10
+    },
+    "mnsl.offline.ticket.refresh": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "mnsl.offline.ticket.revoke": {
+      "production_units": 200,
+      "sandbox_units": 20
+    },
+    "mnsl.integrity.manifest.verify": {
+      "production_units": 200,
+      "sandbox_units": 20
+    },
+    "mnsl.integrity.binary.verify": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "mnsl.integrity.config.verify": {
+      "production_units": 200,
+      "sandbox_units": 20
+    },
+    "mnsl.integrity.verify": {
+      "production_units": 500,
+      "sandbox_units": 50
+    },
+    "mnsl.consent.integrity.verify": {
+      "production_units": 200,
+      "sandbox_units": 20
+    }
+  }
+}
