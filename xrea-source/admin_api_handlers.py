@@ -207,7 +207,23 @@ def admin_api(request_context):
                 refreshed = _encode_token(claims)
         except Exception:
             refreshed = ''
-    response = _admin_api_request(request_context)
+    try:
+        response = _admin_api_request(request_context)
+    except Exception as error:
+        try:
+            import traceback
+            from audit import append_event
+            frames = [{'file': os.path.basename(frame.filename), 'line': frame.lineno}
+                      for frame in traceback.extract_tb(error.__traceback__)[-8:]]
+            append_event('admin_page_request_failed', {
+                'stage': 'admin_api_request',
+                'error_type': type(error).__name__,
+                'frames': frames,
+                'host': host,
+            })
+        except Exception:
+            pass
+        return _error('500 Internal Server Error', '管理画面を表示できません。診断ログを確認してください。')
     if refreshed:
         base = site_url('/license/python-migration/')
         response = add_headers(response, [('Set-Cookie', SESSION_COOKIE + '=' + refreshed + '; Path=' + base + '; Max-Age=' + str(ADMIN_IDLE_TIMEOUT) + '; Secure; HttpOnly; SameSite=Strict'), ('Set-Cookie', CSRF_COOKIE + '=' + csrf + '; Path=' + base + '; Max-Age=' + str(ADMIN_IDLE_TIMEOUT) + '; Secure; SameSite=Strict')])

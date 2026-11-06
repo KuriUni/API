@@ -94,6 +94,12 @@ try {
             break
         }
     }
+    $auditPath = "/$privateName/runtime/audit.log"
+    if ($session.FileExists($auditPath)) {
+        $destination = Join-Path $root 'audit.log'
+        $session.GetFiles($auditPath, $destination, $false).Check()
+        Write-Host 'Downloaded private audit log for local event filtering.'
+    }
     foreach ($remote in @($publicRoot, "/public_html/$site")) {
         $local = Join-Path $root (($remote -replace '/', '_').Trim('_'))
         New-Item -ItemType Directory -Path $local -Force | Out-Null

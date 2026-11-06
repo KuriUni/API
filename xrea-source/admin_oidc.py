@@ -52,6 +52,14 @@ def _host(request_context):
 def _callback_url(host):
     return 'https://' + host + site_url('/license/python-migration/admin_api.php?admin_sso_callback=1')
 
+def _clear_admin_cookie_paths(cookie_names):
+    """Expire stale same-name cookies from older Path variants on this host."""
+    headers = []
+    for name in cookie_names:
+        for path in ('/', '/license', '/license/'):
+            headers.append(('Set-Cookie', name + '=; Path=' + path + '; Max-Age=0; Secure; HttpOnly; SameSite=Lax'))
+    return headers
+
 def _encode_flow(flow):
     payload = _b64e(json.dumps(flow, separators=(',', ':')).encode())
     signature = _b64e(hmac.new(_flow_key(), payload.encode('ascii'), hashlib.sha256).digest())
@@ -308,13 +316,17 @@ def callback(request_context):
     if target not in {'admin', 'mobile', 'tenant', 'tenant_app'}:
         return _redirect('admin_api.php?oidc_error=failed', headers=[clear])
     connection = None
+    failure_stage = 'token_exchange'
     try:
         client_id = TENANT_CLIENT_ID if target in {'tenant', 'tenant_app'} else CLIENT_ID
         token = _http_json(ISSUER + '/token', {'grant_type': 'authorization_code', 'code': code, 'redirect_uri': _callback_url(host), 'code_verifier': str(flow['verifier'])}, base64.b64encode((client_id + ':' + secret).encode()).decode())
+        failure_stage = 'id_token_verification'
         claims = _verify_id_token(str(token.get('id_token', '')), str(flow['nonce']), client_id)
+        failure_stage = 'sso_session_introspection'
         session = _http_json(ISSUER + '/session/introspect', {'sid': claims['sid']}, base64.b64encode((client_id + ':' + secret).encode()).decode())
         if session.get('active') is not True or int(session.get('expires_at', 0)) <= int(time.time()):
             raise RuntimeError('oidc_session_revoked')
+        failure_stage = 'post_authentication_setup'
         if target == 'tenant_app':
             from mnsl_app_sso import complete_login
             return complete_login(request_context, flow, claims, session, clear)
@@ -377,8 +389,23 @@ def callback(request_context):
             csrf_cookie = CSRF_COOKIE + '=' + csrf + site_url('; Path=/license/python-migration/; Max-Age=') + str(max(1, expires - int(time.time()))) + '; Secure; SameSite=Lax'
             return _redirect(destination, headers=[clear, ('Set-Cookie', session_cookie), ('Set-Cookie', csrf_cookie), ('Referrer-Policy', 'no-referrer')])
         destination = 'ops-app/' if target == 'admin' and flow.get('return_app') == 'ops' else 'admin_api.php'
-        return _redirect(destination, headers=[clear, ('Set-Cookie', SESSION_COOKIE + '=' + local_token + site_url('; Path=/license/python-migration/; Max-Age=') + str(max(1, expires - int(time.time()))) + '; Secure; HttpOnly; SameSite=Lax'), ('Set-Cookie', CSRF_COOKIE + '=' + csrf + site_url('; Path=/license/python-migration/; Max-Age=') + str(max(1, expires - int(time.time()))) + '; Secure; SameSite=Lax')])
+        cookie_path = site_url('/license/python-migration/')
+        cookie_max_age = str(max(1, expires - int(time.time())))
+        reset = _clear_admin_cookie_paths((SESSION_COOKIE, CSRF_COOKIE))
+        return _redirect(destination, headers=[clear, *reset,
+            ('Set-Cookie', SESSION_COOKIE + '=' + local_token + '; Path=' + cookie_path + '; Max-Age=' + cookie_max_age + '; Secure; HttpOnly; SameSite=Lax'),
+            ('Set-Cookie', CSRF_COOKIE + '=' + csrf + '; Path=' + cookie_path + '; Max-Age=' + cookie_max_age + '; Secure; SameSite=Lax')])
     except Exception:
+        try:
+            from audit import append_event
+            append_event('admin_oidc_callback_failed', {
+                'stage': failure_stage,
+                'target': target,
+                'error_type': type(__import__('sys').exc_info()[1]).__name__,
+                'host': host,
+            })
+        except Exception:
+            pass
         if connection:
             try:
                 connection.rollback()
