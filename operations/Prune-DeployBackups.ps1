@@ -1,7 +1,15 @@
 [CmdletBinding(SupportsShouldProcess)]
-param([ValidateRange(1, 20)][int] $Keep = 3)
+param([ValidateRange(0, 20)][int] $Keep = 0)
 
 $ErrorActionPreference = 'Stop'
+if ($Keep -eq 0) {
+    $settingsPath = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TutiOperations\settings.json'
+    try {
+        $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+        $configured = [int]$settings.backup_generations
+        if ($configured -ge 1 -and $configured -le 20) { $Keep = $configured } else { $Keep = 3 }
+    } catch { $Keep = 3 }
+}
 $backupRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\deploy-backups'))
 if (-not (Test-Path -LiteralPath $backupRoot -PathType Container)) { return }
 $rootPrefix = $backupRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar

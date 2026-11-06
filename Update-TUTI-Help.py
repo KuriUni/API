@@ -7,12 +7,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 HELP_PATH = ROOT / "TUTI-Help.html"
-UPDATED = "2026-11-03"
-GENERATED_AT = "2026-11-03"
+UPDATED = "2026-11-07"
+GENERATED_AT = "2026-11-07"
 
 ARTICLES = [
     ("docs/OIDC-DISCOVERY.md", "BaaS-Contractor", "authentication"),
     ("tools/TUTI-OPERATIONS-DESKTOP.md", "XreaOperationsDesktop", "operations"),
+    ("tools/POWERSHELL-OPERATIONS.md", "Xrea-Operations", "operations"),
     ("docs/SSO-CONTRACTOR-INVITE.md", "BaaS-Contractor", "authentication"),
     ("docs/SSO-HEALTH-READINESS.md", "SSO-INITIAL-SETUP", "operations"),
     ("docs/PRODUCT-KEY-ISSUANCE-V8.md", "BaaS-Contractor", "api"),

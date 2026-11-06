@@ -26,6 +26,15 @@ $script:Tasks = @(
     [pscustomobject]@{ Group='運用'; Name='HAトークンをローテーション'; File='Maintenance\Rotate-XreaHaToken.ps1'; Description='Primary/BackupのHA運用トークンを更新します。両サーバーの現在値をGUIで入力します。'; Risk='高影響・認証変更' },
     [pscustomobject]@{ Group='運用'; Name='V8データベース移行'; File='Maintenance\Run-XreaV8Migration.ps1'; Description='V8用データベース移行を実行します。バックアップと移行対象を確認してから実行してください。'; Risk='高影響・DB変更' }
 )
+$script:BackupSettingsPath = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TutiOperations\settings.json'
+$script:BackupGenerations = 3
+try {
+    if (Test-Path -LiteralPath $script:BackupSettingsPath -PathType Leaf) {
+        $savedSettings = Get-Content -LiteralPath $script:BackupSettingsPath -Raw | ConvertFrom-Json
+        $savedGenerations = [int]$savedSettings.backup_generations
+        if ($savedGenerations -ge 1 -and $savedGenerations -le 20) { $script:BackupGenerations = $savedGenerations }
+    }
+} catch { $script:BackupGenerations = 3 }
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'TUTI / XREA 運用ツール'
@@ -45,8 +54,69 @@ $form.Controls.Add($header)
 $sub = New-Object System.Windows.Forms.Label
 $sub.Text = '資格情報は各ツールの入力画面で扱います。このランチャーはパスワードやトークンを保存しません。'
 $sub.Location = New-Object System.Drawing.Point(24, 58)
-$sub.Size = New-Object System.Drawing.Size(860, 28)
+$sub.Size = New-Object System.Drawing.Size(630, 28)
 $form.Controls.Add($sub)
+
+$backupSettings = New-Object System.Windows.Forms.Button
+$backupSettings.Text = "バックアップ保持: $($script:BackupGenerations) 世代"
+$backupSettings.Location = New-Object System.Drawing.Point(674, 52)
+$backupSettings.Size = New-Object System.Drawing.Size(202, 34)
+$form.Controls.Add($backupSettings)
+
+$backupSettings.add_Click({
+    $script:BackupSettingsDialog = New-Object System.Windows.Forms.Form
+    $script:BackupSettingsDialog.Text = 'バックアップ保持設定'
+    $script:BackupSettingsDialog.StartPosition = 'CenterParent'
+    $script:BackupSettingsDialog.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $script:BackupSettingsDialog.MaximizeBox = $false
+    $script:BackupSettingsDialog.MinimizeBox = $false
+    $script:BackupSettingsDialog.ClientSize = New-Object System.Drawing.Size(420, 190)
+    $script:BackupSettingsDialog.Font = $form.Font
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = 'デプロイ系列ごとに残すバックアップ世代数（1～20）'
+    $label.Location = New-Object System.Drawing.Point(18, 18)
+    $label.Size = New-Object System.Drawing.Size(380, 26)
+    $script:BackupSettingsDialog.Controls.Add($label)
+    $script:BackupGenerationChoice = New-Object System.Windows.Forms.ComboBox
+    $script:BackupGenerationChoice.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $script:BackupGenerationChoice.Location = New-Object System.Drawing.Point(20, 52)
+    $script:BackupGenerationChoice.Size = New-Object System.Drawing.Size(120, 28)
+    foreach ($count in 1..20) { [void]$script:BackupGenerationChoice.Items.Add([string]$count) }
+    $script:BackupGenerationChoice.SelectedItem = [string]$script:BackupGenerations
+    $script:BackupSettingsDialog.Controls.Add($script:BackupGenerationChoice)
+    $note = New-Object System.Windows.Forms.Label
+    $note.Text = '次回以降のデプロイ成功後に、古い世代を自動削除します。'
+    $note.Location = New-Object System.Drawing.Point(20, 91)
+    $note.Size = New-Object System.Drawing.Size(380, 28)
+    $script:BackupSettingsDialog.Controls.Add($note)
+    $save = New-Object System.Windows.Forms.Button
+    $save.Text = '保存'
+    $save.Location = New-Object System.Drawing.Point(206, 137)
+    $save.Size = New-Object System.Drawing.Size(90, 34)
+    $script:BackupSettingsDialog.Controls.Add($save)
+    $cancel = New-Object System.Windows.Forms.Button
+    $cancel.Text = 'キャンセル'
+    $cancel.Location = New-Object System.Drawing.Point(306, 137)
+    $cancel.Size = New-Object System.Drawing.Size(100, 34)
+    $script:BackupSettingsDialog.Controls.Add($cancel)
+    $cancel.add_Click({ $script:BackupSettingsDialog.Close() })
+    $save.add_Click({
+        $count = [int]$script:BackupGenerationChoice.SelectedItem
+        try {
+            $directory = Split-Path -Path $script:BackupSettingsPath -Parent
+            if (-not (Test-Path -LiteralPath $directory -PathType Container)) { New-Item -ItemType Directory -Path $directory -Force | Out-Null }
+            $json = @{ backup_generations = $count } | ConvertTo-Json -Compress
+            [System.IO.File]::WriteAllText($script:BackupSettingsPath, $json, [System.Text.UTF8Encoding]::new($false))
+            $script:BackupGenerations = $count
+            $backupSettings.Text = "バックアップ保持: $count 世代"
+            $status.Text = "バックアップ保持数を$count 世代に保存しました。"
+            $script:BackupSettingsDialog.Close()
+        } catch {
+            [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message, '設定を保存できません', 'OK', 'Error')
+        }
+    })
+    [void]$script:BackupSettingsDialog.ShowDialog($form)
+})
 
 $groupLabel = New-Object System.Windows.Forms.Label
 $groupLabel.Text = 'カテゴリ'

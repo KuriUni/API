@@ -190,4 +190,4 @@ finally {
     $credential = $null
 }
 
-try { & (Join-Path $PSScriptRoot '..\Prune-DeployBackups.ps1') -Keep 3 } catch { Write-Warning "Deployment succeeded, but backup retention cleanup failed: $($_.Exception.Message)" }
+try { & (Join-Path $PSScriptRoot '..\Prune-DeployBackups.ps1') } catch { Write-Warning "Deployment succeeded, but backup retention cleanup failed: $($_.Exception.Message)" }
