@@ -339,8 +339,8 @@ def _admin_page(request_context):
             host = '2415.jp'
         phone_step_up = site_url('<p class="muted"><a href="/license/python-migration/admin_api.php?admin_sso_start=1&amp;step_up=1&amp;return_host=') + quote(host, safe='') + '">確認コードの再発行・申請取消にはPasskey再認証が必要です。</a></p>'
     bulk_step_up = phone_step_up.replace('確認コードの再発行・申請取消にはPasskey再認証が必要です。', 'ライセンス一括操作にはPasskey再認証が必要です。')
-    section_links.append('<a href="admin_api.php?view=help"><span>管理者向けヘルプ</span><small>管理者SSO認証が必要</small></a>')
     section_links = ['<a href="ops-app/"><span>独立運用アプリ</span><small>運用コンソールを開く</small></a>', '<a href="#device-management"><span>端末・セッション</span><small>登録状況と利用状況を確認</small></a>', '<a href="#license-management"><span>ライセンス管理</span><small>検索・一覧・監査ログ</small></a>']
+    section_links.append('<a href="admin_api.php?view=help"><span>管理者向けヘルプ</span><small>管理者SSO認証が必要</small></a>')
     if 'license:write' in claims_scopes:
         section_links.append('<a href="#license-issuance"><span>ライセンス発行</span><small>個別・CSV一括発行</small></a>')
     if 'admin:manage' in claims_scopes:

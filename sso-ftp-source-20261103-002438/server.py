@@ -207,6 +207,21 @@ def recovery_key_hash(value):
     return hmac.new(key[:32], b"sso-recovery-key-v1|" + normalized.encode("ascii", "ignore"), hashlib.sha256).hexdigest()
 
 
+def new_recovery_certificate(public_id, now=None):
+    token = "RC1-" + base64.b32encode(secrets.token_bytes(32)).decode("ascii").rstrip("=")
+    return {"format": "2415.jp/sso-recovery-certificate", "version": 1, "issuer": ISSUER,
+            "subject": str(public_id), "issued_at": int(time.time() if now is None else now), "credential": token}
+
+
+def recovery_certificate_hash(certificate, public_id):
+    if not isinstance(certificate, dict) or certificate.get("format") != "2415.jp/sso-recovery-certificate" or certificate.get("version") != 1 or certificate.get("issuer") != ISSUER or certificate.get("subject") != str(public_id):
+        return ""
+    token = certificate.get("credential", "")
+    if not isinstance(token, str) or re.fullmatch(r"RC1-[A-Z2-7]{52}", token) is None:
+        return ""
+    return recovery_key_hash(token)
+
+
 def totp_code(secret, step):
     key = base64.b32decode(secret + "=" * ((8 - len(secret) % 8) % 8), casefold=True)
     digest = hmac.new(key, int(step).to_bytes(8, "big"), hashlib.sha1).digest()
@@ -225,20 +240,6 @@ def verify_totp(secret, supplied, now=None, last_step=-1):
     return None
 
 
-def totp_recovery_hash(value):
-    key = EMAIL_KEY.read_bytes()
-    normalized = re.sub(r"[^A-Za-z0-9]", "", str(value)).upper()
-    return hmac.new(key[:32], b"sso-totp-recovery-v1|" + normalized.encode("ascii"), hashlib.sha256).hexdigest()
-
-
-def new_totp_recovery_codes():
-    codes = []
-    for _ in range(10):
-        raw = secrets.token_hex(8).upper()
-        codes.append("-".join(raw[index:index + 4] for index in range(0, len(raw), 4)))
-    return codes
-
-
 def decrypt_private_value(value, purpose):
     if not isinstance(value, str) or not value.startswith("v1:"):
         raise ValueError("invalid_encrypted_value")
@@ -253,11 +254,6 @@ def decrypt_private_value(value, purpose):
     result = subprocess.run(["openssl", "enc", "-d", "-aes-256-cbc", "-K", key[32:64].hex(), "-iv", iv.hex(), "-nosalt"],
                             input=encrypted, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=10)
     return result.stdout.decode("utf-8")
-
-
-def new_recovery_key():
-    raw = base64.b32encode(secrets.token_bytes(20)).decode("ascii").rstrip("=")
-    return "RK-" + "-".join(raw[i:i + 4] for i in range(0, len(raw), 4))
 
 
 def encrypt_private_value(value, purpose):
@@ -346,9 +342,14 @@ def ensure_session_schema():
         con.execute("CREATE TABLE IF NOT EXISTS totp_credentials(user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,secret_encrypted TEXT NOT NULL,enabled_at INTEGER NOT NULL,last_step INTEGER NOT NULL DEFAULT -1)")
         con.execute("CREATE TABLE IF NOT EXISTS totp_setup_flows(flow_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,csrf_hash TEXT NOT NULL,secret_encrypted TEXT NOT NULL,expires_at INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0)")
         con.execute("CREATE TABLE IF NOT EXISTS mfa_flows(login_flow_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0)")
-        con.execute("CREATE TABLE IF NOT EXISTS totp_recovery_codes(user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,code_hash TEXT NOT NULL,created_at INTEGER NOT NULL,used_at INTEGER,PRIMARY KEY(user_id,code_hash))")
+        con.execute("CREATE TABLE IF NOT EXISTS registration_onboarding(session_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,request_json TEXT NOT NULL,expires_at INTEGER NOT NULL)")
+        con.execute("CREATE TABLE IF NOT EXISTS sso_schema_migrations(migration_id TEXT PRIMARY KEY,applied_at INTEGER NOT NULL)")
+        if not con.execute("SELECT 1 FROM sso_schema_migrations WHERE migration_id='retire-totp-recovery-codes-v1'").fetchone():
+            con.execute("DROP TABLE IF EXISTS totp_recovery_codes")
+            con.execute("INSERT INTO sso_schema_migrations(migration_id,applied_at) VALUES('retire-totp-recovery-codes-v1',?)",(int(time.time()),))
         con.execute("CREATE INDEX IF NOT EXISTS idx_totp_setup_expiry ON totp_setup_flows(expires_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_mfa_expiry ON mfa_flows(expires_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_registration_onboarding_expiry ON registration_onboarding(expires_at)")
         flow_columns = {row[1]: row for row in con.execute("PRAGMA table_info(passkey_flows)")}
         if flow_columns.get("user_id") and flow_columns["user_id"][3]:
             # Flows are short-lived. Rebuild once so unknown IDs can receive the
@@ -359,10 +360,13 @@ def ensure_session_schema():
                 con.execute("DROP TABLE passkey_flows")
                 con.execute("CREATE TABLE passkey_flows(flow_hash TEXT PRIMARY KEY,user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,challenge TEXT NOT NULL,mode TEXT NOT NULL,expires_at INTEGER NOT NULL)")
             con.commit()
-        con.execute("CREATE TABLE IF NOT EXISTS recovery_keys(user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,key_hash TEXT NOT NULL,created_at INTEGER NOT NULL,used_at INTEGER)")
-        con.execute("CREATE TABLE IF NOT EXISTS recovery_flows(flow_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,csrf_hash TEXT NOT NULL,code_salt TEXT NOT NULL,code_hash TEXT NOT NULL,expires_at INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,challenge TEXT,verified_at INTEGER,email_hash TEXT NOT NULL DEFAULT '',existing_challenge TEXT,passkey_check_status TEXT NOT NULL DEFAULT 'pending',totp_verified_at INTEGER,totp_attempts INTEGER NOT NULL DEFAULT 0)")
+        con.execute("CREATE TABLE IF NOT EXISTS recovery_keys(user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,key_hash TEXT NOT NULL,created_at INTEGER NOT NULL,used_at INTEGER,certificate_version INTEGER NOT NULL DEFAULT 0)")
+        recovery_key_columns = {row[1] for row in con.execute("PRAGMA table_info(recovery_keys)")}
+        if "certificate_version" not in recovery_key_columns:
+            con.execute("ALTER TABLE recovery_keys ADD COLUMN certificate_version INTEGER NOT NULL DEFAULT 0")
+        con.execute("CREATE TABLE IF NOT EXISTS recovery_flows(flow_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,csrf_hash TEXT NOT NULL,code_salt TEXT NOT NULL,code_hash TEXT NOT NULL,expires_at INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,challenge TEXT,verified_at INTEGER,email_hash TEXT NOT NULL DEFAULT '',existing_challenge TEXT,passkey_check_status TEXT NOT NULL DEFAULT 'pending',totp_verified_at INTEGER,totp_attempts INTEGER NOT NULL DEFAULT 0,certificate_hash TEXT NOT NULL DEFAULT '')")
         recovery_columns = {row[1] for row in con.execute("PRAGMA table_info(recovery_flows)")}
-        for name, definition in {"email_hash": "TEXT NOT NULL DEFAULT ''", "existing_challenge": "TEXT", "passkey_check_status": "TEXT NOT NULL DEFAULT 'pending'", "totp_verified_at": "INTEGER", "totp_attempts": "INTEGER NOT NULL DEFAULT 0"}.items():
+        for name, definition in {"email_hash": "TEXT NOT NULL DEFAULT ''", "existing_challenge": "TEXT", "passkey_check_status": "TEXT NOT NULL DEFAULT 'pending'", "totp_verified_at": "INTEGER", "totp_attempts": "INTEGER NOT NULL DEFAULT 0", "certificate_hash": "TEXT NOT NULL DEFAULT ''"}.items():
             if name not in recovery_columns:
                 con.execute("ALTER TABLE recovery_flows ADD COLUMN %s %s" % (name, definition))
         con.execute("CREATE INDEX IF NOT EXISTS idx_recovery_flows_expiry ON recovery_flows(expires_at)")
@@ -588,7 +592,7 @@ def contractor_setup_page(flow):
     page = '''<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="referrer" content="no-referrer"><title>契約者SSO ID登録</title><style>
 *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:18px;background:#f1f5fb;color:#17243a;font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.card{width:min(100%,520px);padding:clamp(22px,6vw,38px);border:1px solid #dce5ef;border-radius:22px;background:#fff;box-shadow:0 20px 60px #19375b18}.brand{font-weight:850;color:#2857d9;letter-spacing:.04em}.eyebrow{margin:24px 0 5px;color:#527092;font-size:.76rem;font-weight:800;letter-spacing:.1em}h1{margin:0;font-size:clamp(1.55rem,5vw,2rem);line-height:1.25}p{color:#5d6c82}label{display:block;margin:18px 0 7px;font-weight:750}input{width:100%;min-height:52px;padding:11px 13px;border:1px solid #b9c7d8;border-radius:11px;font:inherit;font-size:1.1rem;letter-spacing:.1em}button{width:100%;min-height:50px;margin-top:15px;padding:11px;border:0;border-radius:11px;background:#2857d9;color:#fff;font:inherit;font-weight:800;cursor:pointer}button:disabled{opacity:.6}#status{min-height:28px;margin-top:14px;font-weight:650;overflow-wrap:anywhere}small{display:block;color:#65748a;margin-top:7px}@media(prefers-color-scheme:dark){body{background:#111923;color:#edf3fc}.card{background:#192432;border-color:#344255}p,small{color:#aab7c8}input{background:#111923;color:#edf3fc;border-color:#45566c}}
 </style></head><body><main class="card"><div class="brand">2415.JP · SSO ID</div><p class="eyebrow">CONTRACT HOLDER ID</p><h1>契約者向けSSO IDを登録</h1><p>メールアドレスを確認した後、この端末のパスキーを登録します。登録完了後、メールアドレスはアカウントから削除され、復旧用の照合値だけが保護して保存されます。</p><form id="verify"><label for="code">メール確認コード</label><input id="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required><small>メールに届いた6桁のコードを入力してください。</small><button id="continue" type="submit">確認してパスキー登録へ</button></form><button id="register" type="button" hidden>この端末のパスキーを登録</button><p id="status" role="status" aria-live="polite"></p></main><script>
-(function(){const flow=FLOW;const form=document.getElementById('verify'),code=document.getElementById('code'),status=document.getElementById('status'),register=document.getElementById('register');let publicKey=null;const dec=s=>{const b=atob(s.replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(b,c=>c.charCodeAt(0))};const enc=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');async function post(path,data){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'omit',cache:'no-store',body:JSON.stringify(Object.assign({flow:flow},data))});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.message||'確認できませんでした。時間をおいてやり直してください。');return j}form.addEventListener('submit',async e=>{e.preventDefault();document.getElementById('continue').disabled=true;status.textContent='メールを確認しています…';try{const j=await post('/contractor/verify',{code:code.value.trim()});publicKey=j.publicKey;publicKey.challenge=dec(publicKey.challenge);publicKey.user.id=dec(publicKey.user.id);form.hidden=true;register.hidden=false;status.textContent='メールを確認しました。続けてパスキーを登録してください。'}catch(err){status.textContent=err.message;document.getElementById('continue').disabled=false}});register.addEventListener('click',async()=>{register.disabled=true;status.textContent='パスキー登録を待っています…';try{if(!window.isSecureContext||!navigator.credentials)throw new Error('HTTPS対応のブラウザーで開いてください。');const c=await navigator.credentials.create({publicKey:publicKey});if(!c)throw new Error('パスキー登録がキャンセルされました。');const j=await post('/contractor/finish',{credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]}});register.hidden=true;status.textContent='登録完了。あなたのSSO IDは '+j.public_id+' です。このIDを安全な場所に保存してください。'}catch(err){status.textContent=err.name==='NotAllowedError'?'パスキー登録がキャンセルされました。もう一度お試しください。':err.message;register.disabled=false}})})();
+(function(){const flow=FLOW;const form=document.getElementById('verify'),code=document.getElementById('code'),status=document.getElementById('status'),register=document.getElementById('register');let publicKey=null;const dec=s=>{const b=atob(s.replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(b,c=>c.charCodeAt(0))};const enc=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');function downloadCertificate(cert){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(cert,null,2)],{type:'application/json'}));a.href=url;a.download=(String(cert.subject||'SSO').replace(/[^A-Za-z0-9_-]/g,'')||'SSO')+'-recovery-certificate.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500)}async function post(path,data){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',cache:'no-store',body:JSON.stringify(Object.assign({flow:flow},data))});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.message||'確認できませんでした。時間をおいてやり直してください。');return j}form.addEventListener('submit',async e=>{e.preventDefault();document.getElementById('continue').disabled=true;status.textContent='メールを確認しています…';try{const j=await post('/contractor/verify',{code:code.value.trim()});publicKey=j.publicKey;publicKey.challenge=dec(publicKey.challenge);publicKey.user.id=dec(publicKey.user.id);form.hidden=true;register.hidden=false;status.textContent='メールを確認しました。続けてパスキーを登録してください。'}catch(err){status.textContent=err.message;document.getElementById('continue').disabled=false}});register.addEventListener('click',async()=>{register.disabled=true;status.textContent='パスキー登録を待っています…';try{if(!window.isSecureContext||!navigator.credentials)throw new Error('HTTPS対応のブラウザーで開いてください。');const c=await navigator.credentials.create({publicKey:publicKey});if(!c)throw new Error('パスキー登録がキャンセルされました。');const j=await post('/contractor/finish',{credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]}});register.hidden=true;downloadCertificate(j.recovery_certificate);status.textContent='登録完了。SSO ID: '+j.public_id+'。復旧証明書を安全な場所に保存してください。';location.assign(j.next||'/account')}catch(err){status.textContent=err.name==='NotAllowedError'?'パスキー登録がキャンセルされました。もう一度お試しください。':err.message;register.disabled=false}})})();
 </script></body></html>'''.replace("FLOW", flow_json)
     return page.encode("utf-8")
 
@@ -673,11 +677,11 @@ def authorize_login_page(flow, csrf, error=False):
 <section class="card" aria-labelledby="page-title"><header class="card-head"><p class="kicker">SECURE SIGN IN</p><h1 id="page-title">SSO IDでログイン</h1><p class="lead">発行済みのSSO IDを入力し、パスキーで本人確認します。</p></header>
 <div class="panel">ERROR_SLOT
 <form id="passkey-login"><input type="hidden" name="flow" value="__FLOW__"><input type="hidden" name="csrf" value="__CSRF__"><div class="field"><label for="sso-id">SSO ID（省略可）</label><input id="sso-id" inputmode="text" autocomplete="username webauthn" autocapitalize="characters" spellcheck="false" placeholder="SID-…（空欄ならパスキーから選択）"></div><button type="submit">パスキー認証を準備</button><p class="hint">SSO IDを入力するか、空欄のまま進んで登録済みパスキーを選べます。</p></form>
-<p><a class="recover-link" href="/recover">パスキーを紛失した場合</a></p><button id="run-passkey" type="button" hidden>この端末のパスキーで認証</button><form id="totp-login" hidden><div class="field"><label for="totp-login-code">認証アプリのコードまたは予備コード</label><input id="totp-login-code" inputmode="numeric" autocomplete="one-time-code" maxlength="24" required></div><button type="submit">コードを確認してログイン</button><p class="hint">予備コードは一度だけ使えます。</p></form>
+<p><a class="recover-link" href="/recover">パスキーを紛失した場合</a></p><button id="run-passkey" type="button" hidden>この端末のパスキーで認証</button><form id="totp-login" hidden><div class="field"><label for="totp-login-code">認証アプリの6桁コード</label><input id="totp-login-code" inputmode="numeric" autocomplete="one-time-code" maxlength="24" required></div><button type="submit">コードを確認してログイン</button><p class="hint">6桁コードは30秒ごとに更新されます。</p></form>
 <details class="legacy"><summary>旧アカウントから移行する（初回のみ）</summary><p>初回登録済みの旧アカウントは、メールとパスワードで確認してからパスキーを登録します。</p><form id="legacy-login"><input type="hidden" name="flow" value="__FLOW__"><input type="hidden" name="csrf" value="__CSRF__"><div class="field"><label for="email">登録済みメールアドレス</label><input id="email" type="email" autocomplete="username" required maxlength="254"></div><div class="field"><label for="password">現在のパスワード</label><div class="password-row"><input id="password" type="password" autocomplete="current-password" required maxlength="1024"><button type="button" id="show-password">表示</button></div></div><button type="submit">本人確認してパスキー登録へ</button></form><button id="run-enroll" type="button" hidden>この端末のパスキー登録を開始</button></details>
 <p id="status" class="status" role="status" aria-live="polite"></p><p class="trust"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 20 6v5c0 5-3.4 8-8 10-4.6-2-8-5-8-10V6l8-3Z" stroke="currentColor" stroke-width="1.8"/><path d="m8.5 12 2.2 2.2 4.8-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>通信は暗号化され、パスキーで保護されます</p></div></section>
 <footer class="footer">安全なシングルサインオン · sso.2415.jp</footer>
-</main><script>const FLOW="__FLOW__",CSRF="__CSRF__",statusNode=document.getElementById('status');const enc=b=>{let s='';new Uint8Array(b).forEach(v=>s+=String.fromCharCode(v));return btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')};const dec=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-s.length%4)%4)),c=>c.charCodeAt(0));async function post(path,data){const r=await fetch(path,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});let j={};try{j=await r.json()}catch(e){}if(!r.ok||!j.ok)throw new Error(j.message||'認証できませんでした。もう一度お試しください。');return j}async function enroll(o){let p=o.publicKey;p.challenge=dec(p.challenge);p.user.id=dec(p.user.id);const c=await navigator.credentials.create({publicKey:p});return{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]}}let loginOptions=null,enrollOptions=null;document.getElementById('passkey-login').addEventListener('submit',async e=>{e.preventDefault();statusNode.textContent='パスキーを準備しています…';try{let id=document.getElementById('sso-id').value.trim().toUpperCase(),b=await post('/login/begin',{flow:FLOW,csrf:CSRF,public_id:id});loginOptions=b.publicKey;loginOptions.challenge=dec(loginOptions.challenge);loginOptions.allowCredentials=loginOptions.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));document.getElementById('run-passkey').hidden=false;statusNode.textContent=id?'準備できました。端末のパスキーで認証してください。':'登録済みパスキーを選択してください。'}catch(err){statusNode.textContent=err.message==='Load failed'?'サーバーへ接続できません。通信を確認して再読み込みしてください。':err.message}});document.getElementById('run-passkey').addEventListener('click',async e=>{if(!loginOptions)return;const button=e.currentTarget;button.disabled=true;statusNode.textContent='端末のパスキーを確認しています…';try{let c=await navigator.credentials.get({publicKey:loginOptions}),f=await post('/login',{action:'passkey_assertion',flow:FLOW,csrf:CSRF,credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),authenticatorData:enc(c.response.authenticatorData),signature:enc(c.response.signature),userHandle:c.response.userHandle?enc(c.response.userHandle):''}});if(f.mfa_required){document.getElementById('totp-login').hidden=false;button.hidden=true;statusNode.textContent='パスキーを確認しました。認証アプリのコードまたは予備コードを入力してください。';document.getElementById('totp-login-code').focus();return}location.assign(f.next)}catch(err){button.disabled=false;statusNode.textContent=err.name==='NotAllowedError'?'認証がキャンセルされたか時間切れです。もう一度押してください。':err.message}});document.getElementById('totp-login').addEventListener('submit',async e=>{e.preventDefault();const field=document.getElementById('totp-login-code'),button=e.currentTarget.querySelector('button');button.disabled=true;statusNode.textContent='追加認証を確認しています…';try{const j=await post('/login/totp',{flow:FLOW,csrf:CSRF,code:field.value.trim()});location.assign(j.next)}catch(err){button.disabled=false;statusNode.textContent=err.message;field.focus()}});document.getElementById('legacy-login').addEventListener('submit',async e=>{e.preventDefault();statusNode.textContent='本人確認しています…';try{let b=await post('/login',{action:'legacy_login',flow:FLOW,csrf:CSRF,email:document.getElementById('email').value,password:document.getElementById('password').value});enrollOptions=b.publicKey;enrollOptions.challenge=dec(enrollOptions.challenge);enrollOptions.user.id=dec(enrollOptions.user.id);document.getElementById('run-enroll').hidden=false;statusNode.textContent='本人確認できました。「この端末のパスキー登録を開始」を押してください。'}catch(err){statusNode.textContent=err.message==='Load failed'?'サーバーへ接続できません。通信を確認して再読み込みしてください。':err.message}});document.getElementById('run-enroll').addEventListener('click',async e=>{if(!enrollOptions)return;const button=e.currentTarget;button.disabled=true;statusNode.textContent='端末のパスキー登録を待っています…';try{let c=await navigator.credentials.create({publicKey:enrollOptions}),credential={id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]},f=await post('/login',{action:'finish_enrollment',flow:FLOW,csrf:CSRF,credential});statusNode.textContent='パスキー登録完了。SSO ID: '+f.public_id+'（6秒後に続行します）';try{await navigator.clipboard.writeText(f.public_id)}catch(copyError){}setTimeout(()=>location.assign(f.next),6000)}catch(err){button.disabled=false;statusNode.textContent=err.name==='NotAllowedError'?'登録がキャンセルされたか時間切れです。もう一度押してください。':err.message}});document.getElementById('show-password').addEventListener('click',function(){let p=document.getElementById('password'),show=p.type==='password';p.type=show?'text':'password';this.textContent=show?'隠す':'表示'});</script></html>'''
+</main><script>const FLOW="__FLOW__",CSRF="__CSRF__",statusNode=document.getElementById('status');const enc=b=>{let s='';new Uint8Array(b).forEach(v=>s+=String.fromCharCode(v));return btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')};const dec=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-s.length%4)%4)),c=>c.charCodeAt(0));function downloadCertificate(cert){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(cert,null,2)],{type:'application/json'}));a.href=url;a.download=(String(cert.subject||'SSO').replace(/[^A-Za-z0-9_-]/g,'')||'SSO')+'-recovery-certificate.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500)}async function post(path,data){const r=await fetch(path,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});let j={};try{j=await r.json()}catch(e){}if(!r.ok||!j.ok)throw new Error(j.message||'認証できませんでした。もう一度お試しください。');return j}async function enroll(o){let p=o.publicKey;p.challenge=dec(p.challenge);p.user.id=dec(p.user.id);const c=await navigator.credentials.create({publicKey:p});return{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]}}let loginOptions=null,enrollOptions=null;document.getElementById('passkey-login').addEventListener('submit',async e=>{e.preventDefault();statusNode.textContent='パスキーを準備しています…';try{let id=document.getElementById('sso-id').value.trim().toUpperCase(),b=await post('/login/begin',{flow:FLOW,csrf:CSRF,public_id:id});loginOptions=b.publicKey;loginOptions.challenge=dec(loginOptions.challenge);loginOptions.allowCredentials=loginOptions.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));document.getElementById('run-passkey').hidden=false;statusNode.textContent=id?'準備できました。端末のパスキーで認証してください。':'登録済みパスキーを選択してください。'}catch(err){statusNode.textContent=err.message==='Load failed'?'サーバーへ接続できません。通信を確認して再読み込みしてください。':err.message}});document.getElementById('run-passkey').addEventListener('click',async e=>{if(!loginOptions)return;const button=e.currentTarget;button.disabled=true;statusNode.textContent='端末のパスキーを確認しています…';try{let c=await navigator.credentials.get({publicKey:loginOptions}),f=await post('/login',{action:'passkey_assertion',flow:FLOW,csrf:CSRF,credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),authenticatorData:enc(c.response.authenticatorData),signature:enc(c.response.signature),userHandle:c.response.userHandle?enc(c.response.userHandle):''}});if(f.mfa_required){document.getElementById('totp-login').hidden=false;button.hidden=true;statusNode.textContent='パスキーを確認しました。認証アプリの6桁コードを入力してください。';document.getElementById('totp-login-code').focus();return}location.assign(f.next)}catch(err){button.disabled=false;statusNode.textContent=err.name==='NotAllowedError'?'認証がキャンセルされたか時間切れです。もう一度押してください。':err.message}});document.getElementById('totp-login').addEventListener('submit',async e=>{e.preventDefault();const field=document.getElementById('totp-login-code'),button=e.currentTarget.querySelector('button');button.disabled=true;statusNode.textContent='追加認証を確認しています…';try{const j=await post('/login/totp',{flow:FLOW,csrf:CSRF,code:field.value.trim()});location.assign(j.next)}catch(err){button.disabled=false;statusNode.textContent=err.message;field.focus()}});document.getElementById('legacy-login').addEventListener('submit',async e=>{e.preventDefault();statusNode.textContent='本人確認しています…';try{let b=await post('/login',{action:'legacy_login',flow:FLOW,csrf:CSRF,email:document.getElementById('email').value,password:document.getElementById('password').value});enrollOptions=b.publicKey;enrollOptions.challenge=dec(enrollOptions.challenge);enrollOptions.user.id=dec(enrollOptions.user.id);document.getElementById('run-enroll').hidden=false;statusNode.textContent='本人確認できました。「この端末のパスキー登録を開始」を押してください。'}catch(err){statusNode.textContent=err.message==='Load failed'?'サーバーへ接続できません。通信を確認して再読み込みしてください。':err.message}});document.getElementById('run-enroll').addEventListener('click',async e=>{if(!enrollOptions)return;const button=e.currentTarget;button.disabled=true;statusNode.textContent='端末のパスキー登録を待っています…';try{let c=await navigator.credentials.create({publicKey:enrollOptions}),credential={id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]},f=await post('/login',{action:'finish_enrollment',flow:FLOW,csrf:CSRF,credential});if(f.recovery_certificate)downloadCertificate(f.recovery_certificate);statusNode.textContent='登録完了。SSO ID: '+f.public_id+'。復旧証明書を安全な場所に保存してください。（6秒後に設定画面へ移動します）';try{await navigator.clipboard.writeText(f.public_id)}catch(copyError){}setTimeout(()=>location.assign(f.next),6000)}catch(err){button.disabled=false;statusNode.textContent=err.name==='NotAllowedError'?'登録がキャンセルされたか時間切れです。もう一度押してください。':err.message}});document.getElementById('show-password').addEventListener('click',function(){let p=document.getElementById('password'),show=p.type==='password';p.type=show?'text':'password';this.textContent=show?'隠す':'表示'});</script></html>'''
     return (page.replace("__FLOW__", html.escape(flow, quote=True)).replace("__CSRF__", html.escape(csrf, quote=True)).replace("ERROR_SLOT", error_html)).encode("utf-8")
 
 
@@ -704,7 +708,7 @@ def expire_session_cookie():
     return ("Set-Cookie", f"{COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT")
 
 
-def account_page(user, current_hash, sessions, notice=""):
+def account_page(user, current_hash, sessions, notice="", registration_onboarding=False):
     csrf = b64u(secrets.token_bytes(32))
     display_name = str(user["display_name"] or "SSO ID ユーザー")
     rows = []
@@ -728,11 +732,12 @@ def account_page(user, current_hash, sessions, notice=""):
     with db() as con:
         con.execute("UPDATE sessions SET csrf_hash=? WHERE token_hash=? AND revoked_at IS NULL", (hashlib.sha256(csrf.encode()).hexdigest(), current_hash))
     message = "<div class=notice role=status aria-live=polite>%s</div>" % html.escape(notice) if notice else ""
+    if registration_onboarding:
+        message += '''<section id=registration-onboarding class=controls aria-labelledby=registration-title><h2 id=registration-title>アカウント作成：追加認証の設定</h2><p>SSO ID: <code>%s</code></p><p>認証アプリを設定すると、次回からパスキーに加えて6桁コードも必要になります。設定は任意です。ここで設定する場合は、認証アプリに表示されるキーを登録してから有効化してください。</p><div class=control-buttons><a class=top-link href="#totp-title">認証アプリを設定</a><button id=onboarding-skip class=secondary type=button>TOTPを設定せずに続ける</button><button id=onboarding-continue class=secondary type=button hidden>復旧証明書を保存して続ける</button></div><p id=onboarding-status role=status aria-live=polite></p></section>''' % html.escape(str(user["public_id"] or ""))
     with db() as con:
         is_admin = is_admin_user(con, user["id"])
         passkeys = con.execute("SELECT credential_id,created_at,last_used,transports FROM passkeys WHERE user_id=? ORDER BY created_at", (user["id"],)).fetchall()
         totp_enabled = con.execute("SELECT 1 FROM totp_credentials WHERE user_id=?", (user["id"],)).fetchone() is not None
-        totp_recovery_count = con.execute("SELECT COUNT(*) FROM totp_recovery_codes WHERE user_id=? AND used_at IS NULL", (user["id"],)).fetchone()[0]
     if is_admin:
         role_label = "管理者ID"
         mode_card = '''<article class=mode-card><div class=mode-icon admin-icon aria-hidden=true>A</div><div class=mode-copy><span class=eyebrow>ADMINISTRATOR</span><h3>管理者モード</h3><p>2415.jpの管理センターやモバイル管理を開きます。このSSO IDは管理者として登録されています。</p></div><div class=mode-links><a href="https://2415.jp/license/admin_api.php" rel="noreferrer">管理センターを開く <span aria-hidden=true>↗</span></a><a class=quiet-link href="https://2415.jp/license/mobile-manager/?mode=admin" rel="noreferrer">モバイル管理を開く <span aria-hidden=true>↗</span></a><a class=quiet-link href="/admin/identity">利用者のSSO ID回復</a></div></article>'''
@@ -754,17 +759,17 @@ def account_page(user, current_hash, sessions, notice=""):
     page = page.replace('<form method=post action=/account><input type=hidden name=csrf value="%s"><input type=hidden name=action value=revoke_all>', '<form method=post action=/account onsubmit="return confirm(\'すべての端末からログアウトします。続けますか？\')"><input type=hidden name=csrf value="%s"><input type=hidden name=action value=revoke_all>', 1)
     with db() as con:
         has_email = bool(con.execute("SELECT recovery_email_hash FROM users WHERE id=?", (user["id"],)).fetchone()["recovery_email_hash"])
-        has_key = con.execute("SELECT 1 FROM recovery_keys WHERE user_id=? AND used_at IS NULL", (user["id"],)).fetchone() is not None
-    recovery_markup = '''<section class=controls aria-labelledby=recovery-title><h2 id=recovery-title>パスキー紛失時の準備</h2><p id=recovery-email-status role=status aria-live=polite>%s</p><form id=recovery-email-form><label for=recovery-email>復旧用メールアドレス</label><input id=recovery-email type=email inputmode=email autocomplete=email autocapitalize=none spellcheck=false maxlength=254 required><button class=secondary>確認コードを送信</button></form><form id=recovery-code-form hidden><label for=recovery-code>メールの確認コード</label><input id=recovery-code inputmode=numeric autocomplete=one-time-code pattern=[0-9]{8} maxlength=8 required><button class=secondary>メールを確認</button></form><p>メール本文は保存せず、鍵付き照合値だけを保持します。</p><button id=recovery-key-button class=secondary type=button data-csrf="%s">パスキーで本人確認して復旧キーを%s</button><output id=recovery-key-output hidden></output></section>''' % ("復旧メール確認済み" if has_email else "復旧メール未設定です。ここで確認してください。", html.escape(csrf), "再発行" if has_key else "発行")
+        has_certificate = con.execute("SELECT 1 FROM recovery_keys WHERE user_id=? AND certificate_version=1", (user["id"],)).fetchone() is not None
+    recovery_markup = '''<section class=controls aria-labelledby=recovery-title><h2 id=recovery-title>アカウント復旧証明書</h2><p id=recovery-email-status role=status aria-live=polite>%s</p><form id=recovery-email-form><label for=recovery-email>復旧用メールアドレス</label><input id=recovery-email type=email inputmode=email autocomplete=email autocapitalize=none spellcheck=false maxlength=254 required><button class=secondary>確認コードを送信</button></form><form id=recovery-code-form hidden><label for=recovery-code>メールの確認コード</label><input id=recovery-code inputmode=numeric autocomplete=one-time-code pattern=[0-9]{8} maxlength=8 required><button class=secondary>メールを確認</button></form><p>パスキーと認証アプリを両方使えない場合、登録済みメールとこの証明書でリセット申請を行えます。証明書は一度だけ発行でき、リセット申請にも一回だけ使用できます。発行後は再ダウンロード・再発行できません。使用後はTOTPも解除されます。</p><button id=recovery-key-button class=secondary type=button data-csrf="%s" %s>%s</button><output id=recovery-key-output hidden></output></section>''' % ("復旧メール確認済み" if has_email else "復旧メール未設定です。ここで確認してください。", html.escape(csrf), "disabled" if has_certificate else "", "復旧証明書は発行済みです。再発行できません" if has_certificate else "パスキーで本人確認して復旧証明書を一度だけ発行")
     page = page.replace("</section></section><footer class=footer>", recovery_markup + "</section></section><footer class=footer>", 1)
     passkey_rows = "".join("<li>登録済みパスキー %d · 登録日時 <time class=local-time data-epoch=\"%d\">%s</time></li>" % (i + 1, int(row["created_at"] or 0), html.escape(time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(int(row["created_at"] or 0))) if row["created_at"] else "記録なし")) for i, row in enumerate(passkeys))
     passkey_markup = '''<section class=controls aria-labelledby=passkey-title><h2 id=passkey-title>パスキー</h2><p>予備の端末にも登録すると、1台を紛失しても別の端末でログインできます。追加登録には、現在のパスキーで本人確認が必要です。</p><ul>%s</ul><button id=add-passkey class=secondary type=button data-csrf="%s" %s>予備のパスキーを追加</button><p id=passkey-status role=status aria-live=polite></p></section>''' % (passkey_rows or "<li>登録済みパスキーがありません。</li>", html.escape(csrf), "disabled" if len(passkeys) >= 5 else "")
-    totp_markup = '''<section class=controls aria-labelledby=totp-title><h2 id=totp-title>認証アプリ（Google Authenticator等）</h2><p id=totp-status role=status aria-live=polite>%s</p>%s<pre id=totp-output hidden></pre><div id=totp-setup hidden><p>アプリでキーを手入力し、表示中の6桁コードを入力してください。キーはこの画面を閉じると再表示できません。</p><p><strong>設定キー:</strong> <code id=totp-secret></code></p><p><a id=totp-uri-link rel="noreferrer">認証アプリで開く</a></p><form id=totp-enable-form><label for=totp-enable-code>アプリの6桁コード</label><input id=totp-enable-code inputmode=numeric autocomplete=one-time-code pattern="[0-9]{6}" maxlength=6 required><button class=secondary>コードを確認して有効化</button></form></div><form id=totp-manage-form%s><label for=totp-manage-code>認証アプリの6桁コードまたは未使用の予備コード</label><input id=totp-manage-code autocomplete=one-time-code maxlength=24 required><button id=totp-regenerate class=secondary type=button>予備コードを再発行</button><button id=totp-disable class=danger type=button>認証アプリを解除</button></form><button id=totp-begin class=secondary type=button data-csrf="%s" %s>認証アプリを設定</button></section>''' % (
-        ("認証アプリは有効です。ログイン時はパスキーの後にアプリのコードが必要です。未使用の予備コード: %d件。" % totp_recovery_count) if totp_enabled else "認証アプリは未設定です。", 
+    totp_markup = '''<section class=controls aria-labelledby=totp-title><h2 id=totp-title>認証アプリ（Google Authenticator等）</h2><p id=totp-status role=status aria-live=polite>%s</p>%s<pre id=totp-output hidden></pre><div id=totp-setup hidden><p>アプリでキーを手入力し、表示中の6桁コードを入力してください。キーはこの画面を閉じると再表示できません。</p><p><strong>設定キー:</strong> <code id=totp-secret></code></p><p><a id=totp-uri-link rel="noreferrer">認証アプリで開く</a></p><form id=totp-enable-form><label for=totp-enable-code>アプリの6桁コード</label><input id=totp-enable-code inputmode=numeric autocomplete=one-time-code pattern="[0-9]{6}" maxlength=6 required><button class=secondary>コードを確認して有効化</button></form></div><form id=totp-manage-form%s><label for=totp-manage-code>認証アプリの6桁コード</label><input id=totp-manage-code inputmode=numeric autocomplete=one-time-code pattern="[0-9]{6}" maxlength=6 required><button id=totp-disable class=danger type=button>認証アプリを解除</button></form><button id=totp-begin class=secondary type=button data-csrf="%s" %s>認証アプリを設定</button></section>''' % (
+        "認証アプリは有効です。ログイン時はパスキーの後にアプリのコードが必要です。" if totp_enabled else "認証アプリは未設定です。",
         "" if totp_enabled else "", " hidden" if not totp_enabled else "", html.escape(csrf), "hidden" if totp_enabled else "")
     page = page.replace(recovery_markup + "</section></section><footer class=footer>", recovery_markup + passkey_markup + totp_markup + "</section></section><footer class=footer>", 1)
-    page = page.replace("</body>", '''<script>(()=>{const input=document.getElementById('session-search'),cards=[...document.querySelectorAll('.session-card')],count=document.getElementById('session-count'),empty=document.getElementById('session-empty');document.querySelectorAll('.local-time').forEach(t=>{const n=Number(t.dataset.epoch);if(n>0){try{t.textContent=new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(new Date(n*1000));t.title=new Date(n*1000).toISOString()}catch(e){}}});const filter=()=>{const q=input.value.trim().toLocaleLowerCase();let shown=0;cards.forEach(c=>{const match=!q||c.dataset.search.includes(q);c.hidden=!match;if(match)shown++});count.textContent=shown+' / '+cards.length+' 台を表示';empty.classList.toggle('visible',shown===0)};input.addEventListener('input',filter);filter();const emailForm=document.getElementById('recovery-email-form'),codeForm=document.getElementById('recovery-code-form'),emailStatus=document.getElementById('recovery-email-status'),keyButton=document.getElementById('recovery-key-button'),keyOutput=document.getElementById('recovery-key-output');let emailFlow='';const csrf=keyButton.dataset.csrf,enc=x=>{let s='';new Uint8Array(x).forEach(v=>s+=String.fromCharCode(v));return btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')},dec=x=>Uint8Array.from(atob(x.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-x.length%4)%4)),c=>c.charCodeAt(0));async function post(url,data){const r=await fetch(url,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.message||'処理できませんでした');return j}emailForm.addEventListener('submit',async e=>{e.preventDefault();emailStatus.textContent='確認コードを送信しています…';try{const j=await post('/account/recovery-email/start',{csrf,email:document.getElementById('recovery-email').value});emailFlow=j.flow;codeForm.hidden=false;emailStatus.textContent=j.message;document.getElementById('recovery-code').focus()}catch(err){emailStatus.textContent=err.message}});codeForm.addEventListener('submit',async e=>{e.preventDefault();emailStatus.textContent='コードを確認しています…';try{const j=await post('/account/recovery-email/verify',{csrf,flow:emailFlow,code:document.getElementById('recovery-code').value,email:document.getElementById('recovery-email').value});emailStatus.textContent=j.message;codeForm.hidden=true;emailForm.hidden=true}catch(err){emailStatus.textContent=err.message}});keyButton.addEventListener('click',async()=>{keyButton.disabled=true;emailStatus.textContent='パスキーで本人確認しています…';try{const b=await post('/account/recovery-key/begin',{csrf});b.publicKey.challenge=dec(b.publicKey.challenge);b.publicKey.allowCredentials=b.publicKey.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));const c=await navigator.credentials.get({publicKey:b.publicKey}),j=await post('/account/recovery-key/finish',{csrf,flow:b.flow,credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),authenticatorData:enc(c.response.authenticatorData),signature:enc(c.response.signature),userHandle:c.response.userHandle?enc(c.response.userHandle):''}});keyOutput.hidden=false;keyOutput.textContent='復旧キー（この画面で一度だけ表示）: '+j.recovery_key;emailStatus.textContent='復旧キーを安全な場所へ保存してください。';keyButton.textContent='復旧キーを再発行'}catch(err){emailStatus.textContent=err.name==='NotAllowedError'?'本人確認を完了できませんでした。もう一度お試しください。':err.message}finally{keyButton.disabled=false}});const add=document.getElementById('add-passkey'),ps=document.getElementById('passkey-status');add?.addEventListener('click',async()=>{add.disabled=true;ps.textContent='現在のパスキーで本人確認してください…';try{let s=await post('/account/passkey/add/begin',{csrf});s.publicKey.challenge=dec(s.publicKey.challenge);s.publicKey.allowCredentials=s.publicKey.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));const a=await navigator.credentials.get({publicKey:s.publicKey});s=await post('/account/passkey/add/verify',{csrf,flow:s.flow,credential:{id:enc(a.rawId),clientDataJSON:enc(a.response.clientDataJSON),authenticatorData:enc(a.response.authenticatorData),signature:enc(a.response.signature),userHandle:a.response.userHandle?enc(a.response.userHandle):''}});s.publicKey.challenge=dec(s.publicKey.challenge);s.publicKey.user.id=dec(s.publicKey.user.id);s.publicKey.excludeCredentials=s.publicKey.excludeCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));ps.textContent='新しい端末でパスキーを登録してください…';const c=await navigator.credentials.create({publicKey:s.publicKey});await post('/account/passkey/add/finish',{csrf,flow:s.flow,credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]}});ps.textContent='予備のパスキーを追加しました。';location.reload()}catch(err){ps.textContent=err.name==='NotAllowedError'?'操作がキャンセルされました。もう一度お試しください。':err.message;add.disabled=false}})})()</script></body>''', 1)
-    totp_script = '''<script>(()=>{const start=document.getElementById('totp-begin'),status=document.getElementById('totp-status'),setup=document.getElementById('totp-setup'),secret=document.getElementById('totp-secret'),uriLink=document.getElementById('totp-uri-link'),output=document.getElementById('totp-output'),csrf=start.dataset.csrf;let flow='';const enc=x=>{let s='';new Uint8Array(x).forEach(v=>s+=String.fromCharCode(v));return btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')},dec=x=>Uint8Array.from(atob(x.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-x.length%4)%4)),c=>c.charCodeAt(0));async function post(url,data){const r=await fetch(url,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.message||'処理できませんでした。');return j}start.addEventListener('click',async()=>{start.disabled=true;status.textContent='登録済みパスキーで本人確認しています…';try{let b=await post('/account/totp/begin',{csrf});b.publicKey.challenge=dec(b.publicKey.challenge);b.publicKey.allowCredentials=b.publicKey.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));const a=await navigator.credentials.get({publicKey:b.publicKey});const s=await post('/account/totp/verify-passkey',{csrf,flow:b.flow,credential:{id:enc(a.rawId),clientDataJSON:enc(a.response.clientDataJSON),authenticatorData:enc(a.response.authenticatorData),signature:enc(a.response.signature),userHandle:a.response.userHandle?enc(a.response.userHandle):''}});flow=s.flow;secret.textContent=s.secret;uriLink.href=s.otpauth_uri;setup.hidden=false;start.hidden=true;status.textContent='認証アプリへ設定キーを登録し、次のコードで有効化してください。'}catch(err){status.textContent=err.name==='NotAllowedError'?'パスキー確認を完了できませんでした。':err.message;start.disabled=false}});document.getElementById('totp-enable-form').addEventListener('submit',async e=>{e.preventDefault();const button=e.currentTarget.querySelector('button');button.disabled=true;try{const j=await post('/account/totp/enable',{csrf,flow,code:document.getElementById('totp-enable-code').value.trim()});output.hidden=false;output.textContent='一回限りの予備コード（安全な場所に保存してください）\\n\\n'+j.recovery_codes.join('\\n');setup.hidden=true;status.textContent='認証アプリを有効にしました。予備コードはこの画面を離れる前に保存してください。';document.getElementById('totp-manage-form').hidden=false;document.getElementById('totp-begin').hidden=true}catch(err){status.textContent=err.message;button.disabled=false}});const manage=document.getElementById('totp-manage-form'),code=document.getElementById('totp-manage-code');document.getElementById('totp-regenerate').addEventListener('click',async()=>{const button=document.getElementById('totp-regenerate');button.disabled=true;try{const j=await post('/account/totp/recovery/regenerate',{csrf,code:code.value.trim()});output.hidden=false;output.textContent='新しい一回限りの予備コード（以前のコードはすべて無効）\\n\\n'+j.recovery_codes.join('\\n');code.value='';status.textContent='予備コードを再発行しました。'}catch(err){status.textContent=err.message}finally{button.disabled=false}});document.getElementById('totp-disable').addEventListener('click',async()=>{if(!window.confirm('認証アプリを解除しますか？ログイン時の追加認証が無効になります。'))return;const button=document.getElementById('totp-disable');button.disabled=true;try{await post('/account/totp/disable',{csrf,code:code.value.trim()});status.textContent='認証アプリを解除しました。';location.reload()}catch(err){status.textContent=err.message;button.disabled=false}})})();</script>'''
+    page = page.replace("</body>", '''<script>(()=>{const input=document.getElementById('session-search'),cards=[...document.querySelectorAll('.session-card')],count=document.getElementById('session-count'),empty=document.getElementById('session-empty');document.querySelectorAll('.local-time').forEach(t=>{const n=Number(t.dataset.epoch);if(n>0){try{t.textContent=new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(new Date(n*1000));t.title=new Date(n*1000).toISOString()}catch(e){}}});const filter=()=>{const q=input.value.trim().toLocaleLowerCase();let shown=0;cards.forEach(c=>{const match=!q||c.dataset.search.includes(q);c.hidden=!match;if(match)shown++});count.textContent=shown+' / '+cards.length+' 台を表示';empty.classList.toggle('visible',shown===0)};input.addEventListener('input',filter);filter();const emailForm=document.getElementById('recovery-email-form'),codeForm=document.getElementById('recovery-code-form'),emailStatus=document.getElementById('recovery-email-status'),keyButton=document.getElementById('recovery-key-button'),keyOutput=document.getElementById('recovery-key-output');let emailFlow='';const csrf=keyButton.dataset.csrf,enc=x=>{let s='';new Uint8Array(x).forEach(v=>s+=String.fromCharCode(v));return btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')},dec=x=>Uint8Array.from(atob(x.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-x.length%4)%4)),c=>c.charCodeAt(0));async function post(url,data){const r=await fetch(url,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.message||'処理できませんでした');return j}emailForm.addEventListener('submit',async e=>{e.preventDefault();emailStatus.textContent='確認コードを送信しています…';try{const j=await post('/account/recovery-email/start',{csrf,email:document.getElementById('recovery-email').value});emailFlow=j.flow;codeForm.hidden=false;emailStatus.textContent=j.message;document.getElementById('recovery-code').focus()}catch(err){emailStatus.textContent=err.message}});codeForm.addEventListener('submit',async e=>{e.preventDefault();emailStatus.textContent='コードを確認しています…';try{const j=await post('/account/recovery-email/verify',{csrf,flow:emailFlow,code:document.getElementById('recovery-code').value,email:document.getElementById('recovery-email').value});emailStatus.textContent=j.message;codeForm.hidden=true;emailForm.hidden=true}catch(err){emailStatus.textContent=err.message}});function downloadCertificate(cert){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(cert,null,2)],{type:'application/json'}));a.href=url;a.download=(String(cert.subject||'SSO').replace(/[^A-Za-z0-9_-]/g,'')||'SSO')+'-recovery-certificate.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500)};keyButton.addEventListener('click',async()=>{keyButton.disabled=true;emailStatus.textContent='パスキーで本人確認しています…';try{const b=await post('/account/recovery-key/begin',{csrf});b.publicKey.challenge=dec(b.publicKey.challenge);b.publicKey.allowCredentials=b.publicKey.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));const c=await navigator.credentials.get({publicKey:b.publicKey}),j=await post('/account/recovery-key/finish',{csrf,flow:b.flow,credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),authenticatorData:enc(c.response.authenticatorData),signature:enc(c.response.signature),userHandle:c.response.userHandle?enc(c.response.userHandle):''}});keyOutput.hidden=false;downloadCertificate(j.recovery_certificate);keyOutput.hidden=false;keyOutput.textContent='復旧証明書をダウンロードしました。安全な場所に保管してください。再発行・再ダウンロードはできません。';emailStatus.textContent='復旧証明書を保存してください。';keyButton.textContent='復旧証明書は一度だけ発行可能'}catch(err){emailStatus.textContent=err.name==='NotAllowedError'?'本人確認を完了できませんでした。もう一度お試しください。':err.message}finally{keyButton.disabled=false}});const add=document.getElementById('add-passkey'),ps=document.getElementById('passkey-status');add?.addEventListener('click',async()=>{add.disabled=true;ps.textContent='現在のパスキーで本人確認してください…';try{let s=await post('/account/passkey/add/begin',{csrf});s.publicKey.challenge=dec(s.publicKey.challenge);s.publicKey.allowCredentials=s.publicKey.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));const a=await navigator.credentials.get({publicKey:s.publicKey});s=await post('/account/passkey/add/verify',{csrf,flow:s.flow,credential:{id:enc(a.rawId),clientDataJSON:enc(a.response.clientDataJSON),authenticatorData:enc(a.response.authenticatorData),signature:enc(a.response.signature),userHandle:a.response.userHandle?enc(a.response.userHandle):''}});s.publicKey.challenge=dec(s.publicKey.challenge);s.publicKey.user.id=dec(s.publicKey.user.id);s.publicKey.excludeCredentials=s.publicKey.excludeCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));ps.textContent='新しい端末でパスキーを登録してください…';const c=await navigator.credentials.create({publicKey:s.publicKey});await post('/account/passkey/add/finish',{csrf,flow:s.flow,credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]}});ps.textContent='予備のパスキーを追加しました。';location.reload()}catch(err){ps.textContent=err.name==='NotAllowedError'?'操作がキャンセルされました。もう一度お試しください。':err.message;add.disabled=false}})})()</script></body>''', 1)
+    totp_script = '''<script>(()=>{const start=document.getElementById('totp-begin'),status=document.getElementById('totp-status'),setup=document.getElementById('totp-setup'),secret=document.getElementById('totp-secret'),uriLink=document.getElementById('totp-uri-link'),output=document.getElementById('totp-output'),csrf=start.dataset.csrf,onboarding=document.getElementById('registration-onboarding'),onboardingStatus=document.getElementById('onboarding-status'),skip=document.getElementById('onboarding-skip'),continueButton=document.getElementById('onboarding-continue');let flow='';const enc=x=>{let s='';new Uint8Array(x).forEach(v=>s+=String.fromCharCode(v));return btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')},dec=x=>Uint8Array.from(atob(x.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-x.length%4)%4)),c=>c.charCodeAt(0));function downloadCertificate(cert){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(cert,null,2)],{type:'application/json'}));a.href=url;a.download=(String(cert.subject||'SSO').replace(/[^A-Za-z0-9_-]/g,'')||'SSO')+'-recovery-certificate.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500)}async function post(url,data){const r=await fetch(url,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.message||'処理できませんでした。');return j}async function finishOnboarding(action,button){button.disabled=true;onboardingStatus.textContent='ログインを完了しています…';try{const j=await post('/account/onboarding/complete',{csrf,action});location.assign(j.next)}catch(err){onboardingStatus.textContent=err.message;button.disabled=false}}if(onboarding){skip.addEventListener('click',()=>finishOnboarding('skip',skip));continueButton.addEventListener('click',()=>finishOnboarding('continue',continueButton))}start.addEventListener('click',async()=>{start.disabled=true;status.textContent='登録済みパスキーで本人確認しています…';try{let b=await post('/account/totp/begin',{csrf});b.publicKey.challenge=dec(b.publicKey.challenge);b.publicKey.allowCredentials=b.publicKey.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));const a=await navigator.credentials.get({publicKey:b.publicKey});const s=await post('/account/totp/verify-passkey',{csrf,flow:b.flow,credential:{id:enc(a.rawId),clientDataJSON:enc(a.response.clientDataJSON),authenticatorData:enc(a.response.authenticatorData),signature:enc(a.response.signature),userHandle:a.response.userHandle?enc(a.response.userHandle):''}});flow=s.flow;secret.textContent=s.secret;uriLink.href=s.otpauth_uri;setup.hidden=false;start.hidden=true;status.textContent='認証アプリへ設定キーを登録し、次のコードで有効化してください。'}catch(err){status.textContent=err.name==='NotAllowedError'?'パスキー確認を完了できませんでした。':err.message;start.disabled=false}});document.getElementById('totp-enable-form').addEventListener('submit',async e=>{e.preventDefault();const button=e.currentTarget.querySelector('button');button.disabled=true;try{const j=await post('/account/totp/enable',{csrf,flow,code:document.getElementById('totp-enable-code').value.trim()});if(j.recovery_certificate){downloadCertificate(j.recovery_certificate);output.hidden=false;output.textContent='復旧証明書をダウンロードしました。安全な場所に保管してください。'}else{output.hidden=false;output.textContent='復旧証明書は登録時に発行済みです。'}status.textContent='認証アプリを有効にしました。';setup.hidden=true;document.getElementById('totp-manage-form').hidden=false;document.getElementById('totp-begin').hidden=true;if(onboarding){skip.hidden=true;continueButton.hidden=false;onboardingStatus.textContent='復旧証明書をダウンロードしました。保存先を確認してから続けてください。'}}catch(err){status.textContent=err.message;button.disabled=false}});const code=document.getElementById('totp-manage-code');document.getElementById('totp-disable').addEventListener('click',async()=>{if(!window.confirm('認証アプリを解除しますか？ログイン時の追加認証が無効になります。'))return;const button=document.getElementById('totp-disable');button.disabled=true;try{await post('/account/totp/disable',{csrf,code:code.value.trim()});status.textContent='認証アプリを解除しました。';location.reload()}catch(err){status.textContent=err.message;button.disabled=false}})})();</script>'''
     page = page.replace("</body>", totp_script + "</body>", 1)
     return page.encode("utf-8")
 
@@ -854,14 +859,14 @@ button.secondary{border:1px solid #c8d6f4;background:#eef3ff;color:#244bb8;box-s
     <header class="card-head">
       <p class="kicker">SECURE ACCOUNT RECOVERY</p>
       <h1 id="page-title">パスキーを再設定</h1>
-      <p class="lead">パスキーが使えない場合は、登録メールと事前登録済みGoogle Authenticatorの両方で確認してから、新しいパスキーを登録します。</p>
+      <p class="lead">パスキーが使えない場合は、登録メールと認証アプリ、または一回限りの復旧証明書で本人確認して再設定します。</p>
       <ol class="steps" aria-label="再設定の手順">
         <li class="is-current" data-step="1" aria-current="step">パスキー確認</li>
         <li data-step="2" aria-current="false">メール確認</li>
-        <li data-step="3" aria-current="false">Google OTP</li>
+        <li data-step="3" aria-current="false">追加の本人確認</li>
         <li data-step="4" aria-current="false">パスキー登録</li>
       </ol>
-      <aside class="security-note" role="note"><strong>再設定には2つの確認が必要です</strong><span>メールOTPとGoogle OTPの両方が通るまで、現在のパスキーは削除されません。</span></aside>
+      <aside class="security-note" role="note"><strong>再設定にはメール確認と追加の本人確認が必要です</strong><span>認証アプリを使えない場合は、事前に保存した復旧証明書をアップロードしてください。証明書を使うとパスキーとTOTPをリセットします。</span></aside>
     </header>
     <div class="panel">
       <form id="start" autocomplete="on">
@@ -870,6 +875,7 @@ button.secondary{border:1px solid #c8d6f4;background:#eef3ff;color:#244bb8;box-s
         <p class="form-copy">まずSIDに登録されたパスキーを確認します。メールアドレスは、パスキーを使えない場合のOTP送信に使います。</p>
         <div class="field"><label for="id">SSO ID</label><input id="id" autocomplete="username" autocapitalize="characters" spellcheck="false" placeholder="SID-…" required></div>
         <div class="field"><label for="email">登録済みメールアドレス</label><input id="email" type="email" inputmode="email" autocomplete="email" autocapitalize="none" spellcheck="false" placeholder="name@example.jp" required maxlength="254"></div>
+        <div class="field"><label for="recovery-certificate">復旧証明書ファイル（JSON・任意）</label><input id="recovery-certificate" type="file" accept=".json,application/json"></div>
         <button type="submit">本人確認を開始</button>
         <p class="privacy"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 20 6v5c0 5-3.4 8-8 10-4.6-2-8-5-8-10V6l8-3Z" stroke="currentColor" stroke-width="1.8"/><path d="m8.5 12 2.2 2.2 4.8-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>確認コードは、パスキーで本人確認できなかった場合にだけ送信されます。</span></p>
       </form>
@@ -893,9 +899,9 @@ button.secondary{border:1px solid #c8d6f4;background:#eef3ff;color:#244bb8;box-s
   </section>
   <footer class="footer"><a href="/">ログインに戻る</a><span>保護されたSSO ID設定</span></footer>
 </main>
-<script>(()=>{const csrf=document.getElementById('csrf').value,status=document.getElementById('status'),start=document.getElementById('start'),verify=document.getElementById('verify'),totpVerify=document.getElementById('totp-verify'),checkPasskey=document.getElementById('check-passkey'),register=document.getElementById('register'),done=document.getElementById('done');let flow='',options=null,existingOptions=null;const stepItems=[...document.querySelectorAll('[data-step]')];function setStep(n){stepItems.forEach((el,i)=>{el.classList.toggle('is-done',i+1<n);el.classList.toggle('is-current',i+1===n);el.setAttribute('aria-current',i+1===n?'step':'false')})}const enc=x=>{let s='';new Uint8Array(x).forEach(v=>s+=String.fromCharCode(v));return btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')},dec=x=>Uint8Array.from(atob(x.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-x.length%4)%4)),c=>c.charCodeAt(0));async function post(path,data){const r=await fetch(path,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.message||'入力内容を確認してください');return j}start.addEventListener('submit',async e=>{e.preventDefault();status.textContent='登録情報を確認しています…';try{const public_id=document.getElementById('id').value.trim().toUpperCase();const begin=await post('/recover/passkey-begin',{csrf,public_id});if(begin.hasPasskey){flow=begin.flow;existingOptions=begin.existingPasskey;existingOptions.challenge=dec(existingOptions.challenge);existingOptions.allowCredentials=existingOptions.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));start.hidden=true;setStep(1);checkPasskey.style.display='block';status.textContent='このSIDに登録されたパスキーで本人確認してください。ボタンを押すと認証が始まります。';return}const j=await post('/recover/start',{csrf,public_id,email:document.getElementById('email').value});if(!j.flow){status.textContent=j.message||'入力内容が一致しないか、確認コードを送信できませんでした。SSO IDと登録済みメールアドレスを確認してください。';return}flow=j.flow;start.hidden=true;setStep(2);verify.style.display='block';status.textContent='確認コードを送信しました。メールを確認してください。';document.getElementById('code').focus()}catch(err){status.textContent=err.message}});
-checkPasskey.addEventListener('click',async()=>{checkPasskey.disabled=true;status.textContent='パスキー認証を待っています…';try{const c=await navigator.credentials.get({publicKey:existingOptions});const r=await fetch('/recover/passkey-check',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,flow,credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),authenticatorData:enc(c.response.authenticatorData),signature:enc(c.response.signature),userHandle:c.response.userHandle?enc(c.response.userHandle):''}})});const j=await r.json();if(r.status===409&&j.error==='existing_passkey_verified'){checkPasskey.style.display='none';setStep(1);status.textContent='本人確認できました。このSSO IDのリセットは不要です。登録済みパスキーでログインしてください。';return}if(!r.ok)throw new Error(j.message||'パスキーを確認できませんでした。もう一度お試しください。');throw new Error('登録済みパスキーを確認できませんでした。')}catch(err){if(err.name==='NotAllowedError'){try{await post('/recover/allow-reset',{csrf,flow});await post('/recover/send-otp',{csrf,flow,email:document.getElementById('email').value});checkPasskey.style.display='none';setStep(2);verify.style.display='block';status.textContent='パスキーで本人確認できなかったため、メールに確認コードを送信しました。';document.getElementById('code').focus()}catch(nextError){checkPasskey.disabled=false;status.textContent=nextError.message}}else{checkPasskey.disabled=false;status.textContent=err.message}}});
-verify.addEventListener('submit',async e=>{e.preventDefault();status.textContent='メールコードを確認しています…';try{await post('/recover/verify',{csrf,flow,code:document.getElementById('code').value,email:document.getElementById('email').value});verify.hidden=true;setStep(3);totpVerify.style.display='block';status.textContent='メール確認済みです。続けてGoogle Authenticatorのコードを入力してください。';document.getElementById('totp-code').focus()}catch(err){status.textContent=err.message}});totpVerify.addEventListener('submit',async e=>{e.preventDefault();const button=e.currentTarget.querySelector('button');button.disabled=true;status.textContent='Google OTPを確認しています…';try{const j=await post('/recover/totp-verify',{csrf,flow,code:document.getElementById('totp-code').value.trim()});options=j.publicKey;options.challenge=dec(options.challenge);options.user.id=dec(options.user.id);totpVerify.hidden=true;setStep(4);register.style.display='block';status.textContent='メールとGoogle OTPを確認しました。既存パスキーを失効しました。新しいパスキーを登録してください。'}catch(err){button.disabled=false;status.textContent=err.message}});register.addEventListener('click',async()=>{register.disabled=true;status.textContent='パスキー登録を待っています…';try{const c=await navigator.credentials.create({publicKey:options});const j=await post('/recover/finish',{csrf,flow,credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]}});register.style.display='none';done.hidden=false;setStep(4);document.getElementById('result').textContent='パスキーの再設定が完了しました。';status.textContent='パスキーを再設定しました。ログインしてください。'}catch(err){register.disabled=false;status.textContent=err.name==='NotAllowedError'?'登録がキャンセルされました。もう一度お試しください。':err.message}})})()</script></body></html>'''
+<script>(()=>{const csrf=document.getElementById('csrf').value,status=document.getElementById('status'),start=document.getElementById('start'),verify=document.getElementById('verify'),totpVerify=document.getElementById('totp-verify'),checkPasskey=document.getElementById('check-passkey'),register=document.getElementById('register'),done=document.getElementById('done');let flow='',options=null,existingOptions=null,recoveryCertificate=null;const stepItems=[...document.querySelectorAll('[data-step]')];function setStep(n){stepItems.forEach((el,i)=>{el.classList.toggle('is-done',i+1<n);el.classList.toggle('is-current',i+1===n);el.setAttribute('aria-current',i+1===n?'step':'false')})}const enc=x=>{let s='';new Uint8Array(x).forEach(v=>s+=String.fromCharCode(v));return btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')},dec=x=>Uint8Array.from(atob(x.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-x.length%4)%4)),c=>c.charCodeAt(0));async function post(path,data){const r=await fetch(path,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.message||'入力内容を確認してください');return j}start.addEventListener('submit',async e=>{e.preventDefault();status.textContent='登録情報を確認しています…';try{const public_id=document.getElementById('id').value.trim().toUpperCase();recoveryCertificate=null;const certFile=document.getElementById('recovery-certificate').files[0];if(certFile){if(certFile.size>8192)throw new Error('復旧証明書ファイルが大きすぎます。');recoveryCertificate=JSON.parse(await certFile.text());if(recoveryCertificate.format!=='2415.jp/sso-recovery-certificate'||recoveryCertificate.version!==1||recoveryCertificate.issuer!=='https://sso.2415.jp'||recoveryCertificate.subject!==public_id)throw new Error('復旧証明書の対象SSO IDが一致しません。')}const begin=await post('/recover/passkey-begin',{csrf,public_id,certificate:recoveryCertificate});if(begin.hasPasskey){flow=begin.flow;existingOptions=begin.existingPasskey;existingOptions.challenge=dec(existingOptions.challenge);existingOptions.allowCredentials=existingOptions.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));start.hidden=true;setStep(1);checkPasskey.style.display='block';status.textContent='このSIDに登録されたパスキーで本人確認してください。ボタンを押すと認証が始まります。';return}const j=await post('/recover/start',{csrf,public_id,email:document.getElementById('email').value,certificate:recoveryCertificate});if(!j.flow){status.textContent=j.message||'入力内容が一致しないか、確認コードを送信できませんでした。SSO IDと登録済みメールアドレスを確認してください。';return}flow=j.flow;start.hidden=true;setStep(2);verify.style.display='block';status.textContent='確認コードを送信しました。メールを確認してください。';document.getElementById('code').focus()}catch(err){status.textContent=err.message}});
+checkPasskey.addEventListener('click',async()=>{checkPasskey.disabled=true;status.textContent='パスキー認証を待っています…';try{const c=await navigator.credentials.get({publicKey:existingOptions});const r=await fetch('/recover/passkey-check',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,flow,credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),authenticatorData:enc(c.response.authenticatorData),signature:enc(c.response.signature),userHandle:c.response.userHandle?enc(c.response.userHandle):''}})});const j=await r.json();if(r.status===409&&j.error==='existing_passkey_verified'){checkPasskey.style.display='none';setStep(1);status.textContent='本人確認できました。このSSO IDのリセットは不要です。登録済みパスキーでログインしてください。';return}if(!r.ok)throw new Error(j.message||'パスキーを確認できませんでした。もう一度お試しください。');throw new Error('登録済みパスキーを確認できませんでした。')}catch(err){if(err.name==='NotAllowedError'){try{await post('/recover/allow-reset',{csrf,flow});await post('/recover/send-otp',{csrf,flow,email:document.getElementById('email').value,certificate:recoveryCertificate});checkPasskey.style.display='none';setStep(2);verify.style.display='block';status.textContent='パスキーで本人確認できなかったため、メールに確認コードを送信しました。';document.getElementById('code').focus()}catch(nextError){checkPasskey.disabled=false;status.textContent=nextError.message}}else{checkPasskey.disabled=false;status.textContent=err.message}}});
+verify.addEventListener('submit',async e=>{e.preventDefault();status.textContent='メールコードを確認しています…';try{const j=await post('/recover/verify',{csrf,flow,code:document.getElementById('code').value,email:document.getElementById('email').value});verify.hidden=true;if(j.certificate_accepted){options=j.publicKey;options.challenge=dec(options.challenge);options.user.id=dec(options.user.id);setStep(4);register.style.display='block';status.textContent='復旧証明書とメールを確認しました。パスキーとTOTPはリセット済みです。新しいパスキーを登録してください。'}else{setStep(3);totpVerify.style.display='block';status.textContent='メールを確認しました。続けて認証アプリの6桁コードを入力してください。';document.getElementById('totp-code').focus()}}catch(err){status.textContent=err.message}});totpVerify.addEventListener('submit',async e=>{e.preventDefault();const button=e.currentTarget.querySelector('button');button.disabled=true;status.textContent='Google OTPを確認しています…';try{const j=await post('/recover/totp-verify',{csrf,flow,code:document.getElementById('totp-code').value.trim()});options=j.publicKey;options.challenge=dec(options.challenge);options.user.id=dec(options.user.id);totpVerify.hidden=true;setStep(4);register.style.display='block';status.textContent='メールとGoogle OTPを確認しました。既存パスキーを失効しました。新しいパスキーを登録してください。'}catch(err){button.disabled=false;status.textContent=err.message}});register.addEventListener('click',async()=>{register.disabled=true;status.textContent='パスキー登録を待っています…';try{const c=await navigator.credentials.create({publicKey:options});const j=await post('/recover/finish',{csrf,flow,credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]}});register.style.display='none';done.hidden=false;setStep(4);document.getElementById('result').textContent='パスキーの再設定が完了しました。';status.textContent='パスキーを再設定しました。ログインしてください。'}catch(err){register.disabled=false;status.textContent=err.name==='NotAllowedError'?'登録がキャンセルされました。もう一度お試しください。':err.message}})})()</script></body></html>'''
     return page.replace("__CSRF__", html.escape(csrf, quote=True)).encode("utf-8")
 
 
@@ -947,9 +953,9 @@ def app(environ, start_response):
         "/account/recovery-key/begin": (20, 300), "/account/recovery-key/finish": (20, 300),
         "/account/passkey/add/begin": (20, 300), "/account/passkey/add/verify": (20, 300),
         "/account/passkey/add/finish": (10, 300),
-        "/login/totp": (12, 300), "/account/totp/begin": (12, 300),
+        "/login/totp": (12, 300), "/account/onboarding/complete": (8, 300), "/account/totp/begin": (12, 300),
         "/account/totp/verify-passkey": (12, 300), "/account/totp/enable": (12, 300),
-        "/account/totp/disable": (12, 300), "/account/totp/recovery/regenerate": (12, 300),
+        "/account/totp/disable": (12, 300),
     }
     if method == "POST" and path in rate_policy:
         maximum, window_seconds = rate_policy[path]
@@ -1109,7 +1115,7 @@ def app(environ, start_response):
                 now = int(time.time())
                 con.execute("DELETE FROM login_flows WHERE flow_hash IN (SELECT flow_hash FROM passkey_flows WHERE user_id=?)", (user_id,))
                 con.execute("DELETE FROM login_flows WHERE flow_hash IN (SELECT login_flow_hash FROM mfa_flows WHERE user_id=?)", (user_id,))
-                for table in ("passkeys", "totp_credentials", "totp_recovery_codes", "recovery_keys", "recovery_flows", "recovery_limits", "recovery_email_setup", "totp_setup_flows", "mfa_flows", "passkey_flows"):
+                for table in ("passkeys", "totp_credentials", "recovery_keys", "recovery_flows", "recovery_limits", "recovery_email_setup", "totp_setup_flows", "mfa_flows", "passkey_flows", "registration_onboarding"):
                     con.execute("DELETE FROM " + table + " WHERE user_id=?", (user_id,))
                 con.execute("UPDATE sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL", (now, user_id))
                 con.execute("DELETE FROM auth_codes WHERE user_id=?", (user_id,))
@@ -1174,8 +1180,13 @@ def app(environ, start_response):
                 user_id=cursor.lastrowid
                 con.execute("INSERT INTO passkeys(credential_id,user_id,public_key,sign_count,transports,created_at) VALUES(?,?,?,?,?,?)",(registered["credential_id"],user_id,registered["public_key"],registered["counter"],transports,now))
                 public_id=invite["public_id"]
+                certificate=new_recovery_certificate(public_id,now)
+                con.execute("INSERT INTO recovery_keys(user_id,key_hash,created_at,used_at,certificate_version) VALUES(?,?,?,NULL,1)",(user_id,recovery_key_hash(certificate["credential"]),now))
+                session=b64u(secrets.token_bytes(32));csrf=b64u(secrets.token_bytes(32));session_hash=hashlib.sha256(session.encode()).hexdigest()
+                con.execute("INSERT INTO sessions(token_hash,user_id,expires_at,created_at,user_agent,csrf_hash) VALUES(?,?,?,?,?,?)",(session_hash,user_id,now+SESSION_TTL,now,environ.get("HTTP_USER_AGENT","")[:180],hashlib.sha256(csrf.encode()).hexdigest()))
+                con.execute("INSERT INTO registration_onboarding(session_hash,user_id,request_json,expires_at) VALUES(?,?,?,?)",(session_hash,user_id,"",now+1800))
                 con.execute("DELETE FROM contractor_invites WHERE flow_hash=?",(flow_hash,)); con.commit()
-            return json_response(start_response,"200 OK",{"ok":True,"public_id":public_id},[("Cache-Control","no-store")])
+            return json_response(start_response,"200 OK",{"ok":True,"onboarding":True,"next":"/account","public_id":public_id,"recovery_certificate":certificate},[("Set-Cookie",f"{COOKIE}={session}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age={SESSION_TTL}"),("Cache-Control","no-store")])
         except sqlite3.IntegrityError:
             return json_response(start_response,"409 Conflict",{"error":"identity_already_exists"})
         except Exception:
@@ -1247,6 +1258,8 @@ def app(environ, start_response):
                 if not current or not hmac.compare_digest(current["csrf_hash"],hashlib.sha256(f.get("csrf","").encode()).hexdigest()): return json_response(start_response,"403 Forbidden",{"error":"csrf_validation_failed"})
                 keys=con.execute("SELECT credential_id,transports FROM passkeys WHERE user_id=?",(current["user_id"],)).fetchall()
                 if not keys: return json_response(start_response,"409 Conflict",{"error":"passkey_missing"})
+                issued=con.execute("SELECT 1 FROM recovery_keys WHERE user_id=? AND certificate_version=1",(current["user_id"],)).fetchone()
+                if issued: return json_response(start_response,"409 Conflict",{"error":"recovery_certificate_already_issued","message":"復旧証明書はすでに発行済みです。再発行できません。"},[("Cache-Control","no-store")])
                 flow=b64u(secrets.token_bytes(32)); flow_hash=hashlib.sha256(flow.encode()).hexdigest(); challenge=b64u(secrets.token_bytes(32)); con.execute("INSERT OR REPLACE INTO passkey_flows(flow_hash,user_id,challenge,mode,expires_at) VALUES(?,?,?,?,?)",(flow_hash,current["user_id"],challenge,"recovery_key",now+300))
             return json_response(start_response,"200 OK",{"ok":True,"flow":flow,"publicKey":{"challenge":challenge,"rpId":PASSKEY_RP_ID,"timeout":120000,"userVerification":"required","allowCredentials":[{"type":"public-key","id":k["credential_id"],"transports":json.loads(k["transports"] or "[]")} for k in keys]}},[("Cache-Control","no-store")])
         except Exception: return json_response(start_response,"400 Bad Request",{"error":"invalid_request"})
@@ -1255,19 +1268,23 @@ def app(environ, start_response):
         try:
             f=fields(environ); token=cookie(environ,COOKIE); token_hash=hashlib.sha256(token.encode()).hexdigest() if token else ""; flow_hash=hashlib.sha256(f.get("flow","").encode()).hexdigest(); cred=f.get("credential") or {}; now=int(time.time())
             with db() as con:
-                con.execute("BEGIN IMMEDIATE"); current=con.execute("SELECT s.user_id,s.csrf_hash FROM sessions s WHERE s.token_hash=? AND s.expires_at>? AND s.revoked_at IS NULL",(token_hash,now)).fetchone(); pending=con.execute("SELECT * FROM passkey_flows WHERE flow_hash=? AND mode='recovery_key' AND expires_at>?",(flow_hash,now)).fetchone()
+                con.execute("BEGIN IMMEDIATE"); current=con.execute("SELECT s.user_id,s.csrf_hash,u.public_id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND s.revoked_at IS NULL AND u.active=1",(token_hash,now)).fetchone(); pending=con.execute("SELECT * FROM passkey_flows WHERE flow_hash=? AND mode='recovery_key' AND expires_at>?",(flow_hash,now)).fetchone()
                 if not current or not pending or current["user_id"]!=pending["user_id"] or not hmac.compare_digest(current["csrf_hash"],hashlib.sha256(f.get("csrf","").encode()).hexdigest()): con.rollback(); return json_response(start_response,"400 Bad Request",{"error":"invalid_recovery_flow"})
                 keyrow=con.execute("SELECT * FROM passkeys WHERE credential_id=? AND user_id=?",(cred.get("id",""),current["user_id"])).fetchone()
                 if not keyrow: con.rollback(); return json_response(start_response,"401 Unauthorized",{"error":"invalid_passkey"})
                 count=webauthn_assertion(cred.get("clientDataJSON",""),cred.get("authenticatorData",""),cred.get("signature",""),pending["challenge"],keyrow["public_key"],keyrow["sign_count"],cred.get("userHandle",""))
-                con.execute("UPDATE passkeys SET sign_count=?,last_used=? WHERE credential_id=?",(count,now,keyrow["credential_id"])); key=new_recovery_key(); con.execute("INSERT OR REPLACE INTO recovery_keys(user_id,key_hash,created_at,used_at) VALUES(?,?,?,NULL)",(current["user_id"],recovery_key_hash(key),now)); con.execute("DELETE FROM passkey_flows WHERE flow_hash=?",(flow_hash,)); con.commit()
-            return json_response(start_response,"200 OK",{"ok":True},[("Cache-Control","no-store")])
+                if con.execute("SELECT 1 FROM recovery_keys WHERE user_id=? AND certificate_version=1",(current["user_id"],)).fetchone():
+                    con.rollback(); return json_response(start_response,"409 Conflict",{"error":"recovery_certificate_already_issued","message":"復旧証明書はすでに発行済みです。再発行できません。"},[("Cache-Control","no-store")])
+                con.execute("UPDATE passkeys SET sign_count=?,last_used=? WHERE credential_id=?",(count,now,keyrow["credential_id"])); certificate=new_recovery_certificate(current["public_id"],now); con.execute("INSERT INTO recovery_keys(user_id,key_hash,created_at,used_at,certificate_version) VALUES(?,?,?,NULL,1) ON CONFLICT(user_id) DO UPDATE SET key_hash=excluded.key_hash,created_at=excluded.created_at,used_at=NULL,certificate_version=1 WHERE recovery_keys.certificate_version=0",(current["user_id"],recovery_key_hash(certificate["credential"]),now)); con.execute("DELETE FROM passkey_flows WHERE flow_hash=?",(flow_hash,)); con.commit()
+            return json_response(start_response,"200 OK",{"ok":True,"recovery_certificate":certificate},[("Cache-Control","no-store")])
         except Exception: return json_response(start_response,"400 Bad Request",{"error":"invalid_passkey","message":"パスキーを確認できませんでした。"})
     if path == "/recover/passkey-begin" and method == "POST":
         if environ.get("HTTP_ORIGIN", "") != ISSUER:
             return json_response(start_response, "403 Forbidden", {"error": "origin_rejected"})
         try:
-            f=fields(environ); public_id=f.get("public_id","").strip().upper(); csrf=f.get("csrf","")
+            f=fields(environ); public_id=f.get("public_id","").strip().upper(); csrf=f.get("csrf",""); certificate=f.get("certificate")
+            if certificate is not None and len(json.dumps(certificate, ensure_ascii=False)) > 8192:
+                return json_response(start_response,"400 Bad Request",{"ok":False,"error":"invalid_recovery_certificate","message":"復旧証明書ファイルを読み取れません。"})
             if not re.fullmatch(r"SID-[A-Z2-7]{26}",public_id):
                 return json_response(start_response,"200 OK",{"ok":True,"hasPasskey":False})
             now=int(time.time()); flow=b64u(secrets.token_bytes(32)); flow_hash=hashlib.sha256(flow.encode()).hexdigest(); salt=secrets.token_bytes(16)
@@ -1277,6 +1294,10 @@ def app(environ, start_response):
                 keys=con.execute("SELECT credential_id,transports FROM passkeys WHERE user_id=?",(user["id"],)).fetchall() if user else []
                 if not user or not keys:
                     con.rollback(); return json_response(start_response,"200 OK",{"ok":True,"hasPasskey":False})
+                certificate_hash=recovery_certificate_hash(certificate,public_id) if certificate is not None else ""
+                stored_certificate=con.execute("SELECT key_hash FROM recovery_keys WHERE user_id=? AND certificate_version=1 AND used_at IS NULL",(user["id"],)).fetchone()
+                if certificate_hash and stored_certificate and hmac.compare_digest(certificate_hash,stored_certificate["key_hash"]):
+                    con.rollback(); return json_response(start_response,"200 OK",{"ok":True,"hasPasskey":False,"certificateAccepted":True},[("Cache-Control","no-store")])
                 challenge=b64u(secrets.token_bytes(32))
                 con.execute("DELETE FROM recovery_flows WHERE user_id=? OR expires_at<=?",(user["id"],now))
                 con.execute("INSERT INTO recovery_flows(flow_hash,user_id,csrf_hash,code_salt,code_hash,expires_at,created_at,email_hash,existing_challenge,passkey_check_status) VALUES(?,?,?,?,?,?,?,?,?,'pending')",(flow_hash,user["id"],hashlib.sha256(csrf.encode()).hexdigest(),salt.hex(),"",now+600,now,"",challenge))
@@ -1292,6 +1313,12 @@ def app(environ, start_response):
             f = fields(environ); public_id = f.get("public_id", "").strip().upper(); address = f.get("email", "").strip(); csrf = f.get("csrf", "")
             if not re.fullmatch(r"SID-[A-Z2-7]{26}", public_id) or len(address) > 254 or not re.fullmatch(r"[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+", address):
                 return json_response(start_response, "200 OK", {"ok": True, "message": "該当する場合、確認コードを送信しました。"})
+            certificate = f.get("certificate")
+            if certificate is not None and len(json.dumps(certificate, ensure_ascii=False)) > 8192:
+                return json_response(start_response, "400 Bad Request", {"ok": False, "error": "invalid_recovery_certificate", "message": "復旧証明書ファイルを読み取れません。"})
+            certificate_hash = recovery_certificate_hash(certificate, public_id) if certificate is not None else ""
+            if certificate is not None and not certificate_hash:
+                return json_response(start_response, "400 Bad Request", {"ok": False, "error": "invalid_recovery_certificate", "message": "復旧証明書の内容または対象SSO IDが一致しません。"})
             now = int(time.time()); flow = b64u(secrets.token_bytes(32)); flow_hash = hashlib.sha256(flow.encode()).hexdigest(); code = "%08d" % secrets.randbelow(100000000); salt = secrets.token_bytes(16)
             with db() as con:
                 con.execute("BEGIN IMMEDIATE")
@@ -1309,23 +1336,28 @@ def app(environ, start_response):
                 authorized = bool(user and email_matches)
                 if not authorized:
                     con.rollback(); return json_response(start_response, "200 OK", {"ok": True, "message": "該当する場合、確認コードを送信しました。"})
+                stored_certificate = con.execute("SELECT key_hash FROM recovery_keys WHERE user_id=? AND certificate_version=1 AND used_at IS NULL", (user["id"],)).fetchone()
+                certificate_valid = bool(certificate_hash and stored_certificate and hmac.compare_digest(certificate_hash, stored_certificate["key_hash"]))
+                if certificate is not None and not certificate_valid:
+                    con.rollback(); return json_response(start_response, "400 Bad Request", {"ok": False, "error": "invalid_recovery_certificate", "message": "復旧証明書は無効または使用済みです。"})
                 totp_enabled = con.execute("SELECT 1 FROM totp_credentials WHERE user_id=?",(user["id"],)).fetchone() is not None
                 existing_keys = con.execute("SELECT credential_id,transports FROM passkeys WHERE user_id=?", (user["id"],)).fetchall()
-                if existing_keys:
+                if existing_keys and not certificate_valid:
                     existing_challenge = b64u(secrets.token_bytes(32))
                     con.execute("DELETE FROM recovery_flows WHERE user_id=? OR expires_at<=?", (user["id"],now))
                     con.execute("INSERT INTO recovery_flows(flow_hash,user_id,csrf_hash,code_salt,code_hash,expires_at,created_at,email_hash,existing_challenge,passkey_check_status) VALUES(?,?,?,?,?,?,?,?,?,'pending')", (flow_hash,user["id"],hashlib.sha256(csrf.encode()).hexdigest(),salt.hex(),"",now+600,now,address_hash,existing_challenge))
+                    con.execute("UPDATE recovery_flows SET certificate_hash=? WHERE flow_hash=?", (certificate_hash if certificate_valid else "", flow_hash))
                     con.commit()
                     existing_options={"challenge":existing_challenge,"rpId":PASSKEY_RP_ID,"timeout":120000,"userVerification":"required","allowCredentials":[{"type":"public-key","id":k["credential_id"],"transports":json.loads(k["transports"] or "[]")} for k in existing_keys]}
                     return json_response(start_response,"200 OK",{"ok":True,"flow":flow,"existingPasskey":existing_options,"message":"先に登録済みパスキーを確認します。"},[("Cache-Control","no-store")])
-                if not totp_enabled:
+                if not totp_enabled and not certificate_valid:
                     con.rollback(); return json_response(start_response,"409 Conflict",{"ok":False,"error":"totp_not_configured","message":"再設定には事前登録済みGoogle Authenticatorが必要です。ログインできる場合はアカウント設定から先に登録してください。"})
                 limit = con.execute("SELECT * FROM recovery_limits WHERE user_id=?", (user["id"],)).fetchone(); window = limit["window_started"] if limit and now-limit["window_started"]<3600 else now; sends = limit["sends"] if limit and now-limit["window_started"]<3600 else 0
                 if limit and (limit["locked_until"]>now or now-limit["last_sent_at"]<60 or sends>=3):
                     con.rollback(); return json_response(start_response, "429 Too Many Requests", {"error":"recovery_rate_limited","message":"時間をおいてから再度お試しください。"})
                 con.execute("INSERT OR REPLACE INTO recovery_limits(user_id,last_sent_at,window_started,sends,attempt_window,attempts,locked_until) VALUES(?,?,?,?,?,?,?)", (user["id"],now,window,sends+1,now,0,0))
                 con.execute("DELETE FROM recovery_flows WHERE user_id=? OR expires_at<=?", (user["id"],now))
-                con.execute("INSERT INTO recovery_flows(flow_hash,user_id,csrf_hash,code_salt,code_hash,expires_at,created_at,email_hash) VALUES(?,?,?,?,?,?,?,?)", (flow_hash,user["id"],hashlib.sha256(csrf.encode()).hexdigest(),salt.hex(),recovery_code_hash(flow_hash,salt,code),now+600,now,address_hash)); con.commit()
+                con.execute("INSERT INTO recovery_flows(flow_hash,user_id,csrf_hash,code_salt,code_hash,expires_at,created_at,email_hash,passkey_check_status,certificate_hash) VALUES(?,?,?,?,?,?,?,?,'not_required',?)", (flow_hash,user["id"],hashlib.sha256(csrf.encode()).hexdigest(),salt.hex(),recovery_code_hash(flow_hash,salt,code),now+600,now,address_hash,certificate_hash if certificate_valid else "")); con.commit()
             if not send_recovery_code(address, code):
                 with db() as con: con.execute("DELETE FROM recovery_flows WHERE flow_hash=?",(flow_hash,))
                 return json_response(start_response,"503 Service Unavailable",{"error":"mail_unavailable","message":"メールを送信できませんでした。時間をおいてください。"})
@@ -1347,15 +1379,36 @@ def app(environ, start_response):
                     attempts=flow["attempts"]+1; con.execute("UPDATE recovery_flows SET attempts=? WHERE flow_hash=?",(attempts,flow_hash))
                     if attempts>=5: con.execute("DELETE FROM recovery_flows WHERE flow_hash=?",(flow_hash,))
                     con.commit(); return json_response(start_response,"400 Bad Request",{"error":"invalid_code","message":"確認コードが違うか期限切れです。"})
-                if not con.execute("SELECT 1 FROM totp_credentials WHERE user_id=?",(flow["user_id"],)).fetchone():
-                    con.rollback(); return json_response(start_response,"409 Conflict",{"error":"totp_not_configured","message":"メール確認だけではパスキーを再設定できません。事前登録済みGoogle Authenticatorが必要です。"})
-                challenge=b64u(secrets.token_bytes(32)); existing_challenge=b64u(secrets.token_bytes(32))
-                existing_keys=con.execute("SELECT credential_id,transports FROM passkeys WHERE user_id=?",(flow["user_id"],)).fetchall()
-                check_status="not_required"
-                con.execute("UPDATE recovery_flows SET verified_at=?,challenge=NULL,existing_challenge=?,passkey_check_status=?,totp_verified_at=NULL,totp_attempts=0 WHERE flow_hash=?",(now,existing_challenge,check_status,flow_hash))
+                if flow["passkey_check_status"] not in ("unavailable","not_required"):
+                    con.rollback(); return json_response(start_response,"400 Bad Request",{"error":"passkey_check_required","message":"パスキー確認から再設定を開始してください。"})
+                if flow["certificate_hash"]:
+                    consumed=con.execute("UPDATE recovery_keys SET used_at=? WHERE user_id=? AND certificate_version=1 AND key_hash=? AND used_at IS NULL",(now,flow["user_id"],flow["certificate_hash"])).rowcount
+                    if consumed != 1:
+                        con.rollback(); return json_response(start_response,"400 Bad Request",{"error":"invalid_recovery_certificate","message":"復旧証明書は無効または使用済みです。"})
+                    challenge=b64u(secrets.token_bytes(32))
+                    con.execute("DELETE FROM passkeys WHERE user_id=?",(flow["user_id"],))
+                    con.execute("DELETE FROM totp_credentials WHERE user_id=?",(flow["user_id"],))
+                    con.execute("DELETE FROM totp_setup_flows WHERE user_id=?",(flow["user_id"],))
+                    con.execute("UPDATE sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL",(now,flow["user_id"]))
+                    con.execute("DELETE FROM auth_codes WHERE user_id=?",(flow["user_id"],))
+                    con.execute("DELETE FROM access_tokens WHERE user_id=?",(flow["user_id"],))
+                    con.execute("DELETE FROM login_flows WHERE flow_hash IN (SELECT flow_hash FROM passkey_flows WHERE user_id=?)",(flow["user_id"],))
+                    con.execute("DELETE FROM login_flows WHERE flow_hash IN (SELECT login_flow_hash FROM mfa_flows WHERE user_id=?)",(flow["user_id"],))
+                    con.execute("DELETE FROM passkey_flows WHERE user_id=?",(flow["user_id"],))
+                    con.execute("DELETE FROM mfa_flows WHERE user_id=?",(flow["user_id"],))
+                    con.execute("DELETE FROM recovery_flows WHERE user_id=? AND flow_hash<>?",(flow["user_id"],flow_hash))
+                    con.execute("UPDATE recovery_flows SET verified_at=?,challenge=?,passkey_check_status='unavailable',totp_verified_at=?,totp_attempts=0,expires_at=? WHERE flow_hash=?",(now,challenge,now,now+600,flow_hash))
+                    options={"challenge":challenge,"rp":{"id":PASSKEY_RP_ID,"name":"SSO ID 2415.jp"},"user":{"id":flow["user_handle"],"name":flow["public_id"],"displayName":flow["public_id"]},"pubKeyCredParams":[{"type":"public-key","alg":-7},{"type":"public-key","alg":-257}],"timeout":120000,"attestation":"none","authenticatorSelection":{"residentKey":"required","requireResidentKey":True,"userVerification":"required"}}
+                else:
+                    if not con.execute("SELECT 1 FROM totp_credentials WHERE user_id=?",(flow["user_id"],)).fetchone():
+                        con.rollback(); return json_response(start_response,"409 Conflict",{"error":"recovery_proof_required","message":"認証アプリまたは復旧証明書による本人確認が必要です。"})
+                    existing_challenge=b64u(secrets.token_bytes(32))
+                    con.execute("UPDATE recovery_flows SET verified_at=?,challenge=NULL,existing_challenge=?,passkey_check_status=?,totp_verified_at=NULL,totp_attempts=0 WHERE flow_hash=?",(now,existing_challenge,flow["passkey_check_status"],flow_hash))
                 if flow["email_hash"]:
                     con.execute("UPDATE users SET recovery_email_hash=CASE WHEN recovery_email_hash='' THEN ? ELSE recovery_email_hash END,email_encrypted='' WHERE id=?",(flow["email_hash"],flow["user_id"]))
                 con.commit()
+            if flow["certificate_hash"]:
+                return json_response(start_response,"200 OK",{"ok":True,"certificate_accepted":True,"publicKey":options},[("Cache-Control","no-store")])
             return json_response(start_response,"200 OK",{"ok":True,"totp_required":True},[("Cache-Control","no-store")])
         except Exception:
             return json_response(start_response,"400 Bad Request",{"error":"invalid_request"})
@@ -1385,7 +1438,6 @@ def app(environ, start_response):
                     con.rollback(); return json_response(start_response,"401 Unauthorized",{"error":"otp_replayed","message":"そのGoogle OTPは使用済みです。次のコードを入力してください。"})
                 challenge=b64u(secrets.token_bytes(32))
                 con.execute("DELETE FROM passkeys WHERE user_id=?",(flow["user_id"],))
-                con.execute("DELETE FROM recovery_keys WHERE user_id=?",(flow["user_id"],))
                 con.execute("UPDATE sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL",(now,flow["user_id"]))
                 con.execute("DELETE FROM auth_codes WHERE user_id=?",(flow["user_id"]))
                 con.execute("DELETE FROM access_tokens WHERE user_id=?",(flow["user_id"]))
@@ -1422,14 +1474,19 @@ def app(environ, start_response):
         if environ.get("HTTP_ORIGIN", "") != ISSUER:
             return json_response(start_response, "403 Forbidden", {"error": "origin_rejected"})
         try:
-            f=fields(environ); flow=f.get("flow",""); flow_hash=hashlib.sha256(flow.encode()).hexdigest(); address=f.get("email","").strip(); now=int(time.time())
+            f=fields(environ); flow=f.get("flow",""); flow_hash=hashlib.sha256(flow.encode()).hexdigest(); address=f.get("email","").strip(); now=int(time.time()); certificate=f.get("certificate")
             with db() as con:
                 con.execute("BEGIN IMMEDIATE")
-                pending=con.execute("SELECT r.*,u.active,u.recovery_email_hash,u.email_encrypted FROM recovery_flows r JOIN users u ON u.id=r.user_id WHERE r.flow_hash=? AND r.expires_at>? AND r.passkey_check_status='unavailable'",(flow_hash,now)).fetchone()
+                pending=con.execute("SELECT r.*,u.active,u.public_id,u.recovery_email_hash,u.email_encrypted FROM recovery_flows r JOIN users u ON u.id=r.user_id WHERE r.flow_hash=? AND r.expires_at>? AND r.passkey_check_status='unavailable'",(flow_hash,now)).fetchone()
                 if not pending or not pending["active"] or not hmac.compare_digest(pending["csrf_hash"],hashlib.sha256(f.get("csrf","").encode()).hexdigest()):
                     con.rollback(); return json_response(start_response,"400 Bad Request",{"error":"invalid_recovery_flow","message":"再設定を最初からやり直してください。"})
-                if not con.execute("SELECT 1 FROM totp_credentials WHERE user_id=?",(pending["user_id"],)).fetchone():
-                    con.rollback(); return json_response(start_response,"409 Conflict",{"error":"totp_not_configured","message":"メール確認だけではパスキーを再設定できません。事前登録済みGoogle Authenticatorが必要です。"})
+                certificate_hash=recovery_certificate_hash(certificate,pending["public_id"]) if certificate is not None else ""
+                stored_certificate=con.execute("SELECT key_hash FROM recovery_keys WHERE user_id=? AND certificate_version=1 AND used_at IS NULL",(pending["user_id"],)).fetchone()
+                certificate_valid=bool(certificate_hash and stored_certificate and hmac.compare_digest(certificate_hash,stored_certificate["key_hash"]))
+                if certificate is not None and not certificate_valid:
+                    con.rollback(); return json_response(start_response,"400 Bad Request",{"error":"invalid_recovery_certificate","message":"復旧証明書は無効または使用済みです。"})
+                if not con.execute("SELECT 1 FROM totp_credentials WHERE user_id=?",(pending["user_id"],)).fetchone() and not certificate_valid:
+                    con.rollback(); return json_response(start_response,"409 Conflict",{"error":"recovery_proof_required","message":"復旧には認証アプリまたは未使用の復旧証明書が必要です。"})
                 address_hash=email_lookup(address)
                 email_matches=bool(pending["recovery_email_hash"] and hmac.compare_digest(pending["recovery_email_hash"],address_hash))
                 if not email_matches and not pending["recovery_email_hash"] and pending["email_encrypted"]:
@@ -1442,7 +1499,7 @@ def app(environ, start_response):
                     con.rollback(); return json_response(start_response,"429 Too Many Requests",{"error":"recovery_rate_limited","message":"時間をおいてから再度お試しください。"})
                 code="%08d" % secrets.randbelow(100000000); salt=secrets.token_bytes(16)
                 con.execute("INSERT OR REPLACE INTO recovery_limits(user_id,last_sent_at,window_started,sends,attempt_window,attempts,locked_until) VALUES(?,?,?,?,?,?,?)",(pending["user_id"],now,window,sends+1,now,0,0))
-                con.execute("UPDATE recovery_flows SET code_salt=?,code_hash=?,verified_at=NULL,attempts=0,email_hash=?,totp_verified_at=NULL,totp_attempts=0,challenge=NULL WHERE flow_hash=?",(salt.hex(),recovery_code_hash(flow_hash,salt,code),address_hash,flow_hash)); con.commit()
+                con.execute("UPDATE recovery_flows SET code_salt=?,code_hash=?,verified_at=NULL,attempts=0,email_hash=?,totp_verified_at=NULL,totp_attempts=0,certificate_hash=?,challenge=NULL WHERE flow_hash=?",(salt.hex(),recovery_code_hash(flow_hash,salt,code),address_hash,certificate_hash if certificate_valid else "",flow_hash)); con.commit()
             if not send_recovery_code(address,code):
                 with db() as con: con.execute("DELETE FROM recovery_flows WHERE flow_hash=?",(flow_hash,))
                 return json_response(start_response,"503 Service Unavailable",{"error":"mail_unavailable","message":"メールを送信できませんでした。時間をおいてください。"})
@@ -1474,7 +1531,6 @@ def app(environ, start_response):
                     con.rollback(); return json_response(start_response,"400 Bad Request",{"error":"invalid_recovery_flow"})
                 registered=webauthn_registration(cred.get("clientDataJSON",""),cred.get("attestationObject",""),flow["challenge"],cred.get("id","")); transports=json.dumps([x for x in cred.get("transports",[]) if x in ("usb","nfc","ble","internal","hybrid")])
                 con.execute("DELETE FROM passkeys WHERE user_id=?",(flow["user_id"],)); con.execute("INSERT INTO passkeys(credential_id,user_id,public_key,sign_count,transports,created_at) VALUES(?,?,?,?,?,?)",(registered["credential_id"],flow["user_id"],registered["public_key"],registered["counter"],transports,now))
-                con.execute("DELETE FROM recovery_keys WHERE user_id=?",(flow["user_id"],))
                 con.execute("UPDATE users SET email_encrypted='' WHERE id=?",(flow["user_id"],))
                 con.execute("UPDATE sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL",(now,flow["user_id"])); con.execute("DELETE FROM auth_codes WHERE user_id=?",(flow["user_id"],)); con.execute("DELETE FROM access_tokens WHERE user_id=?",(flow["user_id"],)); con.execute("DELETE FROM recovery_flows WHERE user_id=?",(flow["user_id"],)); con.execute("DELETE FROM recovery_limits WHERE user_id=?",(flow["user_id"],)); con.commit()
             return json_response(start_response,"200 OK",{"ok":True},[("Cache-Control","no-store")])
@@ -1486,6 +1542,7 @@ def app(environ, start_response):
             now = int(time.time())
             con.execute("DELETE FROM login_flows WHERE expires_at<=?", (now,))
             con.execute("DELETE FROM passkey_flows WHERE expires_at<=?", (now,))
+            con.execute("DELETE FROM registration_onboarding WHERE expires_at<=?", (now,))
             con.execute("DELETE FROM auth_codes WHERE expires_at<=? OR consumed_at IS NOT NULL AND consumed_at<?", (now, now - 3600))
             con.execute("DELETE FROM access_tokens WHERE expires_at<=?", (now,))
             con.execute("DELETE FROM sessions WHERE expires_at<=? OR revoked_at IS NOT NULL", (now,))
@@ -1644,8 +1701,15 @@ def app(environ, start_response):
                 con.execute("UPDATE sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL", (now, user["id"]))
                 session=b64u(secrets.token_bytes(32));csrf=b64u(secrets.token_bytes(32));session_hash=hashlib.sha256(session.encode()).hexdigest()
                 con.execute("INSERT INTO sessions(token_hash,user_id,expires_at,created_at,user_agent,csrf_hash) VALUES(?,?,?,?,?,?)",(session_hash,user["id"],now+SESSION_TTL,now,environ.get("HTTP_USER_AGENT","")[:180],hashlib.sha256(csrf.encode()).hexdigest()))
-                code=issue_code(con,p,user["id"],session_hash);con.commit()
-                return json_response(start_response,"200 OK",{"ok":True,"next":append_query(p["redirect_uri"],{"code":code,"state":p["state"]}),"public_id":user["public_id"]},[("Set-Cookie",f"{COOKIE}={session}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age={SESSION_TTL}")])
+                existing_certificate=con.execute("SELECT 1 FROM recovery_keys WHERE user_id=? AND certificate_version=1",(user["id"],)).fetchone()
+                certificate=None
+                if not existing_certificate:
+                    certificate=new_recovery_certificate(user["public_id"],now)
+                    con.execute("INSERT INTO recovery_keys(user_id,key_hash,created_at,used_at,certificate_version) VALUES(?,?,?,NULL,1) ON CONFLICT(user_id) DO UPDATE SET key_hash=excluded.key_hash,created_at=excluded.created_at,used_at=NULL,certificate_version=1 WHERE recovery_keys.certificate_version=0",(user["id"],recovery_key_hash(certificate["credential"]),now))
+                con.execute("DELETE FROM registration_onboarding WHERE user_id=?",(user["id"],))
+                con.execute("INSERT INTO registration_onboarding(session_hash,user_id,request_json,expires_at) VALUES(?,?,?,?)",(session_hash,user["id"],json.dumps(p,separators=(",",":")),now+1800))
+                con.commit()
+                return json_response(start_response,"200 OK",{"ok":True,"onboarding":True,"next":"/account","public_id":user["public_id"],"recovery_certificate":certificate},[("Set-Cookie",f"{COOKIE}={session}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age={SESSION_TTL}"),("Cache-Control","no-store")])
             con.rollback()
             return json_response(start_response, "400 Bad Request", {"error": "passkey_required"})
     if path == "/login/totp" and method == "POST":
@@ -1680,11 +1744,7 @@ def app(environ, start_response):
                     return json_response(start_response, "401 Unauthorized", {"error": "mfa_not_configured"})
                 secret = decrypt_private_value(credential["secret_encrypted"], "totp-secret")
                 matched_step = verify_totp(secret, token_code, now, credential["last_step"])
-                recovery_used = False
                 if matched_step is None:
-                    recovery_hash = totp_recovery_hash(token_code)
-                    recovery_used = con.execute("UPDATE totp_recovery_codes SET used_at=? WHERE user_id=? AND code_hash=? AND used_at IS NULL", (now,pending["user_id"],recovery_hash)).rowcount == 1
-                if matched_step is None and not recovery_used:
                     attempts = int(pending["attempts"]) + 1
                     if attempts >= 5:
                         con.execute("DELETE FROM mfa_flows WHERE login_flow_hash=?", (flow_hash,))
@@ -1693,11 +1753,10 @@ def app(environ, start_response):
                         con.execute("UPDATE mfa_flows SET attempts=? WHERE login_flow_hash=?", (attempts, flow_hash))
                     con.commit()
                     return json_response(start_response, "401 Unauthorized", {"error": "invalid_otp", "message": "認証コードを確認してください。"})
-                if matched_step is not None:
-                    changed = con.execute("UPDATE totp_credentials SET last_step=? WHERE user_id=? AND last_step<?", (matched_step,pending["user_id"],matched_step)).rowcount
-                    if changed != 1:
-                        con.commit()
-                        return json_response(start_response, "401 Unauthorized", {"error": "otp_replayed", "message": "その認証コードは使用済みです。次のコードを入力してください。"})
+                changed = con.execute("UPDATE totp_credentials SET last_step=? WHERE user_id=? AND last_step<?", (matched_step,pending["user_id"],matched_step)).rowcount
+                if changed != 1:
+                    con.commit()
+                    return json_response(start_response, "401 Unauthorized", {"error": "otp_replayed", "message": "その認証コードは使用済みです。次のコードを入力してください。"})
                 p = json.loads(login["request_json"])
                 client, error = valid_authorize(p, con)
                 if error:
@@ -1973,7 +2032,7 @@ def app(environ, start_response):
             f=fields(environ); token=cookie(environ,COOKIE); token_hash=hashlib.sha256(token.encode()).hexdigest() if token else ""; flow_hash=hashlib.sha256(f.get("flow","").encode()).hexdigest(); now=int(time.time())
             with db() as con:
                 con.execute("BEGIN IMMEDIATE")
-                current=con.execute("SELECT s.user_id,s.csrf_hash FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND s.revoked_at IS NULL AND u.active=1",(token_hash,now)).fetchone()
+                current=con.execute("SELECT s.user_id,s.csrf_hash,u.public_id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND s.revoked_at IS NULL AND u.active=1",(token_hash,now)).fetchone()
                 pending=con.execute("SELECT * FROM totp_setup_flows WHERE flow_hash=? AND expires_at>?",(flow_hash,now)).fetchone()
                 supplied=hashlib.sha256(f.get("csrf","").encode()).hexdigest()
                 if not current or not pending or current["user_id"]!=pending["user_id"] or not hmac.compare_digest(current["csrf_hash"],supplied) or not hmac.compare_digest(pending["csrf_hash"],supplied):
@@ -1988,21 +2047,23 @@ def app(environ, start_response):
                 if con.execute("SELECT 1 FROM totp_credentials WHERE user_id=?",(current["user_id"],)).fetchone():
                     con.rollback(); return json_response(start_response,"409 Conflict",{"error":"totp_already_enabled"})
                 con.execute("INSERT INTO totp_credentials(user_id,secret_encrypted,enabled_at,last_step) VALUES(?,?,?,?)",(current["user_id"],pending["secret_encrypted"],now,matched))
-                codes=new_totp_recovery_codes()
-                for recovery in codes:
-                    con.execute("INSERT INTO totp_recovery_codes(user_id,code_hash,created_at,used_at) VALUES(?,?,?,NULL)",(current["user_id"],totp_recovery_hash(recovery),now))
+                existing_certificate=con.execute("SELECT 1 FROM recovery_keys WHERE user_id=? AND certificate_version=1",(current["user_id"],)).fetchone()
+                if existing_certificate:
+                    certificate=None
+                else:
+                    certificate=new_recovery_certificate(current["public_id"],now)
+                    con.execute("INSERT INTO recovery_keys(user_id,key_hash,created_at,used_at,certificate_version) VALUES(?,?,?,NULL,1) ON CONFLICT(user_id) DO UPDATE SET key_hash=excluded.key_hash,created_at=excluded.created_at,used_at=NULL,certificate_version=1 WHERE recovery_keys.certificate_version=0",(current["user_id"],recovery_key_hash(certificate["credential"]),now))
                 con.execute("UPDATE sessions SET revoked_at=? WHERE user_id=? AND token_hash<>? AND revoked_at IS NULL",(now,current["user_id"],token_hash))
                 con.execute("DELETE FROM login_flows WHERE flow_hash IN (SELECT flow_hash FROM passkey_flows WHERE user_id=?)",(current["user_id"],))
                 con.execute("DELETE FROM login_flows WHERE flow_hash IN (SELECT login_flow_hash FROM mfa_flows WHERE user_id=?)",(current["user_id"],))
                 con.execute("DELETE FROM passkey_flows WHERE user_id=?",(current["user_id"],)); con.execute("DELETE FROM mfa_flows WHERE user_id=?",(current["user_id"],))
                 con.execute("DELETE FROM totp_setup_flows WHERE flow_hash=?",(flow_hash,)); con.commit()
-            return json_response(start_response,"200 OK",{"ok":True,"recovery_codes":codes},[("Cache-Control","no-store")])
+            return json_response(start_response,"200 OK",{"ok":True,"recovery_certificate":certificate},[("Cache-Control","no-store")])
         except Exception:
             return json_response(start_response,"400 Bad Request",{"error":"totp_enable_failed","message":"認証アプリを有効にできませんでした。"})
-    if path in ("/account/totp/disable", "/account/totp/recovery/regenerate") and method == "POST":
+    if path == "/account/totp/disable" and method == "POST":
         if environ.get("HTTP_ORIGIN", "") != ISSUER:
             return json_response(start_response, "403 Forbidden", {"error": "origin_rejected"})
-        disable = path.endswith("/disable")
         try:
             f=fields(environ); token=cookie(environ,COOKIE); token_hash=hashlib.sha256(token.encode()).hexdigest() if token else ""; now=int(time.time()); supplied_code=str(f.get("code","")).strip()
             with db() as con:
@@ -2016,25 +2077,54 @@ def app(environ, start_response):
                     con.rollback(); return json_response(start_response,"409 Conflict",{"error":"totp_not_enabled"})
                 secret=decrypt_private_value(credential["secret_encrypted"],"totp-secret")
                 matched=verify_totp(secret,supplied_code,now,credential["last_step"])
-                recovery_used=False
                 if matched is None:
-                    recovery_used=con.execute("UPDATE totp_recovery_codes SET used_at=? WHERE user_id=? AND code_hash=? AND used_at IS NULL",(now,current["user_id"],totp_recovery_hash(supplied_code))).rowcount==1
-                if matched is None and not recovery_used:
-                    con.rollback(); return json_response(start_response,"401 Unauthorized",{"error":"invalid_otp","message":"現在の認証コードまたは未使用の予備コードを入力してください。"})
-                if disable:
-                    con.execute("DELETE FROM totp_credentials WHERE user_id=?",(current["user_id"],)); con.execute("DELETE FROM totp_recovery_codes WHERE user_id=?",(current["user_id"],)); con.execute("DELETE FROM totp_setup_flows WHERE user_id=?",(current["user_id"],))
-                    con.execute("UPDATE sessions SET revoked_at=? WHERE user_id=? AND token_hash<>? AND revoked_at IS NULL",(now,current["user_id"],token_hash))
-                    con.execute("DELETE FROM login_flows WHERE flow_hash IN (SELECT flow_hash FROM passkey_flows WHERE user_id=?)",(current["user_id"],)); con.execute("DELETE FROM login_flows WHERE flow_hash IN (SELECT login_flow_hash FROM mfa_flows WHERE user_id=?)",(current["user_id"],))
-                    con.execute("DELETE FROM passkey_flows WHERE user_id=?",(current["user_id"],)); con.execute("DELETE FROM mfa_flows WHERE user_id=?",(current["user_id"],)); con.commit()
-                    return json_response(start_response,"200 OK",{"ok":True,"disabled":True},[("Cache-Control","no-store")])
-                if matched is not None:
-                    con.execute("UPDATE totp_credentials SET last_step=? WHERE user_id=?",(matched,current["user_id"]))
-                codes=new_totp_recovery_codes(); con.execute("DELETE FROM totp_recovery_codes WHERE user_id=?",(current["user_id"]))
-                for recovery in codes: con.execute("INSERT INTO totp_recovery_codes(user_id,code_hash,created_at,used_at) VALUES(?,?,?,NULL)",(current["user_id"],totp_recovery_hash(recovery),now))
-                con.commit()
-            return json_response(start_response,"200 OK",{"ok":True,"recovery_codes":codes},[("Cache-Control","no-store")])
+                    con.rollback(); return json_response(start_response,"401 Unauthorized",{"error":"invalid_otp","message":"認証アプリの現在の6桁コードを入力してください。"})
+                changed=con.execute("UPDATE totp_credentials SET last_step=? WHERE user_id=? AND last_step<?",(matched,current["user_id"],matched)).rowcount
+                if changed != 1:
+                    con.rollback(); return json_response(start_response,"401 Unauthorized",{"error":"otp_replayed","message":"その認証コードは使用済みです。次のコードを入力してください。"})
+                con.execute("DELETE FROM totp_credentials WHERE user_id=?",(current["user_id"],)); con.execute("DELETE FROM totp_setup_flows WHERE user_id=?",(current["user_id"],))
+                con.execute("UPDATE sessions SET revoked_at=? WHERE user_id=? AND token_hash<>? AND revoked_at IS NULL",(now,current["user_id"],token_hash))
+                con.execute("DELETE FROM login_flows WHERE flow_hash IN (SELECT flow_hash FROM passkey_flows WHERE user_id=?)",(current["user_id"],)); con.execute("DELETE FROM login_flows WHERE flow_hash IN (SELECT login_flow_hash FROM mfa_flows WHERE user_id=?)",(current["user_id"],))
+                con.execute("DELETE FROM passkey_flows WHERE user_id=?",(current["user_id"],)); con.execute("DELETE FROM mfa_flows WHERE user_id=?",(current["user_id"],)); con.commit()
+            return json_response(start_response,"200 OK",{"ok":True,"disabled":True},[("Cache-Control","no-store")])
         except Exception:
             return json_response(start_response,"400 Bad Request",{"error":"totp_management_failed","message":"認証設定を変更できませんでした。"})
+    if path == "/account/onboarding/complete" and method == "POST":
+        if environ.get("HTTP_ORIGIN", "") != ISSUER:
+            return json_response(start_response, "403 Forbidden", {"error": "origin_rejected"})
+        try:
+            f = fields(environ)
+            action = str(f.get("action", ""))
+            if action not in ("skip", "continue"):
+                return json_response(start_response, "400 Bad Request", {"error": "invalid_onboarding_action"})
+            token = cookie(environ, COOKIE)
+            token_hash = hashlib.sha256(token.encode()).hexdigest() if token else ""
+            now = int(time.time())
+            with db() as con:
+                con.execute("BEGIN IMMEDIATE")
+                current = con.execute("SELECT s.user_id,s.csrf_hash FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND s.revoked_at IS NULL AND u.active=1", (token_hash, now)).fetchone()
+                pending = con.execute("SELECT * FROM registration_onboarding WHERE session_hash=? AND expires_at>?", (token_hash, now)).fetchone()
+                supplied = hashlib.sha256(str(f.get("csrf", "")).encode()).hexdigest()
+                if not current or not pending or current["user_id"] != pending["user_id"] or not hmac.compare_digest(current["csrf_hash"], supplied):
+                    con.rollback()
+                    return json_response(start_response, "403 Forbidden", {"error": "invalid_onboarding_flow"})
+                if action == "continue" and not con.execute("SELECT 1 FROM totp_credentials WHERE user_id=?", (current["user_id"],)).fetchone():
+                    con.rollback()
+                    return json_response(start_response, "409 Conflict", {"error": "totp_not_enabled", "message": "認証アプリを有効にするか、設定をスキップしてください。"})
+                request_data = json.loads(pending["request_json"]) if pending["request_json"] else None
+                if request_data:
+                    _, error = valid_authorize(request_data, con)
+                    if error:
+                        con.execute("DELETE FROM registration_onboarding WHERE session_hash=?", (token_hash,))
+                        con.commit()
+                        return json_response(start_response, "400 Bad Request", {"error": error})
+                    code = issue_code(con, request_data, current["user_id"], token_hash)
+                con.execute("DELETE FROM registration_onboarding WHERE session_hash=?", (token_hash,))
+                con.commit()
+            next_url = append_query(request_data["redirect_uri"], {"code": code, "state": request_data["state"]}) if request_data else "/account?registration=complete"
+            return json_response(start_response, "200 OK", {"ok": True, "next": next_url}, [("Cache-Control", "no-store")])
+        except Exception:
+            return json_response(start_response, "400 Bad Request", {"error": "onboarding_completion_failed"})
     if path == "/account" and method == "GET":
         current = cookie(environ, COOKIE)
         current_hash = hashlib.sha256(current.encode()).hexdigest() if current else ""
@@ -2044,9 +2134,11 @@ def app(environ, start_response):
         with db() as con:
             sessions = con.execute("SELECT token_hash,created_at,user_agent,expires_at FROM sessions WHERE user_id=? AND revoked_at IS NULL AND expires_at>? ORDER BY created_at DESC LIMIT 100",
                                    (user["id"], int(time.time()))).fetchall()
+            registration_onboarding = con.execute("SELECT 1 FROM registration_onboarding WHERE session_hash=? AND user_id=? AND expires_at>?", (current_hash, user["id"], int(time.time()))).fetchone() is not None
         revoked = query(environ).get("revoked")
         notice = {"one": "選択した端末のセッションを失効しました。", "others": "他の端末のセッションを失効しました。"}.get(revoked, "")
-        return response(start_response, "200 OK", account_page(user, current_hash, sessions, notice), "text/html; charset=utf-8")
+        headers = [("Cache-Control", "no-store"), ("Referrer-Policy", "no-referrer")]
+        return response(start_response, "200 OK", account_page(user, current_hash, sessions, notice, registration_onboarding), "text/html; charset=utf-8", headers=headers)
     if path == "/account" and method == "POST":
         if environ.get("HTTP_ORIGIN", "") != ISSUER:
             return json_response(start_response, "403 Forbidden", {"error": "origin_rejected"})
