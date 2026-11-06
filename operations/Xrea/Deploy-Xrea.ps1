@@ -216,6 +216,12 @@ try {
     [void][System.Windows.Forms.MessageBox]::Show('Deployment synchronization completed for all selected destinations.', 'XREA deployment', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
 }
 catch {
-    [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'XREA deployment failed', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+    $errorRecord = $_
+    $errorMessage = $errorRecord.Exception.ToString()
+    $diagnosticDirectory = Join-Path $env:LOCALAPPDATA 'XreaDeploy\logs'
+    if (-not (Test-Path -LiteralPath $diagnosticDirectory -PathType Container)) { New-Item -ItemType Directory -Path $diagnosticDirectory -Force | Out-Null }
+    $errorMessage | Set-Content -LiteralPath (Join-Path $diagnosticDirectory 'last-deploy-error.txt') -Encoding UTF8
+    Write-Error -Message $errorMessage
+    [void][System.Windows.Forms.MessageBox]::Show($errorRecord.Exception.Message, 'XREA deployment failed', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
     exit 1
 }

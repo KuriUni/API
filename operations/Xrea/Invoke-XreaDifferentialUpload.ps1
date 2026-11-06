@@ -9,26 +9,35 @@ function Invoke-XreaDifferentialUpload {
         [string[]] $ExcludePatterns = @()
     )
 
-    $root = [System.IO.Path]::GetFullPath($LocalRoot)
+    $root = [System.IO.Path]::GetFullPath($LocalRoot).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    $rootPrefix = $root + [System.IO.Path]::DirectorySeparatorChar
     $stateRoot = Join-Path $env:LOCALAPPDATA 'XreaDeploy\sync-state'
     if (-not (Test-Path -LiteralPath $stateRoot -PathType Container)) {
         New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
     }
     $keyBytes = [System.Text.Encoding]::UTF8.GetBytes($StateKey)
-    $stateName = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($keyBytes)).ToLowerInvariant() + '.json'
+    $keyHasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $keyHash = $keyHasher.ComputeHash($keyBytes)
+        $stateName = (($keyHash | ForEach-Object { $_.ToString('x2') }) -join '') + '.json'
+    } finally { $keyHasher.Dispose() }
     $stateFile = Join-Path $stateRoot $stateName
     $state = @{}
     if (Test-Path -LiteralPath $stateFile -PathType Leaf) {
         try {
-            $loaded = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json -AsHashtable
-            if ($loaded -is [System.Collections.IDictionary]) { $state = $loaded }
+            $loaded = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
+            if ($loaded -is [System.Collections.IDictionary]) {
+                foreach ($key in $loaded.Keys) { $state[[string]$key] = [string]$loaded[$key] }
+            } elseif ($null -ne $loaded) {
+                foreach ($property in $loaded.PSObject.Properties) { $state[$property.Name] = [string]$property.Value }
+            }
         } catch {
             throw "Differential upload state is unreadable ($stateFile). Preserve it, then remove it to force a full upload. $($_.Exception.Message)"
         }
     }
 
     $files = @(Get-ChildItem -LiteralPath $root -File -Recurse -Force | Where-Object {
-        $relative = [System.IO.Path]::GetRelativePath($root, $_.FullName).Replace('\', '/')
+        $relative = $_.FullName.Substring($rootPrefix.Length).Replace('\', '/')
         $skip = $false
         foreach ($pattern in $ExcludePatterns) {
             if ($relative -match $pattern) { $skip = $true; break }
@@ -37,7 +46,7 @@ function Invoke-XreaDifferentialUpload {
     })
     $changed = @()
     foreach ($file in $files) {
-        $relative = [System.IO.Path]::GetRelativePath($root, $file.FullName).Replace('\', '/')
+        $relative = $file.FullName.Substring($rootPrefix.Length).Replace('\', '/')
         $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
         if (-not $state.Contains($relative) -or $state[$relative] -ne $hash) {
             $changed += [pscustomobject]@{ File = $file; Relative = $relative; Hash = $hash }
@@ -52,7 +61,8 @@ function Invoke-XreaDifferentialUpload {
         for ($i = 0; $i -lt ($segments.Count - 1); $i++) {
             $directory += '/' + $segments[$i]
             if (-not $checkedDirectories.ContainsKey($directory)) {
-                if (-not $Session.DirectoryExists($directory)) { $Session.CreateDirectory($directory) }
+                try { [void]$Session.ListDirectory($directory) }
+                catch { $Session.CreateDirectory($directory) }
                 $checkedDirectories[$directory] = $true
             }
         }
