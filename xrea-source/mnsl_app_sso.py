@@ -72,6 +72,8 @@ def complete_login(context, flow, claims, session, clear):
                 'oidc_sid': str(claims['sid']), 'auth_time': auth_time,
                 'expires': min(now + TTL, int(session['expires_at'])), 'host': host,
                 'display_name': str(session.get('display_name') or 'SSO ID')[:200]}
+    if type(claims.get('tenant_id')) is int and 0 < claims['tenant_id'] < 2**63:
+        identity['tenant_id'] = claims['tenant_id']
     with _store() as rows:
         row = _row(rows, ticket, host)
         identity['expires'] = min(row['expires'], identity['expires'])
@@ -121,8 +123,22 @@ def _contracts(connection, identity):
             cursor.execute("SELECT id tenant_id,slug,name,environment,parent_tenant_id FROM tenants WHERE status='active' AND environment='production' AND parent_tenant_id IS NULL ORDER BY slug LIMIT 200")
             return [dict(row, source='administrator') for row in cursor.fetchall()]
     from tenant_sso_contracts import memberships
-    return [dict(row, source='membership') for row in memberships(connection, identity['subject_hash'])
-            if row['environment'] == 'production' and 'licenses:write' in row['scopes'] and 'tenant:read' in row['scopes']]
+    result = [dict(row, source='membership') for row in memberships(connection, identity['subject_hash'])
+              if row['environment'] == 'production' and 'licenses:write' in row['scopes'] and 'tenant:read' in row['scopes']]
+    invited_tenant = identity.get('tenant_id')
+    if type(invited_tenant) is int and 0 < invited_tenant < 2**63 and not any(int(row['tenant_id']) == invited_tenant for row in result):
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT t.id tenant_id,t.slug,t.name,t.environment,t.parent_tenant_id,c.id source_client_id,c.scopes_json "
+                           "FROM tenants t JOIN tenant_api_clients c ON c.tenant_id=t.id "
+                           "WHERE t.id=%s AND t.status='active' AND t.environment='production' AND t.parent_tenant_id IS NULL "
+                           "AND c.key_hash IS NOT NULL AND c.key_hash<>'' AND c.status='active' AND c.revoked_at IS NULL "
+                           "AND (c.expires_at IS NULL OR c.expires_at>UTC_TIMESTAMP()) ORDER BY c.id LIMIT 100", (invited_tenant,))
+            candidates = cursor.fetchall()
+        from baas_handlers import _auth_scopes
+        candidate = next((row for row in candidates if {'tenant:read', 'licenses:write'}.issubset(set(_auth_scopes(row.get('scopes_json'))))), None)
+        if candidate:
+            result.append(dict(candidate, source='invitation'))
+    return result
 
 
 def _contract(connection, identity, tenant):
@@ -154,6 +170,13 @@ def _delegation(connection, context, identity, contract):
             'oidc_sid': identity['oidc_sid'], 'expires': identity['expires'], 'reauthenticated_at': identity['auth_time']}, tenant_session=True)
         context['header:x-tenant-id'] = str(contract['tenant_id'])
         return None
+    if contract.get('source') == 'invitation':
+        # The signed, validated ID token binds this user to this tenant. Persist only
+        # the explicitly granted minimum scopes, still intersected with the live API key.
+        with connection.cursor() as cursor:
+            cursor.execute('INSERT INTO tenant_sso_memberships(subject_hash,tenant_id,source_client_id,scopes_json) VALUES(%s,%s,%s,%s) ON DUPLICATE KEY UPDATE source_client_id=VALUES(source_client_id),scopes_json=VALUES(scopes_json),updated_at=UTC_TIMESTAMP()',
+                           (identity['subject_hash'], int(contract['tenant_id']), int(contract['source_client_id']), json.dumps(['tenant:read', 'licenses:write'], separators=(',', ':'))))
+        connection.commit()
     token = _b64(secrets.token_bytes(32))
     hashed = hashlib.sha256(token.encode()).hexdigest()
     with connection.cursor() as cursor:

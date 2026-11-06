@@ -77,8 +77,8 @@
         },
         {
             "path": "admin_oidc.py",
-            "size": 23952,
-            "sha256": "5c192be28673e9593e1ad136c61b152de4266c84f3c60d336e1b076c693458da"
+            "size": 24116,
+            "sha256": "355becf5aed5c4bb118a05190eecde114a41e5917ad083014cf7e21d640e7ec0"
         },
         {
             "path": "android-card-read-fallback.js",
@@ -402,8 +402,8 @@
         },
         {
             "path": "mnsl_app_sso.py",
-            "size": 21172,
-            "sha256": "54772bdc577b876ebecac26486efc8db8e5ffac4cebaf419933fce2270b62581"
+            "size": 23236,
+            "sha256": "40152baabf003df5d35e8bd053c8d5718585d869bd3ab08e719db6b4a373c8e0"
         },
         {
             "path": "mnsl_card_auth_handlers.py",

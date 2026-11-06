@@ -141,6 +141,8 @@ def _verify_id_token(token, nonce, expected_client_id=CLIENT_ID):
     audience_ok = expected_client_id in aud if isinstance(aud, list) else aud == expected_client_id
     if claims.get('iss') != ISSUER or not audience_ok or issued < 1 or (issued > now + 60) or (expires <= now) or (expires - issued > 600) or (not hmac.compare_digest(str(claims.get('nonce', '')), nonce)) or (not isinstance(claims.get('sub'), str)) or (len(claims['sub']) < 16) or (not re.fullmatch('[a-f0-9]{64}', str(claims.get('sid', '')))):
         raise RuntimeError('oidc_claims_invalid')
+    if 'tenant_id' in claims and (type(claims['tenant_id']) is not int or not 0 < claims['tenant_id'] < 2**63):
+        raise RuntimeError('oidc_claims_invalid')
     return claims
 
 def session_status(sid, client_id=CLIENT_ID):

@@ -1732,7 +1732,7 @@ def app(environ, start_response):
                 return json_response(start_response, "400 Bad Request", {"error": "unsupported_grant_type"})
             code_hash = hashlib.sha256(f.get("code", "").encode()).hexdigest()
             now = int(time.time())
-            code = con.execute("SELECT a.* FROM auth_codes a JOIN users u ON u.id=a.user_id AND u.active=1 JOIN sessions s ON s.token_hash=a.sid_hash AND s.user_id=a.user_id WHERE a.code_hash=? AND a.client_id=? AND a.consumed_at IS NULL AND a.expires_at>? AND s.expires_at>? AND s.revoked_at IS NULL", (code_hash, client_id, now, now)).fetchone()
+            code = con.execute("SELECT a.*,u.tenant_id AS tenant_id FROM auth_codes a JOIN users u ON u.id=a.user_id AND u.active=1 JOIN sessions s ON s.token_hash=a.sid_hash AND s.user_id=a.user_id WHERE a.code_hash=? AND a.client_id=? AND a.consumed_at IS NULL AND a.expires_at>? AND s.expires_at>? AND s.revoked_at IS NULL", (code_hash, client_id, now, now)).fetchone()
             if not code or not hmac.compare_digest(code["redirect_uri"], f.get("redirect_uri", "")):
                 con.rollback()
                 return json_response(start_response, "400 Bad Request", {"error": "invalid_grant"})
@@ -1758,7 +1758,13 @@ def app(environ, start_response):
             if not re.fullmatch(r"[a-f0-9]{64}", sid_hash):
                 con.rollback()
                 return json_response(start_response, "400 Bad Request", {"error": "session_binding_missing"})
-            id_token = sign_jwt({"iss": ISSUER, "sub": sub, "aud": client_id, "iat": now, "exp": now + ACCESS_TTL, "auth_time": code["auth_time"], "nonce": code["nonce"], "sid": sid_hash}, rsa_public_jwk())
+            claims = {"iss": ISSUER, "sub": sub, "aud": client_id, "iat": now, "exp": now + ACCESS_TTL, "auth_time": code["auth_time"], "nonce": code["nonce"], "sid": sid_hash}
+            invited_tenant = str(code["tenant_id"] or "").strip()
+            if re.fullmatch(r"[1-9][0-9]{0,18}", invited_tenant):
+                tenant_number = int(invited_tenant)
+                if tenant_number < 2**63:
+                    claims["tenant_id"] = tenant_number
+            id_token = sign_jwt(claims, rsa_public_jwk())
             con.commit()
         return json_response(start_response, "200 OK", {"access_token": access, "token_type": "Bearer", "expires_in": ACCESS_TTL, "id_token": id_token})
     if path == "/userinfo" and method == "GET":

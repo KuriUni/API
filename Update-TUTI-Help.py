@@ -16,6 +16,7 @@ ARTICLES = [
     ("docs/SSO-CONTRACTOR-INVITE.md", "BaaS-Contractor", "authentication"),
     ("docs/SSO-HEALTH-READINESS.md", "SSO-INITIAL-SETUP", "operations"),
     ("docs/PRODUCT-KEY-ISSUANCE-V8.md", "BaaS-Contractor", "api"),
+    ("docs/MNSL-SSO-ISSUE-HELP.md", "MyNumberSmartLogin", "operations"),
 ]
 
 

@@ -1,0 +1,18 @@
+[package]
+name = "tuti-operations"
+version = "2.0.0"
+edition = "2024"
+description = "Rust-based Windows administrator console for TUTI operations"
+license = "UNLICENSED"
+
+[[bin]]
+name = "TutiOperations"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.33"
+open = "5"
+rand = "0.8"
+reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
+serde_json = "1"
+urlencoding = "2"

@@ -26,3 +26,8 @@ deployment script prompts for FTP and DB passwords in masked fields and streams
 the database configuration directly from memory to `.sunabar/database.json`;
 that directory and file are set to modes 0700 and 0600. The folder is denied by
 `.htaccess`, as is the vendored library and Python source.
+
+
+## Device session endpoints
+
+The emulator supports `POST /api/v1/activate`, `/api/v1/session/check`, `/api/v1/session/refresh`, and `/api/v1/session/deactivate`. Session tokens are opaque random values; only SHA-256 hashes are stored. Access TTL is at most one hour, refresh TTL at most seven days, both capped by demo license and API key expiry. Every request requires the same valid API key/workspace.

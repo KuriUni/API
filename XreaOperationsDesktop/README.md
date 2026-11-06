@@ -1,33 +1,47 @@
 # TUTI Operations デスクトップ管理ソフト
 
-Windows向けの独立した管理者用PCアプリです。契約者向けポータルではありません。管理者SSO IDで認証し、XREA側の管理APIを通じてテナント、ライセンス、APIキー、監査ログ、契約者SSO招待を運用します。
+Windows向けの管理者用PCアプリです。Rust版を現在の開発ベースとして追加しました。管理APIや運用機能は既存サーバー側を使用し、アプリはXREAサーバー上の設定・データベースを直接変更しません。
 
-## 起動
+## Rust版をビルド・起動
 
-ビルド済みの場合は `bin/Release/net8.0-windows/win-x64/publish/TutiOperations.exe` を実行します。ファイルがない場合は、このディレクトリで.NET 8 SDKを使ってビルドします。
+Rust 1.88以降とWindowsのC++ Build Tools（MSVC）を用意し、PowerShellから次を実行します。
 
 ```powershell
-dotnet publish .\XreaOperationsDesktop.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true /p:EnableCompressionInSingleFile=true
+cd C:\Users\t\Documents\API\XreaOperationsDesktop\rust
+cargo run --release
+```
+
+配布用EXEは `rust\target\release\TutiOperations.exe` に生成されます。単体実行ファイルとして配布するには、MSVCランタイムが必要な端末への同梱方法も含めて配布パッケージを準備してください。
+
+依存関係を含む型チェック:
+
+```powershell
+cargo check
 ```
 
 ## ログインと接続先
 
-アプリの「SSO IDでログイン」から既定のブラウザーでSSO Coreにサインインします。デスクトップアプリの管理API URLは `https://2415.jp/license/admin_api.php`、ログイン開始URLは `https://2415.jp/license/admin_api.php?admin_sso_start=1&return_app=desktop` です。サーバー側で管理者権限と操作ごとの権限を確認します。
+「SSO IDでログイン」から既定ブラウザーでSSO Coreにサインインします。アプリは `https://2415.jp/license/admin_api.php?admin_sso_start=1&return_app=desktop` でログインを開始し、認証応答を一時的な `127.0.0.1` ループバックに受け取ります。API呼び出しは `https://2415.jp/license/admin_api.php` とテナント管理APIを使用します。
 
-コールバックはアプリが一時的に開く `127.0.0.1` のループバックアドレスに限定され、49152～65535番ポートと `/callback` を使います。認証トークンはアプリの実行中メモリーで扱い、ファイルには保存しません。ログアウトまたはアプリ終了後は再度SSO認証が必要です。
+セッションはアプリ稼働中のメモリーだけに保持します。ローカルファイルには保存しません。管理権限、Passkey再認証、テナント状態の確認はサーバー側に委ねます。通信に失敗した場合は画面下部にAPIのエラーを表示します。
 
 ## 主な運用機能
 
-- テナントの一覧、作成、名称・プラン変更、一時停止、再開
-- sandboxライセンスの作成、ライセンス検索・発行・停止・再開
-- テナントAPIキーの発行、ローテーション、失効
-- 監査ログの検索と変更前後の確認
-- 契約者向けSSO招待の作成。招待先メールアドレスとtenant IDを指定し、送信前のPasskey再認証を行う
+- テナントの一覧、作成、名称・プラン変更、一時停止、再開、検証sandbox作成
+- sandboxライセンスの作成、ライセンス検索・発行・停止・再開、端末再認証、期限延長、削除・復元
+- テナントAPIクライアントの発行、ローテーション、失効
+- 監査ログの検索
+- 管理者一覧とPasskey再認証付きロール変更
+- tenant IDを指定した契約者SSO招待
 
-実際に利用できる操作は、サーバー側の管理者ロール、権限、テナント状態によって制限されます。発行済みAPIキーなどの秘密値は安全な場所に保管してください。
+発行したプロダクトキーとAPIキーは画面に一度だけ表示します。必要な場合は表示中にコピーし、安全な保管先に保存してください。
+
+## 旧版
+
+従来のWinForms/C#版ソース（`Form1.cs`、`XreaOperationsDesktop.csproj`）は移行中の比較・切り戻し用に残しています。Rust版の運用確認が済むまでは削除しません。
 
 ## 関連資料
 
 - [SSO Discoveryとログイン](../docs/OIDC-DISCOVERY.md)
 - [契約者SSO招待とtenant ID](../docs/SSO-CONTRACTOR-INVITE.md)
-- [V8プロダクトキー発行](../docs/PRODUCT-KEY-ISSUANCE-V8.md)
+- [V8プロダクトキー発行](../docs/PRODUCT-KEY-ISSUANCE-V8.md)\n
