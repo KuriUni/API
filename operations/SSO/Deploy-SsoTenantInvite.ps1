@@ -116,3 +116,5 @@ catch {
     throw "SSO deployment failed: $failure. Uploaded files were restored from backup. Backup: $backupRoot"
 }
 finally { $session.Dispose(); if ($null -ne $credential) { $credential.Password.Dispose() } }
+
+try { & (Join-Path $PSScriptRoot '..\Prune-DeployBackups.ps1') -Keep 3 } catch { Write-Warning "Deployment succeeded, but backup retention cleanup failed: $($_.Exception.Message)" }

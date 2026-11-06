@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param([switch] $ResetCredentials, [switch] $ConfigureDatabase)
 
 $ErrorActionPreference = 'Stop'
@@ -252,3 +252,5 @@ catch {
         Write-Warning "FTP upload was verified, but the public health check needs attention: $($_.Exception.Message)"
     }
 }
+
+try { & (Join-Path $PSScriptRoot '..\Prune-DeployBackups.ps1') -Keep 3 } catch { Write-Warning "Deployment succeeded, but backup retention cleanup failed: $($_.Exception.Message)" }

@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param()
 
 $ErrorActionPreference = 'Stop'
@@ -107,3 +107,5 @@ try {
 catch {
     throw "Files were transferred and hash-verified, but the public relay check failed: $($_.Exception.Message)"
 }
+
+try { & (Join-Path $PSScriptRoot '..\Prune-DeployBackups.ps1') -Keep 3 } catch { Write-Warning "Deployment succeeded, but backup retention cleanup failed: $($_.Exception.Message)" }

@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param()
 
 $ErrorActionPreference = 'Stop'
@@ -67,3 +67,5 @@ finally {
     $credential = $null
     $credentials = $null
 }
+
+try { & (Join-Path $PSScriptRoot '..\Prune-DeployBackups.ps1') -Keep 3 } catch { Write-Warning "Deployment succeeded, but backup retention cleanup failed: $($_.Exception.Message)" }
