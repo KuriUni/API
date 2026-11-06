@@ -52,14 +52,36 @@ def _store():
     with path.with_suffix('.lock').open('a+b') as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         try:
-            raw = path.read_bytes() if path.exists() else b'{}'
+            if path.exists():
+                # Bound the read itself. Checking the size after read_bytes()
+                # still lets a damaged or unexpectedly large file exhaust memory.
+                with path.open('rb') as source:
+                    raw = source.read(2_000_001)
+            else:
+                raw = b'{}'
             if len(raw) > 2_000_000:
                 raise RuntimeError('grant_store_too_large')
-            rows = json.loads(raw)
-            if not isinstance(rows, dict):
+            original = json.loads(raw)
+            if not isinstance(original, dict):
                 raise RuntimeError('invalid_grant_store')
-            rows = {key: row for key, row in rows.items() if int(row['expires']) > int(time.time())}
+            now = int(time.time())
+            # Ignore malformed individual entries so one damaged row does not
+            # take the entire SSO login service offline.
+            rows = {}
+            for key, row in original.items():
+                if not isinstance(key, str) or not isinstance(row, dict):
+                    continue
+                try:
+                    expires = int(row.get('expires', 0))
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                if expires > now:
+                    rows[key] = row
             yield rows
+            # Poll requests that only observe a pending login do not mutate the
+            # store; avoid rewriting and fsyncing the whole file on every poll.
+            if rows == original:
+                return
             temporary = path.with_name(path.name + '.' + secrets.token_hex(8))
             try:
                 with temporary.open('x', encoding='utf-8') as output:

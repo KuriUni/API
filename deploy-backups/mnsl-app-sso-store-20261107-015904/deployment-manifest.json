@@ -1,0 +1,30 @@
+﻿{
+    "created_utc":  "2026-11-06T16:59:19.0029434Z",
+    "source_sha256":  "b5676a506aacf79ba592f85898d7e577eb9130edf66125419f5896bddcd1e58a",
+    "nodes":  [
+                  {
+                      "node":  "Primary",
+                      "backup_sha256":  "d83df6d3b0ba136864b1cab3ac6bc257b10afb78505d8c1b30a5985ac60b92ad",
+                      "deployed_sha256":  "b5676a506aacf79ba592f85898d7e577eb9130edf66125419f5896bddcd1e58a",
+                      "verified":  true
+                  },
+                  {
+                      "node":  "Backup",
+                      "backup_sha256":  "d83df6d3b0ba136864b1cab3ac6bc257b10afb78505d8c1b30a5985ac60b92ad",
+                      "deployed_sha256":  "b5676a506aacf79ba592f85898d7e577eb9130edf66125419f5896bddcd1e58a",
+                      "verified":  true
+                  }
+              ],
+    "health":  [
+                   {
+                       "node":  "Primary",
+                       "status":  200,
+                       "ready":  true
+                   },
+                   {
+                       "node":  "Backup",
+                       "status":  200,
+                       "ready":  true
+                   }
+               ]
+}
