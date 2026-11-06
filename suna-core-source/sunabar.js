@@ -4,15 +4,59 @@
   const API_BASE = 'api/v1/';
   const KEY_STORAGE = 'sunabar-api-key-v1';
   const operations = {
-    products: { title: '製品一覧を取得', description: '利用可能な製品をAPIから取得します。', method: 'GET', path: `${API_BASE}products`, body: '{}' },
-    issue: { title: 'ライセンスを発行', description: '実ソフトには使えないデモライセンスを発行します。', method: 'POST', path: `${API_BASE}licenses`, body: '{\n  "product_id": 101,\n  "license_mode": "single",\n  "label": "Sunabar sample"\n}' },
-    verify: { title: 'ライセンスを検証', description: '発行レスポンスのlicense_keyを貼り付けて状態を確認します。', method: 'POST', path: `${API_BASE}verify`, body: '{\n  "license_key": "",\n  "product_id": 101\n}' },
-    list: { title: 'ライセンス一覧', description: 'このキーで発行したライセンスを最大100件表示します。', method: 'GET', path: `${API_BASE}licenses/list`, body: '{}' },
-    revoke: { title: 'ライセンスを失効', description: '一覧や発行結果にあるlicense_idを指定します。失効後は検証できません。', method: 'POST', path: `${API_BASE}licenses/revoke`, body: '{\n  "license_id": ""\n}' },
+    health: {
+      title: '稼働状態を確認', description: 'APIとDBの準備状態を確認します。APIキーは不要です。',
+      method: 'GET', path: `${API_BASE}healthz`, body: '{}', requiresKey: false,
+    },
+    products: {
+      title: '製品一覧を取得', description: 'このエミュレーターで利用できる製品を取得します。',
+      method: 'GET', path: `${API_BASE}products`, body: '{}',
+    },
+    issue: {
+      title: 'デモライセンスを発行', description: '発行したキーはSunabar内だけで使えます。',
+      method: 'POST', path: `${API_BASE}licenses`,
+      body: '{\n  "product_id": 101,\n  "license_mode": "single",\n  "label": "Sunabar sample"\n}',
+    },
+    verify: {
+      title: 'ライセンスを検証', description: '直近の発行キーを自動入力します。必要ならJSONを編集してください。',
+      method: 'POST', path: `${API_BASE}verify`, body: '{\n  "license_key": "",\n  "product_id": 101\n}',
+    },
+    list: {
+      title: 'ライセンス一覧', description: 'この専用キーで作成したライセンスを一覧します。',
+      method: 'GET', path: `${API_BASE}licenses/list`, body: '{}',
+    },
+    revoke: {
+      title: 'ライセンスを失効', description: '一覧や発行結果のlicense_idを指定します。失効すると端末セッションも使えなくなります。',
+      method: 'POST', path: `${API_BASE}licenses/revoke`, body: '{\n  "license_id": ""\n}',
+    },
+    activate: {
+      title: '端末を認証', description: '直近のデモライセンスを自動入力し、端末用トークンを発行します。',
+      method: 'POST', path: `${API_BASE}activate`,
+      body: '{\n  "license_key": "",\n  "device_id": "sunabar-demo-device-01"\n}',
+    },
+    check: {
+      title: '端末セッションを確認', description: '直近の認証・更新で得たアクセストークンを自動入力します。',
+      method: 'POST', path: `${API_BASE}session/check`,
+      body: '{\n  "access_token": "",\n  "device_id": "sunabar-demo-device-01"\n}',
+    },
+    refresh: {
+      title: '端末セッションを更新', description: '直近の更新トークンを使います。更新後は古いトークンが使えなくなります。',
+      method: 'POST', path: `${API_BASE}session/refresh`,
+      body: '{\n  "refresh_token": "",\n  "device_id": "sunabar-demo-device-01"\n}',
+    },
+    deactivate: {
+      title: '端末セッションを終了', description: '直近の更新トークンに紐づく端末セッションを無効化します。',
+      method: 'POST', path: `${API_BASE}session/deactivate`,
+      body: '{\n  "refresh_token": "",\n  "device_id": "sunabar-demo-device-01"\n}',
+    },
   };
+
   const byId = (id) => document.getElementById(id);
-  let current = 'products';
+  let current = 'health';
   let lastResponse = null;
+  let lastLicense = null;
+  let lastSession = null;
+  const drafts = Object.create(null);
 
   function readKey() {
     try {
@@ -23,12 +67,39 @@
     return null;
   }
 
+  function readObject(text) {
+    try {
+      const value = JSON.parse(text || '{}');
+      return value && !Array.isArray(value) && typeof value === 'object' ? value : {};
+    } catch { return {}; }
+  }
+
+  function setDraft(name, value) {
+    drafts[name] = JSON.stringify(value, null, 2);
+  }
+
+  function seedLicense(license) {
+    if (!license || !license.license_key) return;
+    lastLicense = license;
+    setDraft('verify', { license_key: license.license_key, product_id: license.product_id });
+    setDraft('activate', { license_key: license.license_key, device_id: 'sunabar-demo-device-01' });
+    setDraft('revoke', { license_id: license.license_id });
+  }
+
+  function seedSession(session, deviceId, licenseId) {
+    if (!session?.access_token || !session?.refresh_token) return;
+    lastSession = { ...session, device_id: deviceId, license_id: licenseId };
+    setDraft('check', { access_token: session.access_token, device_id: deviceId });
+    setDraft('refresh', { refresh_token: session.refresh_token, device_id: deviceId });
+    setDraft('deactivate', { refresh_token: session.refresh_token, device_id: deviceId });
+  }
+
   function renderKey() {
     const saved = readKey();
     const status = byId('key-status');
     status.innerHTML = saved ? '<i></i> API KEY READY' : '<i></i> API KEY REQUIRED';
     status.classList.toggle('key-ready', Boolean(saved));
-    byId('auth-state').textContent = saved ? '設定済み' : '未設定';
+    byId('auth-state').textContent = operations[current].requiresKey === false ? '認証不要' : (saved ? '設定済み' : '未設定');
     const input = byId('api-key-value');
     input.value = saved ? saved.key : '';
     input.type = 'password';
@@ -36,7 +107,9 @@
     byId('key-expiry').textContent = saved ? `有効期限 ${new Date(saved.expires_at * 1000).toLocaleString('ja-JP')}` : '';
   }
 
-  function renderOperation(name) {
+  function renderOperation(name, saveCurrent = true) {
+    if (!operations[name]) return;
+    if (saveCurrent && byId('request-body')) drafts[current] = byId('request-body').value;
     current = name;
     const operation = operations[name];
     document.querySelectorAll('.operation').forEach((button) => button.classList.toggle('active', button.dataset.operation === name));
@@ -47,14 +120,28 @@
     byId('endpoint-host').textContent = location.host;
     byId('method-badge').textContent = operation.method;
     byId('method-badge').className = `method-badge ${operation.method.toLowerCase()}`;
-    byId('request-body').value = operation.body;
+    byId('request-body').value = drafts[name] ?? operation.body;
     byId('form-error').textContent = '';
     byId('request-fields').replaceChildren();
+    renderKey();
+  }
+
+  function handleSuccessfulResponse(name, requestBody, result) {
+    const data = result.body?.data;
+    if (name === 'issue' && data?.license) seedLicense(data.license);
+    if (name === 'activate' && data?.session) seedSession(data.session, requestBody.device_id, data.license_id);
+    if (name === 'refresh' && data?.session && lastSession) seedSession(data.session, lastSession.device_id, data.license_id);
+    if (name === 'deactivate' && data?.status === 'deactivated') {
+      lastSession = null;
+      setDraft('check', { access_token: '', device_id: requestBody.device_id });
+      setDraft('refresh', { refresh_token: '', device_id: requestBody.device_id });
+      setDraft('deactivate', { refresh_token: '', device_id: requestBody.device_id });
+    }
   }
 
   function showResponse(result) {
     lastResponse = result;
-    const productKey = result.body?.data?.license?.product_key || '';
+    const productKey = result.body?.data?.license?.product_key || result.body?.data?.license?.license_key || '';
     byId('product-key-result').hidden = !productKey;
     byId('product-key-value').textContent = productKey;
     byId('product-key-message').textContent = '';
@@ -68,7 +155,7 @@
     byId('copy-response').disabled = false;
   }
 
-  function appendHistory(name, result) {
+  function appendHistory(name, result, requestBody) {
     const history = byId('history-list');
     history.querySelector('.empty-history')?.remove();
     const button = document.createElement('button');
@@ -82,7 +169,13 @@
     badge.className = 'history-status';
     badge.textContent = result.status || 'ERR';
     button.append(time, label, badge);
-    button.addEventListener('click', () => showResponse(result));
+    button.title = 'クリックするとこのリクエストの入力と結果を表示します';
+    button.addEventListener('click', () => {
+      renderOperation(name);
+      drafts[name] = JSON.stringify(requestBody, null, 2);
+      byId('request-body').value = drafts[name];
+      showResponse(result);
+    });
     history.prepend(button);
     while (history.children.length > 8) history.lastElementChild.remove();
   }
@@ -100,7 +193,11 @@
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.ok || !data.data?.api_key) throw new Error(data.message || data.error || `HTTP ${response.status}`);
       sessionStorage.setItem(KEY_STORAGE, JSON.stringify({ key: data.data.api_key, expires_at: data.data.expires_at }));
+      lastLicense = null;
+      lastSession = null;
+      for (const name of ['verify', 'activate', 'revoke', 'check', 'refresh', 'deactivate']) delete drafts[name];
       renderKey();
+      if (['verify', 'activate', 'revoke', 'check', 'refresh', 'deactivate'].includes(current)) renderOperation(current, false);
       byId('api-key-value').type = 'text';
       byId('key-message').textContent = 'APIキーを発行しました。このキーはSunabar専用です。';
     } catch (error) {
@@ -113,8 +210,9 @@
 
   async function runRequest() {
     byId('form-error').textContent = '';
+    const operation = operations[current];
     const saved = readKey();
-    if (!saved) {
+    if (operation.requiresKey !== false && !saved) {
       byId('form-error').textContent = '先にSunabar専用APIキーを発行してください。';
       byId('key-dialog').showModal();
       renderKey();
@@ -128,15 +226,17 @@
       byId('form-error').textContent = error.message || 'JSONを確認してください。';
       return;
     }
-    const operation = operations[current];
-    const started = performance.now();
     if (current === 'revoke' && !window.confirm('このデモライセンスを失効しますか？')) return;
+    const started = performance.now();
     let result;
     try {
       const response = await fetch(new URL(operation.path, document.baseURI), {
         method: operation.method, cache: 'no-store', credentials: 'omit',
-        headers: { Accept: 'application/json', 'X-Sunabar-API-Key': saved.key,
-          ...(operation.method === 'POST' ? { 'Content-Type': 'application/json' } : {}) },
+        headers: {
+          Accept: 'application/json',
+          ...(saved && operation.requiresKey !== false ? { 'X-Sunabar-API-Key': saved.key } : {}),
+          ...(operation.method === 'POST' ? { 'Content-Type': 'application/json' } : {}),
+        },
         ...(operation.method === 'POST' ? { body: JSON.stringify(body) } : {}),
       });
       result = { status: response.status, body: await response.json().catch(() => ({ ok: false, error: 'invalid_server_response' })) };
@@ -148,13 +248,18 @@
       result = { status: 0, body: { ok: false, error: 'network_error', message: `Sunabar APIに接続できません: ${error.message}` } };
     }
     result.duration = performance.now() - started;
+    if (result.status >= 200 && result.status < 300 && result.body?.ok) handleSuccessfulResponse(current, body, result);
     showResponse(result);
-    appendHistory(current, result);
+    appendHistory(current, result, body);
   }
 
   document.querySelectorAll('.operation').forEach((button) => button.addEventListener('click', () => renderOperation(button.dataset.operation)));
   byId('send').addEventListener('click', runRequest);
-  byId('reset-body').addEventListener('click', () => { byId('request-body').value = operations[current].body; byId('form-error').textContent = ''; });
+  byId('reset-body').addEventListener('click', () => {
+    drafts[current] = operations[current].body;
+    byId('request-body').value = operations[current].body;
+    byId('form-error').textContent = '';
+  });
   byId('open-key').addEventListener('click', () => { renderKey(); byId('key-dialog').showModal(); });
   byId('close-key').addEventListener('click', () => byId('key-dialog').close());
   byId('issue-api-key').addEventListener('click', issueApiKey);
@@ -166,6 +271,9 @@
   byId('clear-history').addEventListener('click', () => { byId('history-list').innerHTML = '<p class="empty-history">まだリクエストはありません。</p>'; });
   byId('reset').addEventListener('click', () => {
     sessionStorage.removeItem(KEY_STORAGE);
+    lastLicense = null;
+    lastSession = null;
+    Object.keys(drafts).forEach((key) => delete drafts[key]);
     byId('history-list').innerHTML = '<p class="empty-history">まだリクエストはありません。</p>';
     byId('response-status').textContent = '未実行';
     byId('product-key-result').hidden = true;
@@ -182,9 +290,9 @@
     byId('issue-api-key').textContent = '専用キーを発行';
     lastResponse = null;
     renderKey();
-    renderOperation('products');
+    renderOperation('health');
   });
 
   renderKey();
-  renderOperation('products');
+  renderOperation('health', false);
 })();

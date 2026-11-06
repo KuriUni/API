@@ -16,6 +16,10 @@ ROUTES = {
     "license_revoke": ("licenses/revoke", "POST"),
     "verify": ("verify", "POST"),
     "health": ("healthz", "GET"),
+    "activate": ("activate", "POST"),
+    "session_check": ("session/check", "POST"),
+    "session_refresh": ("session/refresh", "POST"),
+    "session_deactivate": ("session/deactivate", "POST"),
 }
 
 
@@ -135,3 +139,19 @@ def verify(request):
 
 def health(request):
     return _relay(request, "health")
+
+
+def activate(request):
+    return _relay(request, "activate")
+
+
+def session_check(request):
+    return _relay(request, "session_check")
+
+
+def session_refresh(request):
+    return _relay(request, "session_refresh")
+
+
+def session_deactivate(request):
+    return _relay(request, "session_deactivate")

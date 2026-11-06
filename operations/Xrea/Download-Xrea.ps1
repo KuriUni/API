@@ -8,7 +8,7 @@
 [CmdletBinding()]
 param(
     [Parameter()]
-    [string] $LocalPath = (Join-Path (Get-Location).Path "xrea-source"),
+    [string] $LocalPath,
 
     [Parameter()]
     [string] $RemotePath = "/public_html/2415.jp/license",
@@ -21,6 +21,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($LocalPath)) {
+    $LocalPath = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\xrea-source'))
+}
 
 if (-not $UserName) { $UserName = Read-Host "XREA FTP username" }
 if (-not $UserName) { throw "An XREA FTP username is required." }

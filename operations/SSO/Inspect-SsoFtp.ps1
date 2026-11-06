@@ -126,9 +126,10 @@ $allowedExtensions = @('.php', '.phtml', '.php5', '.inc', '.py', '.cgi', '.pl', 
 $excludedNames = @('.env', '.env.local', 'config.php', 'config.local.php', 'secrets.php', 'credentials.php', 'composer.lock')
 $excludedExtensions = @('.pem', '.key', '.sql', '.sqlite', '.db', '.log', '.bak', '.zip')
 $sensitiveNameMarkers = @('secret', 'credential', 'password', 'private')
-$sourceRoot = Join-Path ([System.IO.Path]::GetDirectoryName($MyInvocation.MyCommand.Path)) 'sso-ftp-source'
+$projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+$sourceRoot = Join-Path $projectRoot 'sso-ftp-source'
 if (Test-Path -LiteralPath $sourceRoot) {
-    $sourceRoot = Join-Path ([System.IO.Path]::GetDirectoryName($MyInvocation.MyCommand.Path)) ('sso-ftp-source-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    $sourceRoot = Join-Path $projectRoot ('sso-ftp-source-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 }
 New-Item -ItemType Directory -Path $sourceRoot -Force | Out-Null
 

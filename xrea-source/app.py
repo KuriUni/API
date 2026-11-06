@@ -38,6 +38,10 @@ ROUTES = load_routes()
 PORTED_ROUTES = {
     "/api/sunabar/v1/key.php", "/api/sunabar/v1/products.php",
     "/api/sunabar/v1/licenses.php", "/api/sunabar/v1/verify.php",
+    "/api/sunabar/v1/health.php", "/api/sunabar/v1/license-list.php",
+    "/api/sunabar/v1/license-revoke.php", "/api/sunabar/v1/activate.php",
+    "/api/sunabar/v1/session-check.php", "/api/sunabar/v1/session-refresh.php",
+    "/api/sunabar/v1/session-deactivate.php",
     "/api/baas/issuance-session.php", "/api/baas/v1/billing-policy.php",
     "/api/baas/v1/common-id-sso/constants.php",
     "/api/baas/v1/common-id-sso/http.php",
@@ -465,6 +469,13 @@ def application(environ, start_response):
         "/api/sunabar/v1/products.php": "products",
         "/api/sunabar/v1/licenses.php": "licenses",
         "/api/sunabar/v1/verify.php": "verify",
+        "/api/sunabar/v1/health.php": "health",
+        "/api/sunabar/v1/license-list.php": "license_list",
+        "/api/sunabar/v1/license-revoke.php": "license_revoke",
+        "/api/sunabar/v1/activate.php": "activate",
+        "/api/sunabar/v1/session-check.php": "session_check",
+        "/api/sunabar/v1/session-refresh.php": "session_refresh",
+        "/api/sunabar/v1/session-deactivate.php": "session_deactivate",
     }
     if path in sunabar_routes:
         import sunabar_api

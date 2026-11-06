@@ -22,20 +22,20 @@ const TENANT_API: &str = "https://2415.jp/license/ha/tenant-admin.php";
 const HEALTH_API: &str = "https://2415.jp/license/ha/health.php";
 const SSO_START: &str =
     "https://2415.jp/license/admin_api.php?admin_sso_start=1&return_app=desktop";
-const BG: Color32 = Color32::from_rgb(244, 247, 249);
-const NAV: Color32 = Color32::from_rgb(24, 38, 61);
-const BLUE: Color32 = Color32::from_rgb(55, 89, 202);
+const BG: Color32 = Color32::from_rgb(242, 244, 247);
+const NAV: Color32 = Color32::from_rgb(38, 50, 56);
+const BLUE: Color32 = Color32::from_rgb(0, 90, 158);
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1320.0, 850.0])
             .with_min_inner_size([980.0, 640.0])
-            .with_title("TUTI 運用管理 · Rust"),
+            .with_title("TUTI Operations"),
         ..Default::default()
     };
     eframe::run_native(
-        "TUTI 運用管理",
+        "TUTI Operations",
         options,
         Box::new(|cc| Ok(Box::new(OperationsApp::new(cc)))),
     )
@@ -62,7 +62,7 @@ fn install_japanese_font(ctx: &egui::Context) {
             .families
             .entry(family)
             .or_default()
-            .insert(0, "windows_japanese".to_owned());
+            .push("windows_japanese".to_owned());
     }
     ctx.set_fonts(fonts);
 }
@@ -488,6 +488,17 @@ impl OperationsApp {
         self.after_step_up = Some(spec);
         self.start_login(true);
     }
+
+    fn load_page(&mut self, page: Page) {
+        match page {
+            Page::Tenants | Page::Invite => self.load_tenants(),
+            Page::ApiKeys => self.load_keys(),
+            Page::Licenses => self.load_licenses(),
+            Page::Audit => self.load_audit(),
+            Page::Admins => self.load_admins(),
+            Page::Overview => self.refresh_overview(),
+        }
+    }
 }
 
 impl eframe::App for OperationsApp {
@@ -495,48 +506,81 @@ impl eframe::App for OperationsApp {
         self.handle_events();
         ctx.request_repaint_after(Duration::from_millis(120));
 
-        egui::TopBottomPanel::top("top")
+        egui::TopBottomPanel::top("toolbar")
             .frame(
                 egui::Frame::new()
                     .fill(Color32::WHITE)
-                    .inner_margin(egui::Margin::symmetric(20, 14)),
+                    .inner_margin(egui::Margin::symmetric(12, 6)),
             )
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.heading(RichText::new("TUTI 運用管理").strong().color(NAV));
-                    ui.separator();
-                    ui.label(if self.session_token.is_some() {
-                        RichText::new("管理者SSO 接続中").color(Color32::DARK_GREEN)
-                    } else {
-                        RichText::new("未ログイン").color(Color32::GRAY)
-                    });
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if self.session_token.is_some() {
-                            if ui.button("ログアウト").clicked() {
-                                self.admin("logout", json!({}), None);
-                                self.session_token = None;
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("TUTI Operations")
+                                .strong()
+                                .size(18.0)
+                                .color(NAV),
+                        );
+                        ui.separator();
+                        ui.label(
+                            RichText::new("管理コンソール")
+                                .small()
+                                .color(Color32::DARK_GRAY),
+                        );
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if self.session_token.is_some() {
+                                if ui.button("ログアウト").clicked() {
+                                    self.admin("logout", json!({}), None);
+                                    self.session_token = None;
+                                }
+                            } else if ui
+                                .add_enabled(
+                                    !self.login_busy,
+                                    egui::Button::new(if self.login_busy {
+                                        "ブラウザーで認証中…"
+                                    } else {
+                                        "SSO IDでログイン"
+                                    }),
+                                )
+                                .clicked()
+                            {
+                                self.start_login(false);
                             }
-                        } else if ui
-                            .add_enabled(
-                                !self.login_busy,
-                                egui::Button::new(if self.login_busy {
-                                    "ブラウザーで認証中…"
-                                } else {
-                                    "SSO IDでログイン"
-                                }),
-                            )
-                            .clicked()
-                        {
-                            self.start_login(false);
+                            ui.separator();
+                            ui.label(if self.session_token.is_some() {
+                                RichText::new("SSO 接続中").color(Color32::from_rgb(26, 112, 69))
+                            } else {
+                                RichText::new("未ログイン").color(Color32::GRAY)
+                            });
+                        });
+                    });
+                    ui.add_space(4.0);
+                    ui.separator();
+                    ui.horizontal_wrapped(|ui| {
+                        for (page, title) in [
+                            (Page::Overview, "概要"),
+                            (Page::Tenants, "テナント"),
+                            (Page::ApiKeys, "APIキー"),
+                            (Page::Licenses, "ライセンス"),
+                            (Page::Audit, "監査ログ"),
+                            (Page::Admins, "管理者権限"),
+                            (Page::Invite, "契約者SSO招待"),
+                        ] {
+                            if ui.selectable_value(&mut self.page, page, title).changed()
+                                && self.session_token.is_some()
+                            {
+                                self.load_page(page);
+                            }
                         }
                     });
                 });
             });
+
         egui::TopBottomPanel::bottom("status")
             .frame(
                 egui::Frame::new()
-                    .fill(Color32::WHITE)
-                    .inner_margin(egui::Margin::symmetric(14, 8)),
+                    .fill(Color32::from_rgb(235, 237, 240))
+                    .inner_margin(egui::Margin::symmetric(10, 4)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -547,79 +591,13 @@ impl eframe::App for OperationsApp {
                         if self.status_error {
                             Color32::DARK_RED
                         } else {
-                            Color32::from_rgb(78, 91, 110)
+                            Color32::from_rgb(70, 78, 86)
                         },
                         &self.status,
                     );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(
-                            RichText::new("Rust desktop · 管理API経由")
-                                .small()
-                                .color(Color32::GRAY),
-                        );
+                        ui.label(RichText::new("管理API").small().color(Color32::DARK_GRAY));
                     });
-                });
-            });
-
-        egui::SidePanel::left("nav")
-            .resizable(false)
-            .exact_width(210.0)
-            .frame(
-                egui::Frame::new()
-                    .fill(NAV)
-                    .inner_margin(egui::Margin::same(14)),
-            )
-            .show(ctx, |ui| {
-                ui.add_space(5.0);
-                ui.label(
-                    RichText::new("OPERATIONS")
-                        .small()
-                        .strong()
-                        .color(Color32::from_rgb(159, 177, 208)),
-                );
-                ui.add_space(12.0);
-                for (page, title) in [
-                    (Page::Overview, "概要"),
-                    (Page::Tenants, "テナント"),
-                    (Page::ApiKeys, "テナントAPIキー"),
-                    (Page::Licenses, "ライセンス"),
-                    (Page::Audit, "監査ログ"),
-                    (Page::Admins, "管理者権限"),
-                    (Page::Invite, "契約者SSO招待"),
-                ] {
-                    let active = self.page == page;
-                    let button = egui::Button::new(RichText::new(title).color(if active {
-                        Color32::WHITE
-                    } else {
-                        Color32::from_rgb(210, 220, 237)
-                    }))
-                    .fill(if active {
-                        Color32::from_rgb(54, 77, 119)
-                    } else {
-                        NAV
-                    })
-                    .corner_radius(6.0)
-                    .min_size(egui::vec2(180.0, 36.0));
-                    if ui.add(button).clicked() {
-                        self.page = page;
-                        if self.session_token.is_some() {
-                            match page {
-                                Page::Tenants | Page::Invite => self.load_tenants(),
-                                Page::ApiKeys => self.load_keys(),
-                                Page::Licenses => self.load_licenses(),
-                                Page::Audit => self.load_audit(),
-                                Page::Admins => self.load_admins(),
-                                Page::Overview => self.refresh_overview(),
-                            }
-                        }
-                    }
-                }
-                ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-                    ui.label(
-                        RichText::new("管理権限はサーバー側で確認\n秘密値はローカル保存しません")
-                            .small()
-                            .color(Color32::from_rgb(164, 180, 205)),
-                    );
                 });
             });
 
@@ -627,15 +605,24 @@ impl eframe::App for OperationsApp {
             .frame(
                 egui::Frame::new()
                     .fill(BG)
-                    .inner_margin(egui::Margin::same(22)),
+                    .inner_margin(egui::Margin::same(12)),
             )
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
+                egui::ScrollArea::both()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.heading(RichText::new(self.page.title()).size(25.0).color(NAV));
-                        ui.label(RichText::new(self.page.description()).color(Color32::GRAY));
-                        ui.add_space(15.0);
+                        ui.horizontal(|ui| {
+                            ui.heading(RichText::new(self.page.title()).size(20.0).color(NAV));
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ui.label(
+                                    RichText::new(self.page.description())
+                                        .small()
+                                        .color(Color32::DARK_GRAY),
+                                );
+                            });
+                        });
+                        ui.separator();
+                        ui.add_space(8.0);
                         if self.session_token.is_none() {
                             self.login_prompt(ui);
                         } else {
@@ -653,7 +640,7 @@ impl eframe::App for OperationsApp {
             });
 
         if let Some(spec) = self.confirm.clone() {
-            egui::Window::new("管理操作の確認")
+            egui::Window::new("操作の確認")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -663,18 +650,12 @@ impl eframe::App for OperationsApp {
                             .as_deref()
                             .unwrap_or("この操作を実行しますか？"),
                     );
-                    ui.add_space(12.0);
+                    ui.add_space(10.0);
                     ui.horizontal(|ui| {
                         if ui.button("キャンセル").clicked() {
                             self.confirm = None;
                         }
-                        if ui
-                            .add(
-                                egui::Button::new(RichText::new("実行する").color(Color32::WHITE))
-                                    .fill(Color32::from_rgb(168, 52, 52)),
-                            )
-                            .clicked()
-                        {
+                        if ui.button("実行").clicked() {
                             self.confirm = None;
                             self.launch_spec(spec);
                         }
@@ -690,7 +671,7 @@ impl eframe::App for OperationsApp {
                 .show(ctx, |ui| {
                     ui.colored_label(
                         Color32::DARK_RED,
-                        "この秘密値は発行時だけ表示されます。共有先を確認して保管してください。",
+                        "この秘密値は発行時だけ表示されます。安全な場所に保管してください。",
                     );
                     ui.add(
                         TextEdit::multiline(&mut secret.clone())
@@ -742,14 +723,19 @@ impl Page {
 
 impl OperationsApp {
     fn login_prompt(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(32.0);
-        egui::Frame::group(ui.style()).fill(Color32::WHITE).inner_margin(egui::Margin::same(24)).show(ui, |ui| {
-            ui.set_max_width(760.0);
-            ui.heading("管理者SSOでサインイン");
-            ui.label("既定のブラウザーで認証し、ローカルループバック経由でデスクトップアプリに戻ります。セッションは実行中メモリーのみで保持します。");
-            ui.add_space(12.0);
-            if ui.add_enabled(!self.login_busy, egui::Button::new("SSO IDでログイン").fill(BLUE).min_size([190.0,38.0].into())).clicked() { self.start_login(false); }
-        });
+        ui.add_space(24.0);
+        ui.heading("管理者SSO");
+        ui.label("管理者IDでサインインしてください。認証は既定のブラウザーで行います。");
+        ui.add_space(8.0);
+        if ui
+            .add_enabled(
+                !self.login_busy,
+                egui::Button::new("SSO IDでログイン").fill(BLUE),
+            )
+            .clicked()
+        {
+            self.start_login(false);
+        }
     }
 
     fn overview_ui(&mut self, ui: &mut egui::Ui) {
@@ -789,22 +775,25 @@ impl OperationsApp {
     }
 
     fn metric(&self, ui: &mut egui::Ui, label: &str, value: impl ToString) {
-        egui::Frame::group(ui.style())
-            .fill(Color32::WHITE)
-            .inner_margin(egui::Margin::same(15))
-            .show(ui, |ui| {
-                ui.set_min_width(190.0);
-                ui.label(RichText::new(label).small().color(Color32::GRAY));
-                ui.heading(value.to_string());
-            });
+        ui.vertical(|ui| {
+            ui.label(RichText::new(label).small().color(Color32::DARK_GRAY));
+            ui.label(
+                RichText::new(value.to_string())
+                    .strong()
+                    .size(16.0)
+                    .color(NAV),
+            );
+        });
     }
     fn card(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) {
         egui::Frame::group(ui.style())
             .fill(Color32::WHITE)
-            .inner_margin(egui::Margin::same(16))
+            .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 216)))
+            .corner_radius(egui::CornerRadius::same(2))
+            .inner_margin(egui::Margin::same(10))
             .show(ui, |ui| {
-                ui.heading(title);
-                ui.add_space(7.0);
+                ui.label(RichText::new(title).strong().color(NAV));
+                ui.separator();
                 content(ui);
             });
     }

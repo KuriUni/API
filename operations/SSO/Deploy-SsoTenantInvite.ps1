@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$base = [System.IO.Path]::GetDirectoryName($MyInvocation.MyCommand.Path)
+$base = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $source = Join-Path $base 'sso-ftp-source-20261103-002438\server.py'
 if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Source not found: $source" }
 $dll = @(

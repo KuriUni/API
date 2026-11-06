@@ -8,9 +8,9 @@ if (-not (Test-Path -LiteralPath $cargoExe)) {
 }
 Push-Location $rustDir
 try {
-    & $cargoExe build --release
+    & $cargoExe build --release --locked --target x86_64-pc-windows-msvc
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE" }
-    Write-Host "Build complete: $(Join-Path $rustDir 'target\release\TutiOperations.exe')"
+    Write-Host "Build complete: $(Join-Path $rustDir 'target\x86_64-pc-windows-msvc\release\TutiOperations.exe')"
 } finally {
     Pop-Location
-}
+}\n

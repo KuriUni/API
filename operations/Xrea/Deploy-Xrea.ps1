@@ -21,7 +21,7 @@ Add-Type -AssemblyName System.Drawing
 if ([string]::IsNullOrWhiteSpace($LocalPath)) {
     $scriptDirectory = [System.IO.Path]::GetDirectoryName($MyInvocation.MyCommand.Path)
     if ([string]::IsNullOrWhiteSpace($scriptDirectory)) { throw 'Could not determine script folder.' }
-    $LocalPath = Join-Path $scriptDirectory 'xrea-source'
+    $LocalPath = [System.IO.Path]::GetFullPath((Join-Path $scriptDirectory '..\..\xrea-source'))
 }
 $resolvedLocalPath = [System.IO.Path]::GetFullPath($LocalPath)
 if (-not (Test-Path -LiteralPath $resolvedLocalPath -PathType Container)) { throw "Source folder not found: $resolvedLocalPath" }

@@ -29,7 +29,7 @@ if ([string]::IsNullOrWhiteSpace($LocalPath)) {
     if ([string]::IsNullOrWhiteSpace($scriptDirectory)) {
         throw "Could not determine the folder containing Sync-XreaBackup.ps1. Pass -LocalPath explicitly."
     }
-    $LocalPath = Join-Path $scriptDirectory "xrea-source"
+    $LocalPath = [System.IO.Path]::GetFullPath((Join-Path $scriptDirectory '..\..\xrea-source'))
 }
 $resolvedLocalPath = [System.IO.Path]::GetFullPath($LocalPath)
 if (-not (Test-Path -LiteralPath $resolvedLocalPath -PathType Container)) {

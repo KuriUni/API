@@ -2,7 +2,7 @@
 param()
 
 $ErrorActionPreference = 'Stop'
-$base = [System.IO.Path]::GetDirectoryName($MyInvocation.MyCommand.Path)
+$base = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $source = Join-Path $base 'xrea-source'
 $credentialFile = Join-Path $env:LOCALAPPDATA 'XreaDeploy\credentials.xml'
 $remoteRoot = '/public_html/2415.jp/license'

@@ -1,6 +1,6 @@
 # TUTI Operations デスクトップ管理ソフトの使い方
 
-TUTI OperationsはWindows向けの管理者用PCソフトです。現在の開発ベースはRust版で、Webブラウザー内ではなくPC上のネイティブウィンドウで動作します。`XreaOperationsDesktop\rust\target\release\TutiOperations.exe`を起動し、「SSO IDでログイン」を選びます。既定のブラウザーでSSO Coreの認証を行い、完了後にPCアプリへ戻ります。
+TUTI OperationsはWindows向けの管理者用PCソフトです。現在の開発ベースはRust版で、Webブラウザー内ではなくPC上のネイティブウィンドウで動作します。`XreaOperationsDesktop\rust\target\x86_64-pc-windows-msvc\release\TutiOperations.exe`を起動し、「SSO IDでログイン」を選びます。既定のブラウザーでSSO Coreの認証を行い、完了後にPCアプリへ戻ります。
 
 ## ログインとセキュリティ
 
@@ -34,7 +34,7 @@ cd C:\Users\t\Documents\API\XreaOperationsDesktop
 .\Build-Rust.ps1
 ```
 
-実行ファイルは`rust\target\release\TutiOperations.exe`に出力されます。依存関係のコンパイル確認だけを行う場合は次を使います。
+実行ファイルは`rust\target\x86_64-pc-windows-msvc\release\TutiOperations.exe`に出力されます。画面表示にはWindowsの`yumin.ttf`日本語フォントを使います（アプリには同梱しません）。依存関係のコンパイル確認だけを行う場合は次を使います。
 
 ```powershell
 cd C:\Users\t\Documents\API\XreaOperationsDesktop\rust
@@ -43,4 +43,4 @@ cargo check
 
 ## 旧版
 
-WinForms/C#ソースは移行確認用として同じプロジェクト内に保管しています。Rust版を本番運用へ切り替える際は、SSOログイン・権限・各操作を対象サーバーで確認してから旧版を整理してください。
+WinForms/C#ソースは移行確認用として同じプロジェクト内に保管しています。Rust版を本番運用へ切り替える際は、SSOログイン・権限・各操作を対象サーバーで確認してから旧版を整理してください。\n

@@ -8,10 +8,12 @@ Rust 1.88以降とWindowsのC++ Build Tools（MSVC）を用意し、PowerShell�
 
 ```powershell
 cd C:\Users\t\Documents\API\XreaOperationsDesktop\rust
-cargo run --release
+cargo run --release --target x86_64-pc-windows-msvc
 ```
 
-配布用EXEは `rust\target\release\TutiOperations.exe` に生成されます。単体実行ファイルとして配布するには、MSVCランタイムが必要な端末への同梱方法も含めて配布パッケージを準備してください。
+配布用EXEは `rust\target\x86_64-pc-windows-msvc\release\TutiOperations.exe` に生成されます。単体実行ファイルとして配布するには、MSVCランタイムが必要な端末への同梱方法も含めて配布パッケージを準備してください。
+
+画面の日本語表示にはWindows標準フォント（Yu Mincho）を使い、アプリにはフォントファイルを同梱しません。日本語フォントがないWindowsではOSに日本語フォントを追加してください。`Build-Rust.ps1` は現在起動中の旧EXEをロックしないよう、x64用ターゲットフォルダーへ出力します。
 
 依存関係を含む型チェック:
 
@@ -44,4 +46,4 @@ cargo check
 
 - [SSO Discoveryとログイン](../docs/OIDC-DISCOVERY.md)
 - [契約者SSO招待とtenant ID](../docs/SSO-CONTRACTOR-INVITE.md)
-- [V8プロダクトキー発行](../docs/PRODUCT-KEY-ISSUANCE-V8.md)\n
+- [V8プロダクトキー発行](../docs/PRODUCT-KEY-ISSUANCE-V8.md)\n\n

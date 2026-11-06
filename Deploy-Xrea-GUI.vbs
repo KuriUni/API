@@ -1,6 +1,6 @@
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
-scriptPath = fso.GetParentFolderName(WScript.ScriptFullName) & "\Deploy-Xrea.ps1"
+scriptPath = fso.GetParentFolderName(WScript.ScriptFullName) & "\operations\Xrea\Deploy-Xrea.ps1"
 If Not fso.FileExists(scriptPath) Then
     MsgBox "Deploy-Xrea.ps1 not found:" & vbCrLf & scriptPath, vbCritical, "XREA Deploy"
     WScript.Quit 1
