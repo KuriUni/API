@@ -47,6 +47,13 @@ function Get-RemoteFiles($Session, [string] $RemoteDirectory, [string] $Relative
     }
 }
 
+function Reset-FtpsSession($Session, [string] $hostName, [System.Management.Automation.PSCredential] $credential) {
+    $Session.Dispose()
+    $replacement = New-Object WinSCP.Session
+    $replacement.Open((New-FtpsOptions $hostName $credential))
+    return $replacement
+}
+
 $stage = [System.IO.Path]::GetFullPath($StageRoot)
 $sourceTree = Join-Path $stage 'primary-vendor'
 $verifyTree = Join-Path $stage 'backup-verify'
@@ -78,7 +85,12 @@ try {
         $index++
         $localFile = Join-Path $sourceTree ($item.relative -replace '/', '\\')
         New-Item -ItemType Directory -Path (Split-Path -Parent $localFile) -Force | Out-Null
-        $sourceSession.GetFiles($item.remote, $localFile, $false).Check()
+        if (($index % 30) -eq 1 -and $index -gt 1) {
+            $sourceSession = Reset-FtpsSession $sourceSession 's1004.xrea.com' $primaryCredential
+        }
+        if (-not (Test-Path -LiteralPath $localFile -PathType Leaf) -or (Get-Item -LiteralPath $localFile).Length -ne $item.length) {
+            $sourceSession.GetFiles($item.remote, $localFile, $false).Check()
+        }
         if ((Get-Item -LiteralPath $localFile).Length -ne $item.length) { throw "Primary download size mismatch for $($item.relative)" }
         if (($index % 50) -eq 0) { Write-Host "Downloaded $index / $($remoteFiles.Count) dependency files." }
     }
@@ -103,6 +115,9 @@ try {
     $index = 0
     foreach ($file in $sourceFiles) {
         $index++
+        if (($index % 30) -eq 1 -and $index -gt 1) {
+            $targetSession = Reset-FtpsSession $targetSession 's1006.xrea.com' $backupCredential
+        }
         $relative = $file.FullName.Substring($sourceTree.Length).TrimStart('\') -replace '\\','/'
         $parts = $relative.Split('/')
         $remoteDirectory = $targetVendor
@@ -119,6 +134,9 @@ try {
     $index = 0
     foreach ($item in $targetFiles) {
         $index++
+        if (($index % 30) -eq 1 -and $index -gt 1) {
+            $targetSession = Reset-FtpsSession $targetSession 's1006.xrea.com' $backupCredential
+        }
         $localFile = Join-Path $verifyTree ($item.relative -replace '/', '\\')
         New-Item -ItemType Directory -Path (Split-Path -Parent $localFile) -Force | Out-Null
         $targetSession.GetFiles($item.remote, $localFile, $false).Check()
