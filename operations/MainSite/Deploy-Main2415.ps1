@@ -177,7 +177,7 @@ try {
     $transferOptions = New-Object WinSCP.TransferOptions
     $transferOptions.TransferMode = [WinSCP.TransferMode]::Binary
     $transferOptions.ResumeSupport.State = [WinSCP.TransferResumeSupportState]::On
-    $transferOptions.FileMask = '| fastapi-runtime.json; __pycache__/; .tuti-deploy-backup-*/; .tuti-deploy-stage-*/'
+    $transferOptions.FileMask = '| fastapi-runtime.json; __pycache__/; *.pyc; *.pyo; .tuti-deploy-backup-*/; .tuti-deploy-stage-*/'
     $result = $session.SynchronizeDirectories(
         [WinSCP.SynchronizationMode]::Remote,
         $source,

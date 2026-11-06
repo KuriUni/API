@@ -51,7 +51,7 @@ function New-XreaRequest([string] $Path, [string] $Method) {
     $request.EnableSsl = $true
     $request.UsePassive = $true
     $request.UseBinary = $true
-    $request.KeepAlive = $false
+    $request.KeepAlive = $true
     $request.Timeout = 60000
     $request.ReadWriteTimeout = 60000
     return $request
@@ -78,6 +78,8 @@ function Receive-XreaDirectory([string] $RemoteDirectory, [string] $LocalDirecto
         $kind = $columns[0][0]
         $name = $columns[8]
         if ($name -eq '.' -or $name -eq '..' -or $kind -eq 'l') { continue }
+        if ($kind -eq 'd' -and ($name -eq '__pycache__' -or $name -like '.tuti-deploy-backup-*' -or $name -like '.tuti-deploy-stage-*')) { continue }
+        if ($kind -ne 'd' -and ($name -eq 'fastapi-runtime.json' -or $name -like '*.pyc' -or $name -like '*.pyo')) { continue }
 
         $remoteChild = $RemoteDirectory.TrimEnd('/') + '/' + $name
         $localChild = Join-Path $LocalDirectory $name
@@ -94,7 +96,7 @@ function Receive-XreaDirectory([string] $RemoteDirectory, [string] $LocalDirecto
             try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose(); $inputStream.Dispose() }
         } finally { $fileResponse.Dispose() }
         $script:downloadCount++
-        Write-Host "Downloaded $remoteChild"
+        Write-Verbose "Downloaded $remoteChild"
     }
 }
 

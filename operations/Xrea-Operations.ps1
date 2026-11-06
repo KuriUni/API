@@ -16,8 +16,8 @@ $script:OperationsRoot = [System.IO.Path]::GetDirectoryName($MyInvocation.MyComm
 $script:ProjectRoot = [System.IO.Path]::GetFullPath((Join-Path $script:OperationsRoot '..'))
 $script:Tasks = @(
     [pscustomobject]@{ Group='サイト'; Name='XREAサイトを取得'; File='Xrea\Download-Xrea.ps1'; Description='s1004.xrea.com の公開ソースをローカルへダウンロードします。既定の保存先は xrea-source です。'; Risk='読み取り・ダウンロード' },
-    [pscustomobject]@{ Group='サイト'; Name='XREA本番・バックアップへデプロイ'; File='Xrea\Deploy-Xrea.ps1'; Description='WinSCPとFTPSを使い、xrea-sourceを本番とバックアップへ同期します。DPAPI資格情報の入力・保存を個別画面で行います。'; Risk='サーバー更新' },
-    [pscustomobject]@{ Group='サイト'; Name='バックアップへ同期'; File='Xrea\Sync-XreaBackup.ps1'; Description='xrea-sourceをbackup.2415.jp側へ同期します。リモートだけにあるファイルは削除しません。'; Risk='サーバー更新' },
+    [pscustomobject]@{ Group='サイト'; Name='XREA本番・バックアップへデプロイ'; File='Xrea\Deploy-Xrea.ps1'; Description='WinSCPとFTPSを使い、xrea-sourceを本番とバックアップへ同期します。キャッシュやローカルのバックアップ／ステージは転送しません。'; Risk='サーバー更新' },
+    [pscustomobject]@{ Group='サイト'; Name='バックアップへ同期'; File='Xrea\Sync-XreaBackup.ps1'; Description='xrea-sourceをbackup.2415.jp側へ同期します。キャッシュ、ローカルバックアップ、ノード固有設定は転送せず、リモートだけのファイルも削除しません。'; Risk='サーバー更新' },
     [pscustomobject]@{ Group='サイト'; Name='ヘルプページをデプロイ'; File='Xrea\Deploy-TUTI-Help.ps1'; Description='TUTI-Help.htmlを2415.jpへアップロードし、公開済みファイルのバックアップとサイズ確認を行います。'; Risk='サーバー更新' },
     [pscustomobject]@{ Group='Sunabar'; Name='Sunabar Coreをデプロイ'; File='Sunabar\Deploy-SunaCore.ps1'; Description='Core Serverの指定ファイルをFTPSで配置し、公開ヘルスチェックを行います。DBパスワードは任意の更新時だけ入力します。'; Risk='サーバー更新' },
     [pscustomobject]@{ Group='Sunabar'; Name='Sunabar中継をデプロイ'; File='Sunabar\Deploy-Sunabar.ps1'; Description='2415.jp側のSunabar中継ファイルをバックアップ後に配置し、ハッシュと公開URLを確認します。'; Risk='サーバー更新' },

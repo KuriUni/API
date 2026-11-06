@@ -196,12 +196,15 @@ try {
         try {
             $transferOptions = New-Object WinSCP.TransferOptions
             $transferOptions.TransferMode = [WinSCP.TransferMode]::Binary
+            $transferOptions.ResumeSupport.State = [WinSCP.TransferResumeSupportState]::On
+            $excludeMasks = @('__pycache__/', '*.pyc', '*.pyo', '.tuti-deploy-backup-*/', '.tuti-deploy-stage-*/')
             if ($destination.Name -eq 'Backup') {
                 # The standby has a distinct runtime package and private data
                 # directory. Never replace its per-node launcher settings with
                 # the primary node's fastapi-runtime.json.
-                $transferOptions.FileMask = '| fastapi-runtime.json'
+                $excludeMasks += 'fastapi-runtime.json'
             }
+            $transferOptions.FileMask = '| ' + ($excludeMasks -join '; ')
             $result = $session.SynchronizeDirectories(
                 [WinSCP.SynchronizationMode]::Remote,
                 $resolvedLocalPath,

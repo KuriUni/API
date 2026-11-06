@@ -15,10 +15,12 @@
 | スクリプト | 用途 | 注意 |
 | --- | --- | --- |
 | `operations/Xrea/Download-Xrea.ps1` | Primaryから公開ソースを取得 | 既定保存先はプロジェクトルートの `xrea-source` |
-| `operations/Xrea/Deploy-Xrea.ps1` | XREA Primary/Backupへ同期 | 初回にDPAPI資格情報を設定。既定は両方 |
-| `operations/Xrea/Sync-XreaBackup.ps1` | Backupだけへ同期 | リモートのみのファイルは保持 |
+| `operations/Xrea/Deploy-Xrea.ps1` | XREA Primary/Backupへ同期 | 初回にDPAPI資格情報を設定。既定は両方。ローカルバックアップ、ステージ、Pythonキャッシュを除外 |
+| `operations/Xrea/Sync-XreaBackup.ps1` | Backupだけへ同期 | ノード固有設定とローカルバックアップ類を除外し、リモートのみのファイルは保持 |
 | `operations/Xrea/Deploy-TUTI-Help.ps1` | ヘルプHTMLの配置 | 既存ページをローカルバックアップしてから更新 |
 | `operations/Xrea/Upload-Xrea.ps1` | 任意のフォルダーを任意の公開パスへアップロード | 高影響の汎用ツール。接続先を確認して個別実行 |
+
+同期元にある `.tuti-deploy-backup-*`、`.tuti-deploy-stage-*`、`__pycache__`、`*.pyc`、`*.pyo` は本番・Backup・Main.2415.jpへ送りません。BackupにはBackup側専用の `fastapi-runtime.json` を保持します。XREA取得時も同じローカルバックアップ類と `fastapi-runtime.json` は取り込みません。
 
 ## Sunabar
 
