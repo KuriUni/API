@@ -16,12 +16,12 @@ $script:OperationsRoot = [System.IO.Path]::GetDirectoryName($MyInvocation.MyComm
 $script:ProjectRoot = [System.IO.Path]::GetFullPath((Join-Path $script:OperationsRoot '..'))
 $script:Tasks = @(
     [pscustomobject]@{ Group='サイト'; Name='XREAサイトを取得'; File='Xrea\Download-Xrea.ps1'; Description='s1004.xrea.com の公開ソースをローカルへダウンロードします。既定の保存先は xrea-source です。'; Risk='読み取り・ダウンロード' },
-    [pscustomobject]@{ Group='サイト'; Name='XREA本番・バックアップへデプロイ'; File='Xrea\Deploy-Xrea.ps1'; Description='WinSCPとFTPSを使い、xrea-sourceを本番とバックアップへ同期します。キャッシュやローカルのバックアップ／ステージは転送しません。'; Risk='サーバー更新' },
-    [pscustomobject]@{ Group='サイト'; Name='バックアップへ同期'; File='Xrea\Sync-XreaBackup.ps1'; Description='xrea-sourceをbackup.2415.jp側へ同期します。キャッシュ、ローカルバックアップ、ノード固有設定は転送せず、リモートだけのファイルも削除しません。'; Risk='サーバー更新' },
+    [pscustomobject]@{ Group='サイト'; Name='XREA本番・バックアップへデプロイ'; File='Xrea\Deploy-Xrea.ps1'; Description='WinSCPとFTPSを使い、xrea-sourceの新規・変更ファイルだけ差分アップロードします。FTP側の全体一覧は取得せず、リモート専用ファイルも削除しません。'; Risk='サーバー更新' },
+    [pscustomobject]@{ Group='サイト'; Name='バックアップへ同期'; File='Xrea\Sync-XreaBackup.ps1'; Description='xrea-sourceの新規・変更分だけbackup.2415.jpへ差分アップロードします。FTP側の全体一覧を避け、キャッシュやノード固有設定を除外します。'; Risk='サーバー更新' },
     [pscustomobject]@{ Group='サイト'; Name='ヘルプページをデプロイ'; File='Xrea\Deploy-TUTI-Help.ps1'; Description='TUTI-Help.htmlを2415.jpへアップロードし、公開済みファイルのバックアップとサイズ確認を行います。'; Risk='サーバー更新' },
     [pscustomobject]@{ Group='Sunabar'; Name='Sunabar Coreをデプロイ'; File='Sunabar\Deploy-SunaCore.ps1'; Description='Core Serverの指定ファイルをFTPSで配置し、公開ヘルスチェックを行います。DBパスワードは任意の更新時だけ入力します。'; Risk='サーバー更新' },
     [pscustomobject]@{ Group='Sunabar'; Name='Sunabar中継をデプロイ'; File='Sunabar\Deploy-Sunabar.ps1'; Description='2415.jp側のSunabar中継ファイルをバックアップ後に配置し、ハッシュと公開URLを確認します。'; Risk='サーバー更新' },
-    [pscustomobject]@{ Group='Main.2415.jp'; Name='main.2415.jpへ同期'; File='MainSite\Deploy-Main2415.ps1'; Description='xrea-sourceをCore Serverのmain.2415.jp公開ルートへFTPS同期します。リモート専用ファイルとサーバー固有のfastapi-runtime.jsonは保持します。'; Risk='サーバー更新' },
+    [pscustomobject]@{ Group='Main.2415.jp'; Name='main.2415.jpへ同期'; File='MainSite\Deploy-Main2415.ps1'; Description='xrea-sourceの新規・変更分だけをCore Serverのmain.2415.jp公開ルートへ差分アップロードします。FTP側の全体一覧を取得せず、リモート専用ファイルとfastapi-runtime.jsonを保持します。'; Risk='サーバー更新' },
     [pscustomobject]@{ Group='SSO'; Name='SSO FTP構成を確認'; File='SSO\Inspect-SsoFtp.ps1'; Description='Core ServerのFTP構成を読み取り確認します。ファイル変更は行いません。'; Risk='読み取り専用' },
     [pscustomobject]@{ Group='運用'; Name='HAトークンをローテーション'; File='Maintenance\Rotate-XreaHaToken.ps1'; Description='Primary/BackupのHA運用トークンを更新します。両サーバーの現在値をGUIで入力します。'; Risk='高影響・認証変更' },
     [pscustomobject]@{ Group='運用'; Name='V8データベース移行'; File='Maintenance\Run-XreaV8Migration.ps1'; Description='V8用データベース移行を実行します。バックアップと移行対象を確認してから実行してください。'; Risk='高影響・DB変更' }

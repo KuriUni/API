@@ -17,6 +17,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+. (Join-Path $PSScriptRoot 'Invoke-XreaDifferentialUpload.ps1')
 
 if ([string]::IsNullOrWhiteSpace($LocalPath)) {
     $scriptDirectory = [System.IO.Path]::GetDirectoryName($MyInvocation.MyCommand.Path)
@@ -205,17 +206,10 @@ try {
                 $excludeMasks += 'fastapi-runtime.json'
             }
             $transferOptions.FileMask = '| ' + ($excludeMasks -join '; ')
-            $result = $session.SynchronizeDirectories(
-                [WinSCP.SynchronizationMode]::Remote,
-                $resolvedLocalPath,
-                $destination.Remote,
-                $false,
-                $false,
-                [WinSCP.SynchronizationCriteria]::Time,
-                $transferOptions
-            )
-            $result.Check()
-            Write-Host "Completed $($destination.Name). Files uploaded: $($result.Uploads.Count)"
+            $excludePatterns = @('(^|/)__pycache__(/|$)', '\.py[co]$', '(^|/)\.tuti-deploy-(backup|stage)-')
+            if ($destination.Name -eq 'Backup') { $excludePatterns += '(^|/)fastapi-runtime\.json$' }
+            $result = Invoke-XreaDifferentialUpload -Session $session -LocalRoot $resolvedLocalPath -RemoteRoot $destination.Remote -StateKey "$($destination.Host)|$($destination.Remote)" -TransferOptions $transferOptions -ExcludePatterns $excludePatterns
+            Write-Host "Completed $($destination.Name). Uploaded changed files: $($result.Uploaded); local files checked: $($result.CheckedLocal). Remote directory listings were not scanned."
         }
         finally { if ($null -ne $session) { $session.Dispose() } }
     }

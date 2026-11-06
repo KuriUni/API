@@ -9,6 +9,7 @@
 param([switch] $ResetCredentials, [switch] $PreflightOnly)
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '..\Xrea\Invoke-XreaDifferentialUpload.ps1')
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
@@ -178,17 +179,9 @@ try {
     $transferOptions.TransferMode = [WinSCP.TransferMode]::Binary
     $transferOptions.ResumeSupport.State = [WinSCP.TransferResumeSupportState]::On
     $transferOptions.FileMask = '| fastapi-runtime.json; __pycache__/; *.pyc; *.pyo; .tuti-deploy-backup-*/; .tuti-deploy-stage-*/'
-    $result = $session.SynchronizeDirectories(
-        [WinSCP.SynchronizationMode]::Remote,
-        $source,
-        $remotePath,
-        $false,
-        $false,
-        [WinSCP.SynchronizationCriteria]::Time,
-        $transferOptions)
-    $result.Check()
+    $result = Invoke-XreaDifferentialUpload -Session $session -LocalRoot $source -RemoteRoot $remotePath -StateKey "$hostName|$remotePath" -TransferOptions $transferOptions -ExcludePatterns @('(^|/)fastapi-runtime\.json$', '(^|/)__pycache__(/|$)', '\.py[co]$', '(^|/)\.tuti-deploy-(backup|stage)-')
     [void][System.Windows.Forms.MessageBox]::Show(
-        "main.2415.jpへの同期が完了しました。`r`nアップロード数: $($result.Uploads.Count)`r`nローカル実行ファイルはサーバーへ配置していません。",
+        "main.2415.jpへの差分アップロードが完了しました。`r`nアップロード数: $($result.Uploaded)`r`nローカルファイル確認数: $($result.CheckedLocal)`r`nFTP側の全体スキャンは行っていません。`r`nローカル実行ファイルはサーバーへ配置していません。",
         'Deployment completed',
         [System.Windows.Forms.MessageBoxButtons]::OK,
         [System.Windows.Forms.MessageBoxIcon]::Information)

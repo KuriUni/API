@@ -21,6 +21,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'Invoke-XreaDifferentialUpload.ps1')
 
 $resolvedLocalPath = (Resolve-Path -LiteralPath $LocalPath).Path
 if (-not (Test-Path -LiteralPath $resolvedLocalPath -PathType Container)) {
@@ -72,12 +73,12 @@ try {
 
     $transferOptions = New-Object WinSCP.TransferOptions
     $transferOptions.TransferMode = [WinSCP.TransferMode]::Binary
+    $transferOptions.ResumeSupport.State = [WinSCP.TransferResumeSupportState]::On
     $remote = $RemotePath.TrimEnd('/') + '/'
 
-    Write-Host "Uploading '$resolvedLocalPath' to '$remote'..."
-    $result = $session.PutFiles((Join-Path $resolvedLocalPath '*'), $remote, $false, $transferOptions)
-    $result.Check()
-    Write-Host "Upload complete. Files transferred: $($result.Transfers.Count)"
+    Write-Host "Uploading changed files from '$resolvedLocalPath' to '$remote'..."
+    $result = Invoke-XreaDifferentialUpload -Session $session -LocalRoot $resolvedLocalPath -RemoteRoot $remote -StateKey "$HostName|$UserName|$remote" -TransferOptions $transferOptions
+    Write-Host "Differential upload complete. Files uploaded: $($result.Uploaded); local files checked: $($result.CheckedLocal). Remote directory listings were not scanned."
 }
 finally {
     $session.Dispose()

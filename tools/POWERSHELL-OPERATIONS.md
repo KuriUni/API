@@ -15,12 +15,12 @@
 | スクリプト | 用途 | 注意 |
 | --- | --- | --- |
 | `operations/Xrea/Download-Xrea.ps1` | Primaryから公開ソースを取得 | 既定保存先はプロジェクトルートの `xrea-source` |
-| `operations/Xrea/Deploy-Xrea.ps1` | XREA Primary/Backupへ同期 | 初回にDPAPI資格情報を設定。既定は両方。ローカルバックアップ、ステージ、Pythonキャッシュを除外 |
-| `operations/Xrea/Sync-XreaBackup.ps1` | Backupだけへ同期 | ノード固有設定とローカルバックアップ類を除外し、リモートのみのファイルは保持 |
+| `operations/Xrea/Deploy-Xrea.ps1` | XREA Primary/Backupへ差分アップロード | 初回にDPAPI資格情報を設定。既定は両方。ローカルSHA-256台帳と比較し、変更分だけ送信。FTP側の全体一覧は取得しない |
+| `operations/Xrea/Sync-XreaBackup.ps1` | Backupだけへ差分アップロード | ローカルSHA-256台帳と比較。ノード固有設定とローカルバックアップ類を除外し、リモートのみのファイルは保持 |
 | `operations/Xrea/Deploy-TUTI-Help.ps1` | ヘルプHTMLの配置 | 既存ページをローカルバックアップしてから更新 |
 | `operations/Xrea/Upload-Xrea.ps1` | 任意のフォルダーを任意の公開パスへアップロード | 高影響の汎用ツール。接続先を確認して個別実行 |
 
-同期元にある `.tuti-deploy-backup-*`、`.tuti-deploy-stage-*`、`__pycache__`、`*.pyc`、`*.pyo` は本番・Backup・Main.2415.jpへ送りません。BackupにはBackup側専用の `fastapi-runtime.json` を保持します。XREA取得時も同じローカルバックアップ類と `fastapi-runtime.json` は取り込みません。
+同期元にある `.tuti-deploy-backup-*`、`.tuti-deploy-stage-*`、`__pycache__`、`*.pyc`、`*.pyo` は本番・Backup・Main.2415.jpへ送りません。BackupにはBackup側専用の `fastapi-runtime.json` を保持します。XREA取得時も同じローカルバックアップ類と `fastapi-runtime.json` は取り込みません。差分判定台帳は `%LOCALAPPDATA%\XreaDeploy\sync-state` に配置し、ローカルファイルのSHA-256を使います。初回はファイル一式を送って台帳を作り、2回目以降は追加・変更分のみを送ります。FTP側を走査しないため、サーバー側で手動変更・削除されたファイルの検出はしません。再全送信したい場合は対象台帳を削除します。サーバー側のみのファイルは削除しません。
 
 ## Sunabar
 
@@ -33,7 +33,7 @@
 
 | スクリプト | 用途 | 注意 |
 | --- | --- | --- |
-| `operations/MainSite/Deploy-Main2415.ps1` | `xrea-source` をCore Serverのmain.2415.jp公開ルートへ同期 | Explicit FTPS、証明書固定、リモート専用ファイルを保持。パスワードはWindows DPAPIで任意保存 |
+| `operations/MainSite/Deploy-Main2415.ps1` | `xrea-source` の新規・変更ファイルをCore Serverのmain.2415.jpへ差分アップロード | Explicit FTPS、証明書固定、FTP側全体一覧の取得なし、リモート専用ファイルを保持。パスワードはWindows DPAPIで任意保存 |
 
 ### main.2415.jpへの同期手順
 
@@ -43,7 +43,7 @@
 4. パスワードを画面に入力します。保存済み資格情報を使う場合はチェックを確認してください。「このWindowsユーザーのDPAPIで保存」は初期状態でオンです。保存したくない場合はオフにします。DPAPI資格情報は保存したWindowsユーザーのアカウントでのみ復号できます。
 5. 接続先・送信元を示す確認画面で内容を確認し、同期を実行します。接続・証明書の検証に失敗した場合は転送を止めます。
 
-同期はローカルの新規・更新ファイルをサーバーへ送ります。サーバーにだけ存在するファイルは削除しません。`fastapi-runtime.json`、`__pycache__`、`.tuti-deploy-backup-*`、`.tuti-deploy-stage-*` は転送対象外です。完了ダイアログのアップロード数を確認してください。
+差分アップロードはローカルSHA-256台帳と照合し、新規・変更ファイルだけを送ります。FTP側のファイル一覧を全件取得しないため、サーバー上で手動変更・削除されたファイルは自動検知しません。サーバーにだけ存在するファイルは削除しません。`fastapi-runtime.json`、`__pycache__`、`.tuti-deploy-backup-*`、`.tuti-deploy-stage-*` は転送対象外です。完了ダイアログのアップロード数を確認してください。全ファイルを再送する場合は `%LOCALAPPDATA%\XreaDeploy\sync-state` の対象台帳を削除してください。
 
 保存済みパスワードで認証に失敗した場合、スクリプトはその資格情報ファイルを削除します。ランチャーから再実行し、現在有効なFTPパスワードを入力してください。資格情報だけを消して再設定する場合は、PowerShellから次のように起動できます。
 
