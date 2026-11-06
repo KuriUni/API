@@ -1,9 +1,9 @@
-<#
+﻿<#
 .SYNOPSIS
   Uploads a local site folder to XREA using explicit FTPS (TLS on FTP port 21).
 
 .EXAMPLE
-  .\Upload-Xrea.ps1 -LocalPath .\public -RemotePath /public_html
+  .\operations\Xrea\Upload-Xrea.ps1 -LocalPath .\public -RemotePath /public_html
 #>
 [CmdletBinding()]
 param(

@@ -278,6 +278,8 @@ def _admin_page(request_context):
         from admin_oidc import session_active
         if not session_active(str(claims['oidc_sid'])):
             return _login_page(request_context, 'SSO IDの認証セッションが失効しました。再ログインしてください。')
+    if query.get('view', [''])[-1] == 'help':
+        return _admin_help_page(request_context, claims)
     if query.get('view', [''])[-1] == 'operations':
         destination = site_url('/license/python-migration/ops-app/')
         return make_response([b''], '303 See Other', [('Location', destination), ('Cache-Control', 'no-store'), ('Content-Length', '0')])
@@ -321,6 +323,7 @@ def _admin_page(request_context):
             host = '2415.jp'
         phone_step_up = site_url('<p class="muted"><a href="/license/python-migration/admin_api.php?admin_sso_start=1&amp;step_up=1&amp;return_host=') + quote(host, safe='') + '">確認コードの再発行・申請取消にはPasskey再認証が必要です。</a></p>'
     bulk_step_up = phone_step_up.replace('確認コードの再発行・申請取消にはPasskey再認証が必要です。', 'ライセンス一括操作にはPasskey再認証が必要です。')
+    section_links.append('<a href="admin_api.php?view=help"><span>管理者向けヘルプ</span><small>管理者SSO認証が必要</small></a>')
     section_links = ['<a href="ops-app/"><span>独立運用アプリ</span><small>運用コンソールを開く</small></a>', '<a href="#device-management"><span>端末・セッション</span><small>登録状況と利用状況を確認</small></a>', '<a href="#license-management"><span>ライセンス管理</span><small>検索・一覧・監査ログ</small></a>']
     if 'license:write' in claims_scopes:
         section_links.append('<a href="#license-issuance"><span>ライセンス発行</span><small>個別・CSV一括発行</small></a>')
@@ -385,6 +388,41 @@ def _effective_admin_role(claims):
                 connection.close()
             except Exception:
                 pass
+
+@legacy_compatible(callback_index=1, request_index=0)
+def _admin_help_page(request_context, claims):
+    """Serve operator documentation only to an active administrator SSO session."""
+    if claims.get('auth_source') != 'oidc_sso' or not claims.get('oidc_sid'):
+        return _login_page(request_context, '管理者SSO IDでログインしてください。')
+    try:
+        from admin_oidc import session_active
+        if not session_active(str(claims['oidc_sid'])):
+            return _login_page(request_context, 'SSO IDの認証セッションが失効しました。再ログインしてください。')
+        from baas_handlers import _role_allows_scope
+        if not _role_allows_scope(_effective_admin_role(claims), 'license:read'):
+            return _error('403 Forbidden', 'この資料を閲覧する管理者権限がありません。')
+        content_path = os.path.join(os.path.dirname(__file__), 'admin-help-content.json')
+        with open(content_path, 'r', encoding='utf-8') as stream:
+            documents = json.load(stream)
+        if not isinstance(documents, list) or len(documents) > 1000:
+            raise ValueError('invalid private help catalog')
+    except Exception:
+        return _error('503 Service Unavailable', '管理者向け資料を読み込めません。')
+
+    payload = json.dumps(documents, ensure_ascii=False, separators=(',', ':')).replace('<', '\\u003c')
+    body = '''<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>管理者向け資料 | TUTI</title><style>
+*{box-sizing:border-box}body{margin:0;background:#f2f6f5;color:#17343b;font:15px/1.7 system-ui,"Yu Gothic UI",Meiryo,sans-serif}.wrap{width:min(1400px,100%);margin:auto;padding:22px}.head,.tools{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.head{padding:18px 20px;background:#fff;border:1px solid #dce8e5;border-radius:14px}.head h1{margin:3px 0;font-size:24px}.head p{margin:0;color:#60777a;font-size:13px}.head a{color:#08796d;font-weight:700}.layout{display:grid;grid-template-columns:minmax(250px,340px) minmax(0,1fr);gap:16px;margin-top:16px}.panel{min-width:0;padding:16px;background:#fff;border:1px solid #dce8e5;border-radius:14px}.list{max-height:calc(100vh - 210px);overflow:auto}.item{display:block;width:100%;margin:3px 0;padding:10px;border:1px solid transparent;border-radius:9px;background:#fff;text-align:left;color:#18353b;cursor:pointer}.item:hover,.item[aria-current=true]{border-color:#a8d5cc;background:#f0f8f6}.item small{display:block;color:#637b7e;overflow-wrap:anywhere}input{width:100%;margin:12px 0;padding:10px;border:1px solid #cbdad7;border-radius:9px;font:inherit}#content{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;font:14px/1.8 ui-monospace,Consolas,"Yu Gothic UI",monospace}.placeholder{color:#637b7e}#count{color:#637b7e;font-size:12px}@media(max-width:760px){.wrap{padding:12px}.layout{grid-template-columns:1fr}.list{max-height:240px}.head h1{font-size:20px}}
+</style></head><body><main class="wrap"><header class="head"><div><b>TUTI · 管理者資料</b><h1>運営・管理者向けヘルプ</h1><p>管理者SSO IDで認証済み。認証の有効期限が切れると再ログインが必要です。</p></div><a href="admin_api.php">管理センターへ戻る</a></header><div class="layout"><nav class="panel" aria-label="資料一覧"><label for="search">資料を検索</label><input id="search" type="search" autocomplete="off" placeholder="タイトル・本文・パス"><div id="count" role="status"></div><div class="list" id="list"></div></nav><section class="panel"><h2 id="title">資料を選択してください</h2><p id="path" class="placeholder"></p><article id="content" class="placeholder">一覧から資料を選ぶと本文を表示します。</article></section></div></main><script id="help-data" type="application/json">''' + payload + '''</script><script>
+const docs=JSON.parse(document.getElementById('help-data').textContent),list=document.getElementById('list'),search=document.getElementById('search');let active=null;
+function render(){const q=search.value.trim().toLocaleLowerCase(),items=docs.filter(x=>!q||(x.title+' '+x.path+' '+x.content).toLocaleLowerCase().includes(q));document.getElementById('count').textContent=items.length+'件';list.replaceChildren();for(const doc of items){const b=document.createElement('button'),small=document.createElement('small');b.className='item';b.setAttribute('aria-current',String(active===doc));b.textContent=doc.title;small.textContent=doc.project+' · '+doc.category;b.append(small);b.onclick=()=>{active=doc;document.getElementById('title').textContent=doc.title;document.getElementById('path').textContent=doc.path;const c=document.getElementById('content');c.textContent=doc.content;c.classList.remove('placeholder');render()};list.append(b)}}search.addEventListener('input',render);render();
+</script></body></html>'''
+    encoded = body.encode('utf-8')
+    headers = [('Content-Type', 'text/html; charset=utf-8'), ('Cache-Control', 'private, no-store, max-age=0'),
+               ('Pragma', 'no-cache'), ('X-Content-Type-Options', 'nosniff'),
+               ('Referrer-Policy', 'no-referrer'), ('X-Frame-Options', 'DENY'),
+               ('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
+               ('Content-Length', str(len(encoded)))]
+    return make_response([encoded], '200 OK', headers)
 
 @legacy_compatible(callback_index=1, request_index=0)
 def _api_workbench_page(request_context, token, claims):
@@ -742,7 +780,7 @@ def _admin_api_request(request_context):
     if method == 'GET' and query.get('oidc_error'):
         messages = {'unconfigured': 'SSO IDログインはまだ設定されていません。', 'expired': 'ログイン要求が期限切れです。もう一度お試しください。', 'state': 'ログイン応答を確認できませんでした。', 'provider': '共通IDログインを完了できませんでした。', 'failed': '共通IDとの接続に失敗しました。設定とサーバーログを確認してください。'}
         return _login_page(request_context, messages.get(query.get('oidc_error', [''])[-1], messages['failed']))
-    if method == 'GET' and (not request_context.get('query') or query.get('view', [''])[-1] in {'api-invoices', 'reception'}):
+    if method == 'GET' and (not request_context.get('query') or query.get('view', [''])[-1] in {'api-invoices', 'reception', 'help'}):
         return _admin_page(request_context) if _cookie_value(request_context, SESSION_COOKIE) else _login_page(request_context)
     try:
         data = admin_input(request_context)

@@ -24,7 +24,7 @@ $form.MaximizeBox = $false
 $form.MinimizeBox = $false
 $form.ClientSize = New-Object System.Drawing.Size(470, 150)
 $label = New-Object System.Windows.Forms.Label
-$label.Text = 'Explicit FTPS ﾂｷ v2006.coreserver.jp ﾂｷ main@sso.2415.jp'
+$label.Text = 'FTPS接続先: v2006.coreserver.jp  /  FTPアカウント: main@sso.2415.jp'
 $label.Location = New-Object System.Drawing.Point(16, 16)
 $label.Size = New-Object System.Drawing.Size(438, 24)
 $form.Controls.Add($label)

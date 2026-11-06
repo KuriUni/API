@@ -1,9 +1,9 @@
-<#
+﻿<#
 .SYNOPSIS
   Synchronize the downloaded XREA site source to the prepared backup server.
 
 .EXAMPLE
-  .\Sync-XreaBackup.ps1
+  .\operations\Xrea\Sync-XreaBackup.ps1
 #>
 [CmdletBinding()]
 param(

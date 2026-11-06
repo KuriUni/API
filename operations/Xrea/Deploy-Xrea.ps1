@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Deploy local XREA source to the live site and backup over pinned explicit FTPS.
 .DESCRIPTION

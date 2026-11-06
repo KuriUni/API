@@ -21,6 +21,7 @@ $script:Tasks = @(
     [pscustomobject]@{ Group='サイト'; Name='ヘルプページをデプロイ'; File='Xrea\Deploy-TUTI-Help.ps1'; Description='TUTI-Help.htmlを2415.jpへアップロードし、公開済みファイルのバックアップとサイズ確認を行います。'; Risk='サーバー更新' },
     [pscustomobject]@{ Group='Sunabar'; Name='Sunabar Coreをデプロイ'; File='Sunabar\Deploy-SunaCore.ps1'; Description='Core Serverの指定ファイルをFTPSで配置し、公開ヘルスチェックを行います。DBパスワードは任意の更新時だけ入力します。'; Risk='サーバー更新' },
     [pscustomobject]@{ Group='Sunabar'; Name='Sunabar中継をデプロイ'; File='Sunabar\Deploy-Sunabar.ps1'; Description='2415.jp側のSunabar中継ファイルをバックアップ後に配置し、ハッシュと公開URLを確認します。'; Risk='サーバー更新' },
+    [pscustomobject]@{ Group='Main.2415.jp'; Name='main.2415.jpへ同期'; File='MainSite\Deploy-Main2415.ps1'; Description='xrea-sourceをCore Serverのmain.2415.jp公開ルートへFTPS同期します。リモート専用ファイルとサーバー固有のfastapi-runtime.jsonは保持します。'; Risk='サーバー更新' },
     [pscustomobject]@{ Group='SSO'; Name='SSO FTP構成を確認'; File='SSO\Inspect-SsoFtp.ps1'; Description='Core ServerのFTP構成を読み取り確認します。ファイル変更は行いません。'; Risk='読み取り専用' },
     [pscustomobject]@{ Group='運用'; Name='HAトークンをローテーション'; File='Maintenance\Rotate-XreaHaToken.ps1'; Description='Primary/BackupのHA運用トークンを更新します。両サーバーの現在値をGUIで入力します。'; Risk='高影響・認証変更' },
     [pscustomobject]@{ Group='運用'; Name='V8データベース移行'; File='Maintenance\Run-XreaV8Migration.ps1'; Description='V8用データベース移行を実行します。バックアップと移行対象を確認してから実行してください。'; Risk='高影響・DB変更' }

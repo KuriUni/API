@@ -1,9 +1,9 @@
-<#
+﻿<#
 .SYNOPSIS
   Downloads the existing XREA site recursively over explicit FTPS using .NET built into Windows.
 
 .EXAMPLE
-  .\Download-Xrea.ps1
+  .\operations\Xrea\Download-Xrea.ps1
 #>
 [CmdletBinding()]
 param(

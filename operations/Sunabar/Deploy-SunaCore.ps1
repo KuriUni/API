@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param([switch] $ResetCredentials, [switch] $ConfigureDatabase)
 
 $ErrorActionPreference = 'Stop'
