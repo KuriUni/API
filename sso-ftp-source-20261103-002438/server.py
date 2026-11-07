@@ -38,14 +38,15 @@ KEY = DATA / "signing-key.pem"
 EMAIL_KEY = DATA / "email-key.bin"
 ISSUER = "https://sso.2415.jp"
 COOKIE = "__Host-sso_session"
-SESSION_TTL = 12 * 60 * 60
+SESSION_TTL = 8 * 60 * 60
+SESSION_IDLE_TTL = 30 * 60
 CODE_TTL = 90
 ACCESS_TTL = 10 * 60
 PBKDF2_ROUNDS = 310_000
 ADMIN_CLIENT_ID = "tuti-admin-portal"
 TENANT_CLIENT_ID = "tuti-tenant-portal"
 PASSKEY_RP_ID = "sso.2415.jp"
-SSO_DATABASE_SCHEMA_VERSION = 3
+SSO_DATABASE_SCHEMA_VERSION = 4
 
 
 def b64u(value):
@@ -402,6 +403,7 @@ def ensure_session_schema():
         columns = {row[1] for row in con.execute("PRAGMA table_info(sessions)")}
         for name, definition in {
             "created_at": "INTEGER NOT NULL DEFAULT 0",
+            "last_seen": "INTEGER NOT NULL DEFAULT 0",
             "user_agent": "TEXT NOT NULL DEFAULT ''",
             "csrf_hash": "TEXT NOT NULL DEFAULT ''",
         }.items():
@@ -744,6 +746,29 @@ def cleanup_expired_auth_state(con, now):
     return removed
 
 
+def touch_browser_session(environ, now=None):
+    """Enforce a rolling idle timeout for browser sessions on every request."""
+    token = cookie(environ, COOKIE)
+    if not token:
+        return False
+    now = int(time.time() if now is None else now)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    with db() as con:
+        session = con.execute(
+            "SELECT last_seen,created_at FROM sessions WHERE token_hash=? AND expires_at>? AND revoked_at IS NULL",
+            (token_hash, now),
+        ).fetchone()
+        if not session:
+            return False
+        last_seen = int(session["last_seen"] or session["created_at"] or 0)
+        if last_seen <= 0 or now - last_seen >= SESSION_IDLE_TTL:
+            con.execute("UPDATE sessions SET revoked_at=? WHERE token_hash=? AND revoked_at IS NULL", (now, token_hash))
+            return False
+        if now - last_seen >= 60:
+            con.execute("UPDATE sessions SET last_seen=? WHERE token_hash=? AND revoked_at IS NULL", (now, token_hash))
+        return True
+
+
 def user_for_session(environ):
     token = cookie(environ, COOKIE)
     if not token:
@@ -1018,6 +1043,10 @@ def _app_impl(environ, start_response):
     if path in ("/", "/authorize", "/login", "/login/begin", "/login/totp", "/logout", "/account", "/recover", "/token", "/userinfo", "/session/introspect") or path.startswith("/recover/") or path.startswith("/admin/identity/") or path.startswith("/account/recovery-key/") or path.startswith("/account/recovery-email/") or path.startswith("/account/passkey/") or path.startswith("/account/totp/") or path.startswith("/contractor/"):
         if DB.is_file():
             ensure_session_schema()
+    # Rolling browser idle timeout. API clients that authenticate with bearer
+    # credentials remain governed by their explicit token/session expiry.
+    if cookie(environ, COOKIE) and path != "/logout":
+        touch_browser_session(environ)
     if path == "/healthz" and method == "GET":
         checks = readiness_checks()
         ready = all(status == "ok" for status in checks.values())
@@ -1034,11 +1063,11 @@ def _app_impl(environ, start_response):
         "/login/begin": (60, 300), "/login": (45, 300),
         "/token": (60, 60), "/session/introspect": (300, 60),
         "/contractor/register/start": (20, 3600), "/contractor/verify": (30, 300),
-        "/contractor/finish": (20, 300), "/recover/start": (20, 3600),
+        "/contractor/finish": (20, 300), "/recover/start": (10, 3600),
         "/admin/identity/search": (20, 300), "/admin/identity/delete": (8, 3600),
-        "/recover/verify": (30, 300), "/recover/totp-verify": (12, 300), "/recover/passkey-begin": (30, 300),
-        "/recover/passkey-check": (30, 300), "/recover/allow-reset": (20, 300),
-        "/recover/send-otp": (10, 3600), "/recover/finish": (20, 300),
+        "/recover/verify": (15, 300), "/recover/totp-verify": (8, 300), "/recover/passkey-begin": (20, 300),
+        "/recover/passkey-check": (20, 300), "/recover/allow-reset": (10, 300),
+        "/recover/send-otp": (5, 3600), "/recover/finish": (10, 300),
         "/account/recovery-email/start": (10, 3600), "/account/recovery-email/verify": (20, 300),
         "/account/recovery-key/begin": (20, 300), "/account/recovery-key/finish": (20, 300),
         "/account/passkey/add/begin": (20, 300), "/account/passkey/add/verify": (20, 300),
