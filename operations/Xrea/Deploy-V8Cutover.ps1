@@ -23,7 +23,7 @@ if ($Profile -eq 'License') {
     $files = @('http_utils.py','v3_handlers.py','native_v3.py','v2_handlers.py','openapi-catalog.json','api-catalog/openapi.json')
 }
 if ($Profile -eq 'LicenseV4') {
-    $files = @('v4_crypto.py','license_v4_storage.py','v3_handlers.py','native_v4.py','asgi.py',
+    $files = @('schema39_storage.py','v4_crypto.py','license_v4_storage.py','v3_handlers.py','native_v4.py','asgi.py',
         'native_routes.py','routes.json','ha_migrate.py','ha_export.py','ha_snapshot.py',
         'openapi-catalog.json','api-catalog/openapi.json','api/v4/activate.html')
 }

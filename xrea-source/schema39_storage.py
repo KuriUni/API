@@ -42,7 +42,9 @@ def load_plan():
 
 
 def validate(cursor, plan):
-    cursor.execute('SELECT TABLE_NAME,TABLE_TYPE FROM information_schema.tables WHERE table_schema=DATABASE()')
+    object_names = tuple(dict.fromkeys([*plan['tables'], *plan['views']]))
+    object_placeholders = ','.join(['%s'] * len(object_names))
+    cursor.execute('SELECT TABLE_NAME,TABLE_TYPE FROM information_schema.tables WHERE table_schema=DATABASE() AND TABLE_NAME IN (' + object_placeholders + ')', object_names)
     objects = {r['TABLE_NAME']: r['TABLE_TYPE'] for r in cursor.fetchall()}
     for name in plan['tables']:
         if objects.get(name) != 'BASE TABLE':
@@ -50,7 +52,9 @@ def validate(cursor, plan):
     for name in plan['views']:
         if objects.get(name) != 'VIEW':
             raise RuntimeError('storage_view_missing:'+name)
-    cursor.execute('SELECT TABLE_NAME,COLUMN_NAME FROM information_schema.columns WHERE table_schema=DATABASE() ORDER BY TABLE_NAME,ORDINAL_POSITION')
+    column_names = tuple(dict.fromkeys([*plan['physical_columns'], *plan['views']]))
+    column_placeholders = ','.join(['%s'] * len(column_names))
+    cursor.execute('SELECT TABLE_NAME,COLUMN_NAME FROM information_schema.columns WHERE table_schema=DATABASE() AND TABLE_NAME IN (' + column_placeholders + ') ORDER BY TABLE_NAME,ORDINAL_POSITION', column_names)
     columns = {}
     for row in cursor.fetchall():
         columns.setdefault(row['TABLE_NAME'], []).append(row['COLUMN_NAME'])
@@ -60,7 +64,9 @@ def validate(cursor, plan):
     for name, view in plan['views'].items():
         if columns.get(name, []) != view['columns']:
             raise RuntimeError('storage_projection_mismatch:'+name)
-    cursor.execute('SELECT TABLE_NAME,CHECK_OPTION,IS_UPDATABLE,SECURITY_TYPE FROM information_schema.views WHERE table_schema=DATABASE()')
+    view_names = tuple(plan['views'])
+    view_placeholders = ','.join(['%s'] * len(view_names))
+    cursor.execute('SELECT TABLE_NAME,CHECK_OPTION,IS_UPDATABLE,SECURITY_TYPE FROM information_schema.views WHERE table_schema=DATABASE() AND TABLE_NAME IN (' + view_placeholders + ')', view_names)
     found = set()
     for row in cursor.fetchall():
         if row['TABLE_NAME'] not in plan['views']:
