@@ -44,6 +44,7 @@ PBKDF2_ROUNDS = 310_000
 ADMIN_CLIENT_ID = "tuti-admin-portal"
 TENANT_CLIENT_ID = "tuti-tenant-portal"
 PASSKEY_RP_ID = "sso.2415.jp"
+SSO_DATABASE_SCHEMA_VERSION = 3
 
 
 def b64u(value):
@@ -326,6 +327,20 @@ def db():
 def ensure_session_schema():
     """Add session-management data without exposing the private SSO database."""
     with db() as con:
+        version = int(con.execute("PRAGMA user_version").fetchone()[0])
+        if version > SSO_DATABASE_SCHEMA_VERSION:
+            raise RuntimeError("database_schema_newer_than_provider")
+        if version == SSO_DATABASE_SCHEMA_VERSION:
+            return
+        # CGI may start several workers at once. Serialize the one-time migration,
+        # then recheck so waiters skip all schema inspection after the first commit.
+        con.execute("BEGIN IMMEDIATE")
+        version = int(con.execute("PRAGMA user_version").fetchone()[0])
+        if version == SSO_DATABASE_SCHEMA_VERSION:
+            con.commit()
+            return
+        if version > SSO_DATABASE_SCHEMA_VERSION:
+            raise RuntimeError("database_schema_newer_than_provider")
         user_columns = {row[1] for row in con.execute("PRAGMA table_info(users)")}
         for name, definition in {"public_id": "TEXT", "user_handle": "TEXT", "recovery_email_hash": "TEXT NOT NULL DEFAULT ''", "tenant_id": "TEXT NOT NULL DEFAULT ''"}.items():
             if name not in user_columns:
@@ -336,9 +351,11 @@ def ensure_session_schema():
             con.execute("UPDATE users SET public_id=COALESCE(NULLIF(public_id,''),?),user_handle=COALESCE(NULLIF(user_handle,''),?) WHERE id=?",
                         (new_public_id(), new_user_handle(), row["id"]))
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_public_id ON users(public_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_users_recovery_email_active ON users(recovery_email_hash,active,id)")
         con.execute("CREATE TABLE IF NOT EXISTS passkeys(credential_id TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,public_key TEXT NOT NULL,sign_count INTEGER NOT NULL DEFAULT 0,transports TEXT NOT NULL DEFAULT '[]',created_at INTEGER NOT NULL,last_used INTEGER)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkeys(user_id)")
         con.execute("CREATE TABLE IF NOT EXISTS passkey_flows(flow_hash TEXT PRIMARY KEY,user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,challenge TEXT NOT NULL,mode TEXT NOT NULL,expires_at INTEGER NOT NULL)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_passkey_flows_expiry ON passkey_flows(expires_at)")
         con.execute("CREATE TABLE IF NOT EXISTS totp_credentials(user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,secret_encrypted TEXT NOT NULL,enabled_at INTEGER NOT NULL,last_step INTEGER NOT NULL DEFAULT -1)")
         con.execute("CREATE TABLE IF NOT EXISTS totp_setup_flows(flow_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,csrf_hash TEXT NOT NULL,secret_encrypted TEXT NOT NULL,expires_at INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0)")
         con.execute("CREATE TABLE IF NOT EXISTS mfa_flows(login_flow_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0)")
@@ -354,12 +371,10 @@ def ensure_session_schema():
         if flow_columns.get("user_id") and flow_columns["user_id"][3]:
             # Flows are short-lived. Rebuild once so unknown IDs can receive the
             # same WebAuthn-shaped response as real IDs without a dummy account.
-            con.execute("BEGIN IMMEDIATE")
             flow_columns = {row[1]: row for row in con.execute("PRAGMA table_info(passkey_flows)")}
             if flow_columns.get("user_id") and flow_columns["user_id"][3]:
                 con.execute("DROP TABLE passkey_flows")
                 con.execute("CREATE TABLE passkey_flows(flow_hash TEXT PRIMARY KEY,user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,challenge TEXT NOT NULL,mode TEXT NOT NULL,expires_at INTEGER NOT NULL)")
-            con.commit()
         con.execute("CREATE TABLE IF NOT EXISTS recovery_keys(user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,key_hash TEXT NOT NULL,created_at INTEGER NOT NULL,used_at INTEGER,certificate_version INTEGER NOT NULL DEFAULT 0)")
         recovery_key_columns = {row[1] for row in con.execute("PRAGMA table_info(recovery_keys)")}
         if "certificate_version" not in recovery_key_columns:
@@ -370,9 +385,13 @@ def ensure_session_schema():
             if name not in recovery_columns:
                 con.execute("ALTER TABLE recovery_flows ADD COLUMN %s %s" % (name, definition))
         con.execute("CREATE INDEX IF NOT EXISTS idx_recovery_flows_expiry ON recovery_flows(expires_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_recovery_flows_user ON recovery_flows(user_id)")
         con.execute("CREATE TABLE IF NOT EXISTS recovery_limits(user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_sent_at INTEGER NOT NULL DEFAULT 0,window_started INTEGER NOT NULL DEFAULT 0,sends INTEGER NOT NULL DEFAULT 0,attempt_window INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0,locked_until INTEGER NOT NULL DEFAULT 0)")
         con.execute("CREATE TABLE IF NOT EXISTS recovery_email_setup(flow_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,csrf_hash TEXT NOT NULL,email_hash TEXT NOT NULL,code_salt TEXT NOT NULL,code_hash TEXT NOT NULL,expires_at INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_recovery_email_setup_expiry ON recovery_email_setup(expires_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_recovery_email_setup_user ON recovery_email_setup(user_id)")
         con.execute("CREATE TABLE IF NOT EXISTS contractor_invites(flow_hash TEXT PRIMARY KEY,email_lookup TEXT NOT NULL,email_encrypted TEXT NOT NULL,public_id TEXT NOT NULL,user_handle TEXT NOT NULL,code_salt TEXT NOT NULL,code_hash TEXT NOT NULL,expires_at INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,verified_at INTEGER,passkey_challenge TEXT,created_at INTEGER NOT NULL)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_contractor_invites_expiry ON contractor_invites(expires_at)")
         invite_columns = {row[1] for row in con.execute("PRAGMA table_info(contractor_invites)")}
         if "tenant_id" not in invite_columns:
             con.execute("ALTER TABLE contractor_invites ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''")
@@ -392,9 +411,21 @@ def ensure_session_schema():
                     if "duplicate column name" not in str(error).lower():
                         raise
         con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_active ON sessions(user_id,revoked_at,expires_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_created_active ON sessions(user_id,revoked_at,created_at DESC,expires_at)")
         con.execute("CREATE TABLE IF NOT EXISTS security_rate_limits(rate_key TEXT PRIMARY KEY,window_started INTEGER NOT NULL,attempts INTEGER NOT NULL)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_security_rate_limits_window ON security_rate_limits(window_started)")
+        con.execute("CREATE TABLE IF NOT EXISTS database_maintenance(task TEXT PRIMARY KEY,last_run INTEGER NOT NULL)")
         con.execute("CREATE TABLE IF NOT EXISTS sso_admin_identity_audit(event_id TEXT PRIMARY KEY,actor_user_id INTEGER NOT NULL,action TEXT NOT NULL,target_hash TEXT NOT NULL,success INTEGER NOT NULL,created_at INTEGER NOT NULL)")
+        for table, index_name, columns in (
+            ("login_flows", "idx_login_flows_expiry", "expires_at"),
+            ("auth_codes", "idx_auth_codes_expiry", "expires_at"),
+            ("auth_codes", "idx_auth_codes_consumed", "consumed_at"),
+            ("access_tokens", "idx_access_tokens_expiry", "expires_at"),
+            ("sessions", "idx_sessions_expiry", "expires_at"),
+            ("sessions", "idx_sessions_revoked", "revoked_at"),
+            ("login_limits", "idx_login_limits_cleanup", "window_started,locked_until"),
+        ):
+            con.execute("CREATE INDEX IF NOT EXISTS %s ON %s(%s)" % (index_name, table, columns))
         for table in ("auth_codes", "access_tokens"):
             table_columns = {row[1] for row in con.execute("PRAGMA table_info(" + table + ")")}
             if "sid_hash" not in table_columns:
@@ -425,6 +456,8 @@ def ensure_session_schema():
                 "SELECT ?,redirect_uri FROM client_redirect_uris WHERE client_id=?",
                 (TENANT_CLIENT_ID, ADMIN_CLIENT_ID),
             )
+        con.execute("PRAGMA user_version=%d" % SSO_DATABASE_SCHEMA_VERSION)
+        con.commit()
 
 
 def key_ready():
@@ -641,7 +674,16 @@ def consume_security_rate_limit(key, maximum, window_seconds, now=None):
 def consume_security_rate_limit_in_transaction(con, key, maximum, window_seconds, now=None):
     """Consume a limit inside a caller's existing BEGIN IMMEDIATE transaction."""
     now = int(time.time()) if now is None else int(now)
-    con.execute("DELETE FROM security_rate_limits WHERE window_started<?", (now - 86400,))
+    maintenance = con.execute(
+        "SELECT last_run FROM database_maintenance WHERE task='security_rate_limits'"
+    ).fetchone()
+    if not maintenance or int(maintenance["last_run"]) <= now - 3600:
+        con.execute("DELETE FROM security_rate_limits WHERE window_started<?", (now - 86400,))
+        con.execute(
+            "INSERT INTO database_maintenance(task,last_run) VALUES('security_rate_limits',?) "
+            "ON CONFLICT(task) DO UPDATE SET last_run=excluded.last_run",
+            (now,),
+        )
     row = con.execute("SELECT window_started,attempts FROM security_rate_limits WHERE rate_key=?", (key,)).fetchone()
     if row and int(row["window_started"]) + window_seconds > now and int(row["attempts"]) >= maximum:
         return False
@@ -650,6 +692,43 @@ def consume_security_rate_limit_in_transaction(con, key, maximum, window_seconds
     else:
         con.execute("UPDATE security_rate_limits SET attempts=attempts+1 WHERE rate_key=?", (key,))
     return True
+
+
+def cleanup_expired_auth_state(con, now):
+    """Sweep short-lived auth rows periodically instead of locking on every authorize request."""
+    maintenance = con.execute(
+        "SELECT last_run FROM database_maintenance WHERE task='expired_auth_state'"
+    ).fetchone()
+    if maintenance and int(maintenance["last_run"]) > now - 300:
+        return 0
+    con.execute("BEGIN IMMEDIATE")
+    maintenance = con.execute(
+        "SELECT last_run FROM database_maintenance WHERE task='expired_auth_state'"
+    ).fetchone()
+    if maintenance and int(maintenance["last_run"]) > now - 300:
+        con.commit()
+        return 0
+    removed = 0
+    for statement, parameters in (
+        ("DELETE FROM login_flows WHERE expires_at<=?", (now,)),
+        ("DELETE FROM passkey_flows WHERE expires_at<=?", (now,)),
+        ("DELETE FROM registration_onboarding WHERE expires_at<=?", (now,)),
+        ("DELETE FROM auth_codes WHERE expires_at<=? OR consumed_at IS NOT NULL AND consumed_at<?", (now, now - 3600)),
+        ("DELETE FROM access_tokens WHERE expires_at<=?", (now,)),
+        ("DELETE FROM sessions WHERE expires_at<=? OR revoked_at IS NOT NULL", (now,)),
+        ("DELETE FROM login_limits WHERE window_started<? AND locked_until<?", (now - 86400, now)),
+        ("DELETE FROM recovery_flows WHERE expires_at<=?", (now,)),
+        ("DELETE FROM recovery_email_setup WHERE expires_at<=?", (now,)),
+        ("DELETE FROM contractor_invites WHERE expires_at<=?", (now,)),
+    ):
+        removed += con.execute(statement, parameters).rowcount
+    con.execute(
+        "INSERT INTO database_maintenance(task,last_run) VALUES('expired_auth_state',?) "
+        "ON CONFLICT(task) DO UPDATE SET last_run=excluded.last_run",
+        (now,),
+    )
+    con.commit()
+    return removed
 
 
 def user_for_session(environ):
@@ -926,8 +1005,6 @@ def app(environ, start_response):
     if path in ("/", "/authorize", "/login", "/login/begin", "/login/totp", "/logout", "/account", "/recover", "/token", "/userinfo", "/session/introspect") or path.startswith("/recover/") or path.startswith("/admin/identity/") or path.startswith("/account/recovery-key/") or path.startswith("/account/recovery-email/") or path.startswith("/account/passkey/") or path.startswith("/account/totp/") or path.startswith("/contractor/"):
         if DB.is_file():
             ensure_session_schema()
-    if path in ("/", "/authorize", "/login", "/logout", "/account") and DB.is_file():
-        ensure_session_schema()
     if path == "/healthz" and method == "GET":
         checks = readiness_checks()
         ready = all(status == "ok" for status in checks.values())
@@ -997,7 +1074,6 @@ def app(environ, start_response):
             salt = secrets.token_bytes(16)
             code_hash = hmac.new(EMAIL_KEY.read_bytes()[:32], b"sso-contractor-invite-v1|" + salt + flow_hash.encode("ascii") + code.encode("ascii"), hashlib.sha256).hexdigest()
             with db() as con:
-                con.execute("DELETE FROM contractor_invites WHERE expires_at<=?", (now,))
                 con.execute("DELETE FROM contractor_invites WHERE email_lookup=?", (lookup,))
                 con.execute("INSERT INTO contractor_invites(flow_hash,email_lookup,email_encrypted,public_id,user_handle,code_salt,code_hash,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
                             (flow_hash, lookup, encrypt_private_value(address, "email"), new_public_id(), new_user_handle(), salt.hex(), code_hash, now + 86400, now))
@@ -1034,7 +1110,6 @@ def app(environ, start_response):
                 if previous and now - int(previous["created_at"]) < 60:
                     return json_response(start_response, "429 Too Many Requests", {"error":"invite_rate_limited"})
                 public_id = new_public_id()
-                con.execute("DELETE FROM contractor_invites WHERE expires_at<=?", (now,))
                 con.execute("DELETE FROM contractor_invites WHERE email_lookup=?", (lookup,))
                 con.execute("INSERT INTO contractor_invites(flow_hash,email_lookup,email_encrypted,public_id,user_handle,code_salt,code_hash,expires_at,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
                             (flow_hash, lookup, encrypt_private_value(address, "email"), public_id, new_user_handle(), salt.hex(), code_hash, now + 86400, now, tenant_id))
@@ -1221,7 +1296,7 @@ def app(environ, start_response):
                 if limit and (limit["locked_until"]>now or now-limit["last_sent_at"]<60 or sends>=3): con.rollback(); return json_response(start_response,"429 Too Many Requests",{"error":"recovery_rate_limited","message":"時間をおいてから再度お試しください。"})
                 con.execute("INSERT OR REPLACE INTO recovery_limits(user_id,last_sent_at,window_started,sends,attempt_window,attempts,locked_until) VALUES(?,?,?,?,?,?,?)",(current["user_id"],now,window,sends+1,now,0,0)); con.commit()
                 flow=b64u(secrets.token_bytes(32)); flow_hash=hashlib.sha256(flow.encode()).hexdigest(); code="%08d"%secrets.randbelow(100000000); salt=secrets.token_bytes(16)
-                con.execute("DELETE FROM recovery_email_setup WHERE user_id=? OR expires_at<=?",(current["user_id"],now)); con.execute("INSERT INTO recovery_email_setup(flow_hash,user_id,csrf_hash,email_hash,code_salt,code_hash,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)",(flow_hash,current["user_id"],hashlib.sha256(f.get("csrf","").encode()).hexdigest(),email_lookup(address),salt.hex(),recovery_code_hash(flow_hash,salt,code),now+600,now))
+                con.execute("DELETE FROM recovery_email_setup WHERE user_id=?",(current["user_id"],)); con.execute("INSERT INTO recovery_email_setup(flow_hash,user_id,csrf_hash,email_hash,code_salt,code_hash,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)",(flow_hash,current["user_id"],hashlib.sha256(f.get("csrf","").encode()).hexdigest(),email_lookup(address),salt.hex(),recovery_code_hash(flow_hash,salt,code),now+600,now))
             if not send_recovery_code(address,code):
                 with db() as con: con.execute("DELETE FROM recovery_email_setup WHERE flow_hash=?",(flow_hash,))
                 return json_response(start_response,"503 Service Unavailable",{"error":"mail_unavailable","message":"メールを送信できませんでした。"})
@@ -1299,7 +1374,7 @@ def app(environ, start_response):
                 if certificate_hash and stored_certificate and hmac.compare_digest(certificate_hash,stored_certificate["key_hash"]):
                     con.rollback(); return json_response(start_response,"200 OK",{"ok":True,"hasPasskey":False,"certificateAccepted":True},[("Cache-Control","no-store")])
                 challenge=b64u(secrets.token_bytes(32))
-                con.execute("DELETE FROM recovery_flows WHERE user_id=? OR expires_at<=?",(user["id"],now))
+                con.execute("DELETE FROM recovery_flows WHERE user_id=?",(user["id"],))
                 con.execute("INSERT INTO recovery_flows(flow_hash,user_id,csrf_hash,code_salt,code_hash,expires_at,created_at,email_hash,existing_challenge,passkey_check_status) VALUES(?,?,?,?,?,?,?,?,?,'pending')",(flow_hash,user["id"],hashlib.sha256(csrf.encode()).hexdigest(),salt.hex(),"",now+600,now,"",challenge))
                 con.commit()
             options={"challenge":challenge,"rpId":PASSKEY_RP_ID,"timeout":120000,"userVerification":"required","allowCredentials":[{"type":"public-key","id":k["credential_id"],"transports":json.loads(k["transports"] or "[]")} for k in keys]}
@@ -1344,7 +1419,7 @@ def app(environ, start_response):
                 existing_keys = con.execute("SELECT credential_id,transports FROM passkeys WHERE user_id=?", (user["id"],)).fetchall()
                 if existing_keys and not certificate_valid:
                     existing_challenge = b64u(secrets.token_bytes(32))
-                    con.execute("DELETE FROM recovery_flows WHERE user_id=? OR expires_at<=?", (user["id"],now))
+                    con.execute("DELETE FROM recovery_flows WHERE user_id=?", (user["id"],))
                     con.execute("INSERT INTO recovery_flows(flow_hash,user_id,csrf_hash,code_salt,code_hash,expires_at,created_at,email_hash,existing_challenge,passkey_check_status) VALUES(?,?,?,?,?,?,?,?,?,'pending')", (flow_hash,user["id"],hashlib.sha256(csrf.encode()).hexdigest(),salt.hex(),"",now+600,now,address_hash,existing_challenge))
                     con.execute("UPDATE recovery_flows SET certificate_hash=? WHERE flow_hash=?", (certificate_hash if certificate_valid else "", flow_hash))
                     con.commit()
@@ -1356,7 +1431,7 @@ def app(environ, start_response):
                 if limit and (limit["locked_until"]>now or now-limit["last_sent_at"]<60 or sends>=3):
                     con.rollback(); return json_response(start_response, "429 Too Many Requests", {"error":"recovery_rate_limited","message":"時間をおいてから再度お試しください。"})
                 con.execute("INSERT OR REPLACE INTO recovery_limits(user_id,last_sent_at,window_started,sends,attempt_window,attempts,locked_until) VALUES(?,?,?,?,?,?,?)", (user["id"],now,window,sends+1,now,0,0))
-                con.execute("DELETE FROM recovery_flows WHERE user_id=? OR expires_at<=?", (user["id"],now))
+                con.execute("DELETE FROM recovery_flows WHERE user_id=?", (user["id"],))
                 con.execute("INSERT INTO recovery_flows(flow_hash,user_id,csrf_hash,code_salt,code_hash,expires_at,created_at,email_hash,passkey_check_status,certificate_hash) VALUES(?,?,?,?,?,?,?,?,'not_required',?)", (flow_hash,user["id"],hashlib.sha256(csrf.encode()).hexdigest(),salt.hex(),recovery_code_hash(flow_hash,salt,code),now+600,now,address_hash,certificate_hash if certificate_valid else "")); con.commit()
             if not send_recovery_code(address, code):
                 with db() as con: con.execute("DELETE FROM recovery_flows WHERE flow_hash=?",(flow_hash,))
@@ -1540,13 +1615,7 @@ def app(environ, start_response):
         p = query(environ)
         with db() as con:
             now = int(time.time())
-            con.execute("DELETE FROM login_flows WHERE expires_at<=?", (now,))
-            con.execute("DELETE FROM passkey_flows WHERE expires_at<=?", (now,))
-            con.execute("DELETE FROM registration_onboarding WHERE expires_at<=?", (now,))
-            con.execute("DELETE FROM auth_codes WHERE expires_at<=? OR consumed_at IS NOT NULL AND consumed_at<?", (now, now - 3600))
-            con.execute("DELETE FROM access_tokens WHERE expires_at<=?", (now,))
-            con.execute("DELETE FROM sessions WHERE expires_at<=? OR revoked_at IS NOT NULL", (now,))
-            con.execute("DELETE FROM login_limits WHERE window_started<? AND locked_until<?", (now - 86400, now))
+            cleanup_expired_auth_state(con, now)
             client, error = valid_authorize(p, con)
             if error:
                 return json_response(start_response, "400 Bad Request", {"error": error})
@@ -1581,7 +1650,6 @@ def app(environ, start_response):
                 flow = con.execute("SELECT csrf_hash FROM login_flows WHERE flow_hash=? AND expires_at>?", (flow_hash, int(time.time()))).fetchone()
                 if not flow or not hmac.compare_digest(flow["csrf_hash"], hashlib.sha256(f.get("csrf", "").encode()).hexdigest()):
                     return json_response(start_response, "400 Bad Request", {"error": "invalid_login_flow"})
-                con.execute("DELETE FROM passkey_flows WHERE expires_at<=?", (int(time.time()),))
                 public_id = f.get("public_id", "").strip().upper()
                 if public_id and not re.fullmatch(r"SID-[A-Z2-7]{26}", public_id):
                     return json_response(start_response, "401 Unauthorized", {"error": "invalid_credentials", "message": "認証できませんでした。入力内容を確認してください。"})
@@ -1903,7 +1971,6 @@ def app(environ, start_response):
                     return json_response(start_response, "409 Conflict", {"error": "passkey_required", "message": "追加登録には、先に現在のパスキーを登録してください。"})
                 if len(keys) >= 5:
                     return json_response(start_response, "409 Conflict", {"error": "passkey_limit_reached", "message": "登録できるパスキーは5件までです。"})
-                con.execute("DELETE FROM passkey_flows WHERE expires_at<=?", (now,))
                 con.execute("INSERT OR REPLACE INTO passkey_flows(flow_hash,user_id,challenge,mode,expires_at) VALUES(?,?,?,?,?)", (hashlib.sha256(flow.encode()).hexdigest(), current["user_id"], challenge, "manage_add_assert", now + 300))
                 options = {"challenge": challenge, "rpId": PASSKEY_RP_ID, "timeout": 120000, "userVerification": "required", "allowCredentials": [{"type": "public-key", "id": row["credential_id"], "transports": json.loads(row["transports"] or "[]")} for row in keys]}
             return json_response(start_response, "200 OK", {"ok": True, "flow": flow, "publicKey": options}, [("Cache-Control", "no-store")])
@@ -1992,7 +2059,6 @@ def app(environ, start_response):
                 keys=con.execute("SELECT credential_id,transports FROM passkeys WHERE user_id=? ORDER BY created_at",(current["user_id"],)).fetchall()
                 if not keys:
                     con.rollback(); return json_response(start_response,"409 Conflict",{"error":"passkey_required","message":"設定には登録済みパスキーが必要です。"})
-                con.execute("DELETE FROM passkey_flows WHERE expires_at<=?",(now,))
                 con.execute("INSERT INTO passkey_flows(flow_hash,user_id,challenge,mode,expires_at) VALUES(?,?,?,?,?)",(hashlib.sha256(flow.encode()).hexdigest(),current["user_id"],challenge,"totp_setup_assert",now+300))
                 options={"challenge":challenge,"rpId":PASSKEY_RP_ID,"timeout":120000,"userVerification":"required","allowCredentials":[{"type":"public-key","id":row["credential_id"],"transports":json.loads(row["transports"] or "[]")} for row in keys]}
                 con.commit()
