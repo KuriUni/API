@@ -27,8 +27,9 @@ def migrate(request_context):
         else:
             from schema39_storage import run_migrations as current_migrations
             payload = current_migrations(connection)
-        from product_key_v8_storage import ensure_schema as ensure_v8_issuance_schema
-        payload['product_key_issuance_v8'] = ensure_v8_issuance_schema(connection)
+        if scope != 'license_v4':
+            from product_key_v8_storage import ensure_schema as ensure_v8_issuance_schema
+            payload['product_key_issuance_v8'] = ensure_v8_issuance_schema(connection)
         return _response('200 OK', json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
     except RequestError:
         return _response('400 Bad Request', b'{"ok":false,"error":"invalid_request"}')
