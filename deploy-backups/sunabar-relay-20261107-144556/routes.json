@@ -987,6 +987,36 @@
       "path": "/api/sunabar/v1/health.php",
       "access": "endpoint_or_include",
       "native_only": true
+    },
+    {
+      "path": "/api/sunabar/v1/license-list.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/sunabar/v1/license-revoke.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/sunabar/v1/activate.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/sunabar/v1/session-check.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/sunabar/v1/session-refresh.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/sunabar/v1/session-deactivate.php",
+      "access": "endpoint_or_include",
+      "native_only": true
     }
   ]
 }

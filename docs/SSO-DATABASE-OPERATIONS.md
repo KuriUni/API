@@ -1,17 +1,17 @@
-# SSO SQLite database operations
+# SSO認証データベースの運用
 
-The SSO provider stores its database in the private `SSO_DATA_DIR` directory. Keep the database and signing/email keys outside the public document root.
+SSO Coreはデータベースを非公開の `SSO_DATA_DIR` に保存します。データベース、署名鍵、メール用秘密情報を公開ディレクトリへ置かないでください。
 
-## Schema upgrades
+## スキーマ更新
 
-`server.py` stores the provider schema version in SQLite `PRAGMA user_version`. The first request after an upgrade acquires a write lock, applies schema changes in one transaction, then advances the version. Concurrent CGI requests wait for that migration and recheck the version before continuing. Normal requests skip table and index inspection. Increment `SSO_DATABASE_SCHEMA_VERSION` whenever a future release changes this schema; do not reuse an existing version number.
+`server.py` はSQLiteの `PRAGMA user_version` でスキーマ版を管理します。更新後の最初の要求が書き込みロックを取得し、スキーマ変更を一つのトランザクションで適用してから版を進めます。同時に到着したCGI要求は移行完了を待ち、版を再確認します。通常の要求ではテーブルやインデックスの再検査を行いません。今後スキーマを変更するときは `SSO_DATABASE_SCHEMA_VERSION` を増やし、過去に使った番号を再利用しないでください。
 
-The recovery-email lookup index covers the newly added hash and active-user filter. The session list index matches the account page's user/revocation filters and newest-first ordering; the existing active-session index remains for other session lookups. Expiry indexes let the periodic cleanup find stale rows without scanning the full temporary-flow tables, and user indexes keep targeted flow replacement efficient.
+回復用メールアドレスの検索には、ハッシュ値と有効ユーザー条件に対応するインデックスを使います。セッション一覧にはアカウント画面のユーザー・失効条件と新しい順の並びに合うインデックスを追加し、他の検索向け既存インデックスも維持しています。有効期限とユーザーのインデックスにより、期限切れ状態の整理や対象ユーザーのフロー置換で一時テーブル全体を走査しにくくしています。
 
-## Expired authentication state
+## 期限切れ認証データの整理
 
-`/authorize` removes expired login flows, passkey flows, onboarding state, codes, access tokens, sessions, login limits, recovery flows, email-setup flows, and contractor invites at most once every five minutes. Expired security rate-limit rows are swept hourly. Authentication queries still enforce each record's expiry on every request; cleanup timing does not extend a credential, flow, or session's validity. Sweeps run in short serialized transactions and record their last run in `database_maintenance`. Per-request flow creation no longer repeats global expiry sweeps; targeted user/address cleanup remains indexed.
+`/authorize` は、ログイン・パスキーのフロー、初期設定状態、コード、アクセストークン、セッション、ログイン制限、回復・メール設定フロー、契約者招待の期限切れ行を、最短5分間隔で整理します。セキュリティ用レート制限の期限切れ行は1時間間隔です。認証時には各レコードの期限を毎回検査するため、整理間隔によって資格情報やフロー、セッションの有効期間が延びることはありません。整理は短い直列トランザクションで実行し、最終実行時刻を `database_maintenance` に記録します。フロー作成要求ごとの全件整理は行わず、対象ユーザー・アドレスの整理にはインデックスを使用します。
 
-## Backup handling
+## バックアップ
 
-Back up the private data directory using SQLite-aware backup or snapshot tooling. If WAL mode is enabled in a future change, include the live database through SQLite's backup API rather than copying only the main database file.
+非公開データディレクトリは、SQLiteに対応したバックアップまたはスナップショット手段で保全してください。将来WALモードを有効にする場合は、メインDBファイルだけをコピーせず、SQLiteのバックアップAPIで稼働中のデータベースを取得してください。

@@ -16,6 +16,7 @@ ARTICLES = [
     ("tools/POWERSHELL-OPERATIONS.md", "Xrea-Operations", "operations"),
     ("docs/SSO-CONTRACTOR-INVITE.md", "BaaS-Contractor", "authentication"),
     ("docs/SSO-HEALTH-READINESS.md", "SSO-INITIAL-SETUP", "operations"),
+    ("docs/SSO-DATABASE-OPERATIONS.md", "sso-service", "database"),
     ("docs/PRODUCT-KEY-ISSUANCE-V8.md", "BaaS-Contractor", "api"),
     ("docs/MNSL-SSO-ISSUE-HELP.md", "MyNumberSmartLogin", "operations"),
 ]

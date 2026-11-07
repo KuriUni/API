@@ -19,6 +19,7 @@ RewriteRule ^vendor(?:/|$) - [F,L,NC]
 
 # Map extensionless API paths to the Python CGI entry point.
 RewriteRule ^api/v1/(key|products|licenses(?:/(?:list|revoke))?|verify|healthz)/?$ api.cgi/api/v1/$1 [QSA,L,NC]
+RewriteRule ^api/v1/(activate|session/(?:check|refresh|deactivate))/?$ api.cgi/api/v1/$1 [QSA,L,NC]
 
 <IfModule mod_headers.c>
 Header always set X-Content-Type-Options "nosniff"

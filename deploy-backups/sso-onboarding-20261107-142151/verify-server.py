@@ -44,6 +44,7 @@ PBKDF2_ROUNDS = 310_000
 ADMIN_CLIENT_ID = "tuti-admin-portal"
 TENANT_CLIENT_ID = "tuti-tenant-portal"
 PASSKEY_RP_ID = "sso.2415.jp"
+SSO_DATABASE_SCHEMA_VERSION = 3
 
 
 def b64u(value):
@@ -326,6 +327,20 @@ def db():
 def ensure_session_schema():
     """Add session-management data without exposing the private SSO database."""
     with db() as con:
+        version = int(con.execute("PRAGMA user_version").fetchone()[0])
+        if version > SSO_DATABASE_SCHEMA_VERSION:
+            raise RuntimeError("database_schema_newer_than_provider")
+        if version == SSO_DATABASE_SCHEMA_VERSION:
+            return
+        # CGI may start several workers at once. Serialize the one-time migration,
+        # then recheck so waiters skip all schema inspection after the first commit.
+        con.execute("BEGIN IMMEDIATE")
+        version = int(con.execute("PRAGMA user_version").fetchone()[0])
+        if version == SSO_DATABASE_SCHEMA_VERSION:
+            con.commit()
+            return
+        if version > SSO_DATABASE_SCHEMA_VERSION:
+            raise RuntimeError("database_schema_newer_than_provider")
         user_columns = {row[1] for row in con.execute("PRAGMA table_info(users)")}
         for name, definition in {"public_id": "TEXT", "user_handle": "TEXT", "recovery_email_hash": "TEXT NOT NULL DEFAULT ''", "tenant_id": "TEXT NOT NULL DEFAULT ''"}.items():
             if name not in user_columns:
@@ -336,9 +351,11 @@ def ensure_session_schema():
             con.execute("UPDATE users SET public_id=COALESCE(NULLIF(public_id,''),?),user_handle=COALESCE(NULLIF(user_handle,''),?) WHERE id=?",
                         (new_public_id(), new_user_handle(), row["id"]))
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_public_id ON users(public_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_users_recovery_email_active ON users(recovery_email_hash,active,id)")
         con.execute("CREATE TABLE IF NOT EXISTS passkeys(credential_id TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,public_key TEXT NOT NULL,sign_count INTEGER NOT NULL DEFAULT 0,transports TEXT NOT NULL DEFAULT '[]',created_at INTEGER NOT NULL,last_used INTEGER)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkeys(user_id)")
         con.execute("CREATE TABLE IF NOT EXISTS passkey_flows(flow_hash TEXT PRIMARY KEY,user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,challenge TEXT NOT NULL,mode TEXT NOT NULL,expires_at INTEGER NOT NULL)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_passkey_flows_expiry ON passkey_flows(expires_at)")
         con.execute("CREATE TABLE IF NOT EXISTS totp_credentials(user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,secret_encrypted TEXT NOT NULL,enabled_at INTEGER NOT NULL,last_step INTEGER NOT NULL DEFAULT -1)")
         con.execute("CREATE TABLE IF NOT EXISTS totp_setup_flows(flow_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,csrf_hash TEXT NOT NULL,secret_encrypted TEXT NOT NULL,expires_at INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0)")
         con.execute("CREATE TABLE IF NOT EXISTS mfa_flows(login_flow_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0)")
@@ -354,12 +371,10 @@ def ensure_session_schema():
         if flow_columns.get("user_id") and flow_columns["user_id"][3]:
             # Flows are short-lived. Rebuild once so unknown IDs can receive the
             # same WebAuthn-shaped response as real IDs without a dummy account.
-            con.execute("BEGIN IMMEDIATE")
             flow_columns = {row[1]: row for row in con.execute("PRAGMA table_info(passkey_flows)")}
             if flow_columns.get("user_id") and flow_columns["user_id"][3]:
                 con.execute("DROP TABLE passkey_flows")
                 con.execute("CREATE TABLE passkey_flows(flow_hash TEXT PRIMARY KEY,user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,challenge TEXT NOT NULL,mode TEXT NOT NULL,expires_at INTEGER NOT NULL)")
-            con.commit()
         con.execute("CREATE TABLE IF NOT EXISTS recovery_keys(user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,key_hash TEXT NOT NULL,created_at INTEGER NOT NULL,used_at INTEGER,certificate_version INTEGER NOT NULL DEFAULT 0)")
         recovery_key_columns = {row[1] for row in con.execute("PRAGMA table_info(recovery_keys)")}
         if "certificate_version" not in recovery_key_columns:
@@ -370,9 +385,13 @@ def ensure_session_schema():
             if name not in recovery_columns:
                 con.execute("ALTER TABLE recovery_flows ADD COLUMN %s %s" % (name, definition))
         con.execute("CREATE INDEX IF NOT EXISTS idx_recovery_flows_expiry ON recovery_flows(expires_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_recovery_flows_user ON recovery_flows(user_id)")
         con.execute("CREATE TABLE IF NOT EXISTS recovery_limits(user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,last_sent_at INTEGER NOT NULL DEFAULT 0,window_started INTEGER NOT NULL DEFAULT 0,sends INTEGER NOT NULL DEFAULT 0,attempt_window INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0,locked_until INTEGER NOT NULL DEFAULT 0)")
         con.execute("CREATE TABLE IF NOT EXISTS recovery_email_setup(flow_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,csrf_hash TEXT NOT NULL,email_hash TEXT NOT NULL,code_salt TEXT NOT NULL,code_hash TEXT NOT NULL,expires_at INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_recovery_email_setup_expiry ON recovery_email_setup(expires_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_recovery_email_setup_user ON recovery_email_setup(user_id)")
         con.execute("CREATE TABLE IF NOT EXISTS contractor_invites(flow_hash TEXT PRIMARY KEY,email_lookup TEXT NOT NULL,email_encrypted TEXT NOT NULL,public_id TEXT NOT NULL,user_handle TEXT NOT NULL,code_salt TEXT NOT NULL,code_hash TEXT NOT NULL,expires_at INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,verified_at INTEGER,passkey_challenge TEXT,created_at INTEGER NOT NULL)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_contractor_invites_expiry ON contractor_invites(expires_at)")
         invite_columns = {row[1] for row in con.execute("PRAGMA table_info(contractor_invites)")}
         if "tenant_id" not in invite_columns:
             con.execute("ALTER TABLE contractor_invites ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''")
@@ -392,9 +411,21 @@ def ensure_session_schema():
                     if "duplicate column name" not in str(error).lower():
                         raise
         con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_active ON sessions(user_id,revoked_at,expires_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_created_active ON sessions(user_id,revoked_at,created_at DESC,expires_at)")
         con.execute("CREATE TABLE IF NOT EXISTS security_rate_limits(rate_key TEXT PRIMARY KEY,window_started INTEGER NOT NULL,attempts INTEGER NOT NULL)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_security_rate_limits_window ON security_rate_limits(window_started)")
+        con.execute("CREATE TABLE IF NOT EXISTS database_maintenance(task TEXT PRIMARY KEY,last_run INTEGER NOT NULL)")
         con.execute("CREATE TABLE IF NOT EXISTS sso_admin_identity_audit(event_id TEXT PRIMARY KEY,actor_user_id INTEGER NOT NULL,action TEXT NOT NULL,target_hash TEXT NOT NULL,success INTEGER NOT NULL,created_at INTEGER NOT NULL)")
+        for table, index_name, columns in (
+            ("login_flows", "idx_login_flows_expiry", "expires_at"),
+            ("auth_codes", "idx_auth_codes_expiry", "expires_at"),
+            ("auth_codes", "idx_auth_codes_consumed", "consumed_at"),
+            ("access_tokens", "idx_access_tokens_expiry", "expires_at"),
+            ("sessions", "idx_sessions_expiry", "expires_at"),
+            ("sessions", "idx_sessions_revoked", "revoked_at"),
+            ("login_limits", "idx_login_limits_cleanup", "window_started,locked_until"),
+        ):
+            con.execute("CREATE INDEX IF NOT EXISTS %s ON %s(%s)" % (index_name, table, columns))
         for table in ("auth_codes", "access_tokens"):
             table_columns = {row[1] for row in con.execute("PRAGMA table_info(" + table + ")")}
             if "sid_hash" not in table_columns:
@@ -425,6 +456,8 @@ def ensure_session_schema():
                 "SELECT ?,redirect_uri FROM client_redirect_uris WHERE client_id=?",
                 (TENANT_CLIENT_ID, ADMIN_CLIENT_ID),
             )
+        con.execute("PRAGMA user_version=%d" % SSO_DATABASE_SCHEMA_VERSION)
+        con.commit()
 
 
 def key_ready():
@@ -641,7 +674,16 @@ def consume_security_rate_limit(key, maximum, window_seconds, now=None):
 def consume_security_rate_limit_in_transaction(con, key, maximum, window_seconds, now=None):
     """Consume a limit inside a caller's existing BEGIN IMMEDIATE transaction."""
     now = int(time.time()) if now is None else int(now)
-    con.execute("DELETE FROM security_rate_limits WHERE window_started<?", (now - 86400,))
+    maintenance = con.execute(
+        "SELECT last_run FROM database_maintenance WHERE task='security_rate_limits'"
+    ).fetchone()
+    if not maintenance or int(maintenance["last_run"]) <= now - 3600:
+        con.execute("DELETE FROM security_rate_limits WHERE window_started<?", (now - 86400,))
+        con.execute(
+            "INSERT INTO database_maintenance(task,last_run) VALUES('security_rate_limits',?) "
+            "ON CONFLICT(task) DO UPDATE SET last_run=excluded.last_run",
+            (now,),
+        )
     row = con.execute("SELECT window_started,attempts FROM security_rate_limits WHERE rate_key=?", (key,)).fetchone()
     if row and int(row["window_started"]) + window_seconds > now and int(row["attempts"]) >= maximum:
         return False
@@ -650,6 +692,43 @@ def consume_security_rate_limit_in_transaction(con, key, maximum, window_seconds
     else:
         con.execute("UPDATE security_rate_limits SET attempts=attempts+1 WHERE rate_key=?", (key,))
     return True
+
+
+def cleanup_expired_auth_state(con, now):
+    """Sweep short-lived auth rows periodically instead of locking on every authorize request."""
+    maintenance = con.execute(
+        "SELECT last_run FROM database_maintenance WHERE task='expired_auth_state'"
+    ).fetchone()
+    if maintenance and int(maintenance["last_run"]) > now - 300:
+        return 0
+    con.execute("BEGIN IMMEDIATE")
+    maintenance = con.execute(
+        "SELECT last_run FROM database_maintenance WHERE task='expired_auth_state'"
+    ).fetchone()
+    if maintenance and int(maintenance["last_run"]) > now - 300:
+        con.commit()
+        return 0
+    removed = 0
+    for statement, parameters in (
+        ("DELETE FROM login_flows WHERE expires_at<=?", (now,)),
+        ("DELETE FROM passkey_flows WHERE expires_at<=?", (now,)),
+        ("DELETE FROM registration_onboarding WHERE expires_at<=?", (now,)),
+        ("DELETE FROM auth_codes WHERE expires_at<=? OR consumed_at IS NOT NULL AND consumed_at<?", (now, now - 3600)),
+        ("DELETE FROM access_tokens WHERE expires_at<=?", (now,)),
+        ("DELETE FROM sessions WHERE expires_at<=? OR revoked_at IS NOT NULL", (now,)),
+        ("DELETE FROM login_limits WHERE window_started<? AND locked_until<?", (now - 86400, now)),
+        ("DELETE FROM recovery_flows WHERE expires_at<=?", (now,)),
+        ("DELETE FROM recovery_email_setup WHERE expires_at<=?", (now,)),
+        ("DELETE FROM contractor_invites WHERE expires_at<=?", (now,)),
+    ):
+        removed += con.execute(statement, parameters).rowcount
+    con.execute(
+        "INSERT INTO database_maintenance(task,last_run) VALUES('expired_auth_state',?) "
+        "ON CONFLICT(task) DO UPDATE SET last_run=excluded.last_run",
+        (now,),
+    )
+    con.commit()
+    return removed
 
 
 def user_for_session(environ):
@@ -681,7 +760,7 @@ def authorize_login_page(flow, csrf, error=False):
 <details class="legacy"><summary>旧アカウントから移行する（初回のみ）</summary><p>初回登録済みの旧アカウントは、メールとパスワードで確認してからパスキーを登録します。</p><form id="legacy-login"><input type="hidden" name="flow" value="__FLOW__"><input type="hidden" name="csrf" value="__CSRF__"><div class="field"><label for="email">登録済みメールアドレス</label><input id="email" type="email" autocomplete="username" required maxlength="254"></div><div class="field"><label for="password">現在のパスワード</label><div class="password-row"><input id="password" type="password" autocomplete="current-password" required maxlength="1024"><button type="button" id="show-password">表示</button></div></div><button type="submit">本人確認してパスキー登録へ</button></form><button id="run-enroll" type="button" hidden>この端末のパスキー登録を開始</button></details>
 <p id="status" class="status" role="status" aria-live="polite"></p><p class="trust"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 20 6v5c0 5-3.4 8-8 10-4.6-2-8-5-8-10V6l8-3Z" stroke="currentColor" stroke-width="1.8"/><path d="m8.5 12 2.2 2.2 4.8-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>通信は暗号化され、パスキーで保護されます</p></div></section>
 <footer class="footer">安全なシングルサインオン · sso.2415.jp</footer>
-</main><script>const FLOW="__FLOW__",CSRF="__CSRF__",statusNode=document.getElementById('status');const enc=b=>{let s='';new Uint8Array(b).forEach(v=>s+=String.fromCharCode(v));return btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')};const dec=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-s.length%4)%4)),c=>c.charCodeAt(0));function downloadCertificate(cert){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(cert,null,2)],{type:'application/json'}));a.href=url;a.download=(String(cert.subject||'SSO').replace(/[^A-Za-z0-9_-]/g,'')||'SSO')+'-recovery-certificate.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500)}async function post(path,data){const r=await fetch(path,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});let j={};try{j=await r.json()}catch(e){}if(!r.ok||!j.ok)throw new Error(j.message||'認証できませんでした。もう一度お試しください。');return j}async function enroll(o){let p=o.publicKey;p.challenge=dec(p.challenge);p.user.id=dec(p.user.id);const c=await navigator.credentials.create({publicKey:p});return{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]}}let loginOptions=null,enrollOptions=null;document.getElementById('passkey-login').addEventListener('submit',async e=>{e.preventDefault();statusNode.textContent='パスキーを準備しています…';try{let id=document.getElementById('sso-id').value.trim().toUpperCase(),b=await post('/login/begin',{flow:FLOW,csrf:CSRF,public_id:id});loginOptions=b.publicKey;loginOptions.challenge=dec(loginOptions.challenge);loginOptions.allowCredentials=loginOptions.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));document.getElementById('run-passkey').hidden=false;statusNode.textContent=id?'準備できました。端末のパスキーで認証してください。':'登録済みパスキーを選択してください。'}catch(err){statusNode.textContent=err.message==='Load failed'?'サーバーへ接続できません。通信を確認して再読み込みしてください。':err.message}});document.getElementById('run-passkey').addEventListener('click',async e=>{if(!loginOptions)return;const button=e.currentTarget;button.disabled=true;statusNode.textContent='端末のパスキーを確認しています…';try{let c=await navigator.credentials.get({publicKey:loginOptions}),f=await post('/login',{action:'passkey_assertion',flow:FLOW,csrf:CSRF,credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),authenticatorData:enc(c.response.authenticatorData),signature:enc(c.response.signature),userHandle:c.response.userHandle?enc(c.response.userHandle):''}});if(f.mfa_required){document.getElementById('totp-login').hidden=false;button.hidden=true;statusNode.textContent='パスキーを確認しました。認証アプリの6桁コードを入力してください。';document.getElementById('totp-login-code').focus();return}location.assign(f.next)}catch(err){button.disabled=false;statusNode.textContent=err.name==='NotAllowedError'?'認証がキャンセルされたか時間切れです。もう一度押してください。':err.message}});document.getElementById('totp-login').addEventListener('submit',async e=>{e.preventDefault();const field=document.getElementById('totp-login-code'),button=e.currentTarget.querySelector('button');button.disabled=true;statusNode.textContent='追加認証を確認しています…';try{const j=await post('/login/totp',{flow:FLOW,csrf:CSRF,code:field.value.trim()});location.assign(j.next)}catch(err){button.disabled=false;statusNode.textContent=err.message;field.focus()}});document.getElementById('legacy-login').addEventListener('submit',async e=>{e.preventDefault();statusNode.textContent='本人確認しています…';try{let b=await post('/login',{action:'legacy_login',flow:FLOW,csrf:CSRF,email:document.getElementById('email').value,password:document.getElementById('password').value});enrollOptions=b.publicKey;enrollOptions.challenge=dec(enrollOptions.challenge);enrollOptions.user.id=dec(enrollOptions.user.id);document.getElementById('run-enroll').hidden=false;statusNode.textContent='本人確認できました。「この端末のパスキー登録を開始」を押してください。'}catch(err){statusNode.textContent=err.message==='Load failed'?'サーバーへ接続できません。通信を確認して再読み込みしてください。':err.message}});document.getElementById('run-enroll').addEventListener('click',async e=>{if(!enrollOptions)return;const button=e.currentTarget;button.disabled=true;statusNode.textContent='端末のパスキー登録を待っています…';try{let c=await navigator.credentials.create({publicKey:enrollOptions}),credential={id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]},f=await post('/login',{action:'finish_enrollment',flow:FLOW,csrf:CSRF,credential});downloadCertificate(f.recovery_certificate);statusNode.textContent='登録完了。SSO ID: '+f.public_id+'。復旧証明書を安全な場所に保存してください。（6秒後に設定画面へ移動します）';try{await navigator.clipboard.writeText(f.public_id)}catch(copyError){}setTimeout(()=>location.assign(f.next),6000)}catch(err){button.disabled=false;statusNode.textContent=err.name==='NotAllowedError'?'登録がキャンセルされたか時間切れです。もう一度押してください。':err.message}});document.getElementById('show-password').addEventListener('click',function(){let p=document.getElementById('password'),show=p.type==='password';p.type=show?'text':'password';this.textContent=show?'隠す':'表示'});</script></html>'''
+</main><script>const FLOW="__FLOW__",CSRF="__CSRF__",statusNode=document.getElementById('status');const enc=b=>{let s='';new Uint8Array(b).forEach(v=>s+=String.fromCharCode(v));return btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')};const dec=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-s.length%4)%4)),c=>c.charCodeAt(0));function downloadCertificate(cert){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(cert,null,2)],{type:'application/json'}));a.href=url;a.download=(String(cert.subject||'SSO').replace(/[^A-Za-z0-9_-]/g,'')||'SSO')+'-recovery-certificate.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500)}async function post(path,data){const r=await fetch(path,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});let j={};try{j=await r.json()}catch(e){}if(!r.ok||!j.ok)throw new Error(j.message||'認証できませんでした。もう一度お試しください。');return j}async function enroll(o){let p=o.publicKey;p.challenge=dec(p.challenge);p.user.id=dec(p.user.id);const c=await navigator.credentials.create({publicKey:p});return{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]}}let loginOptions=null,enrollOptions=null;document.getElementById('passkey-login').addEventListener('submit',async e=>{e.preventDefault();statusNode.textContent='パスキーを準備しています…';try{let id=document.getElementById('sso-id').value.trim().toUpperCase(),b=await post('/login/begin',{flow:FLOW,csrf:CSRF,public_id:id});loginOptions=b.publicKey;loginOptions.challenge=dec(loginOptions.challenge);loginOptions.allowCredentials=loginOptions.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));document.getElementById('run-passkey').hidden=false;statusNode.textContent=id?'準備できました。端末のパスキーで認証してください。':'登録済みパスキーを選択してください。'}catch(err){statusNode.textContent=err.message==='Load failed'?'サーバーへ接続できません。通信を確認して再読み込みしてください。':err.message}});document.getElementById('run-passkey').addEventListener('click',async e=>{if(!loginOptions)return;const button=e.currentTarget;button.disabled=true;statusNode.textContent='端末のパスキーを確認しています…';try{let c=await navigator.credentials.get({publicKey:loginOptions}),f=await post('/login',{action:'passkey_assertion',flow:FLOW,csrf:CSRF,credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),authenticatorData:enc(c.response.authenticatorData),signature:enc(c.response.signature),userHandle:c.response.userHandle?enc(c.response.userHandle):''}});if(f.mfa_required){document.getElementById('totp-login').hidden=false;button.hidden=true;statusNode.textContent='パスキーを確認しました。認証アプリの6桁コードを入力してください。';document.getElementById('totp-login-code').focus();return}location.assign(f.next)}catch(err){button.disabled=false;statusNode.textContent=err.name==='NotAllowedError'?'認証がキャンセルされたか時間切れです。もう一度押してください。':err.message}});document.getElementById('totp-login').addEventListener('submit',async e=>{e.preventDefault();const field=document.getElementById('totp-login-code'),button=e.currentTarget.querySelector('button');button.disabled=true;statusNode.textContent='追加認証を確認しています…';try{const j=await post('/login/totp',{flow:FLOW,csrf:CSRF,code:field.value.trim()});location.assign(j.next)}catch(err){button.disabled=false;statusNode.textContent=err.message;field.focus()}});document.getElementById('legacy-login').addEventListener('submit',async e=>{e.preventDefault();statusNode.textContent='本人確認しています…';try{let b=await post('/login',{action:'legacy_login',flow:FLOW,csrf:CSRF,email:document.getElementById('email').value,password:document.getElementById('password').value});enrollOptions=b.publicKey;enrollOptions.challenge=dec(enrollOptions.challenge);enrollOptions.user.id=dec(enrollOptions.user.id);document.getElementById('run-enroll').hidden=false;statusNode.textContent='本人確認できました。「この端末のパスキー登録を開始」を押してください。'}catch(err){statusNode.textContent=err.message==='Load failed'?'サーバーへ接続できません。通信を確認して再読み込みしてください。':err.message}});document.getElementById('run-enroll').addEventListener('click',async e=>{if(!enrollOptions)return;const button=e.currentTarget;button.disabled=true;statusNode.textContent='端末のパスキー登録を待っています…';try{let c=await navigator.credentials.create({publicKey:enrollOptions}),credential={id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]},f=await post('/login',{action:'finish_enrollment',flow:FLOW,csrf:CSRF,credential});if(f.recovery_certificate)downloadCertificate(f.recovery_certificate);statusNode.textContent='登録完了。SSO ID: '+f.public_id+'。復旧証明書を安全な場所に保存してください。（6秒後に設定画面へ移動します）';try{await navigator.clipboard.writeText(f.public_id)}catch(copyError){}setTimeout(()=>location.assign(f.next),6000)}catch(err){button.disabled=false;statusNode.textContent=err.name==='NotAllowedError'?'登録がキャンセルされたか時間切れです。もう一度押してください。':err.message}});document.getElementById('show-password').addEventListener('click',function(){let p=document.getElementById('password'),show=p.type==='password';p.type=show?'text':'password';this.textContent=show?'隠す':'表示'});</script></html>'''
     return (page.replace("__FLOW__", html.escape(flow, quote=True)).replace("__CSRF__", html.escape(csrf, quote=True)).replace("ERROR_SLOT", error_html)).encode("utf-8")
 
 
@@ -759,8 +838,8 @@ def account_page(user, current_hash, sessions, notice="", registration_onboardin
     page = page.replace('<form method=post action=/account><input type=hidden name=csrf value="%s"><input type=hidden name=action value=revoke_all>', '<form method=post action=/account onsubmit="return confirm(\'すべての端末からログアウトします。続けますか？\')"><input type=hidden name=csrf value="%s"><input type=hidden name=action value=revoke_all>', 1)
     with db() as con:
         has_email = bool(con.execute("SELECT recovery_email_hash FROM users WHERE id=?", (user["id"],)).fetchone()["recovery_email_hash"])
-        has_key = con.execute("SELECT 1 FROM recovery_keys WHERE user_id=? AND certificate_version=1 AND used_at IS NULL", (user["id"],)).fetchone() is not None
-    recovery_markup = '''<section class=controls aria-labelledby=recovery-title><h2 id=recovery-title>アカウント復旧証明書</h2><p id=recovery-email-status role=status aria-live=polite>%s</p><form id=recovery-email-form><label for=recovery-email>復旧用メールアドレス</label><input id=recovery-email type=email inputmode=email autocomplete=email autocapitalize=none spellcheck=false maxlength=254 required><button class=secondary>確認コードを送信</button></form><form id=recovery-code-form hidden><label for=recovery-code>メールの確認コード</label><input id=recovery-code inputmode=numeric autocomplete=one-time-code pattern=[0-9]{8} maxlength=8 required><button class=secondary>メールを確認</button></form><p>パスキーと認証アプリを両方使えない場合、登録済みメールとこの証明書でリセット申請を行えます。証明書は一回限りで、使用後はTOTPも解除されます。</p><button id=recovery-key-button class=secondary type=button data-csrf="%s">パスキーで本人確認して復旧証明書を%s</button><output id=recovery-key-output hidden></output></section>''' % ("復旧メール確認済み" if has_email else "復旧メール未設定です。ここで確認してください。", html.escape(csrf), "再発行" if has_key else "発行")
+        has_certificate = con.execute("SELECT 1 FROM recovery_keys WHERE user_id=? AND certificate_version=1", (user["id"],)).fetchone() is not None
+    recovery_markup = '''<section class=controls aria-labelledby=recovery-title><h2 id=recovery-title>アカウント復旧証明書</h2><p id=recovery-email-status role=status aria-live=polite>%s</p><form id=recovery-email-form><label for=recovery-email>復旧用メールアドレス</label><input id=recovery-email type=email inputmode=email autocomplete=email autocapitalize=none spellcheck=false maxlength=254 required><button class=secondary>確認コードを送信</button></form><form id=recovery-code-form hidden><label for=recovery-code>メールの確認コード</label><input id=recovery-code inputmode=numeric autocomplete=one-time-code pattern=[0-9]{8} maxlength=8 required><button class=secondary>メールを確認</button></form><p>パスキーと認証アプリを両方使えない場合、登録済みメールとこの証明書でリセット申請を行えます。証明書は一度だけ発行でき、リセット申請にも一回だけ使用できます。発行後は再ダウンロード・再発行できません。使用後はTOTPも解除されます。</p><button id=recovery-key-button class=secondary type=button data-csrf="%s" %s>%s</button><output id=recovery-key-output hidden></output></section>''' % ("復旧メール確認済み" if has_email else "復旧メール未設定です。ここで確認してください。", html.escape(csrf), "disabled" if has_certificate else "", "復旧証明書は発行済みです。再発行できません" if has_certificate else "パスキーで本人確認して復旧証明書を一度だけ発行")
     page = page.replace("</section></section><footer class=footer>", recovery_markup + "</section></section><footer class=footer>", 1)
     passkey_rows = "".join("<li>登録済みパスキー %d · 登録日時 <time class=local-time data-epoch=\"%d\">%s</time></li>" % (i + 1, int(row["created_at"] or 0), html.escape(time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(int(row["created_at"] or 0))) if row["created_at"] else "記録なし")) for i, row in enumerate(passkeys))
     passkey_markup = '''<section class=controls aria-labelledby=passkey-title><h2 id=passkey-title>パスキー</h2><p>予備の端末にも登録すると、1台を紛失しても別の端末でログインできます。追加登録には、現在のパスキーで本人確認が必要です。</p><ul>%s</ul><button id=add-passkey class=secondary type=button data-csrf="%s" %s>予備のパスキーを追加</button><p id=passkey-status role=status aria-live=polite></p></section>''' % (passkey_rows or "<li>登録済みパスキーがありません。</li>", html.escape(csrf), "disabled" if len(passkeys) >= 5 else "")
@@ -768,7 +847,7 @@ def account_page(user, current_hash, sessions, notice="", registration_onboardin
         "認証アプリは有効です。ログイン時はパスキーの後にアプリのコードが必要です。" if totp_enabled else "認証アプリは未設定です。",
         "" if totp_enabled else "", " hidden" if not totp_enabled else "", html.escape(csrf), "hidden" if totp_enabled else "")
     page = page.replace(recovery_markup + "</section></section><footer class=footer>", recovery_markup + passkey_markup + totp_markup + "</section></section><footer class=footer>", 1)
-    page = page.replace("</body>", '''<script>(()=>{const input=document.getElementById('session-search'),cards=[...document.querySelectorAll('.session-card')],count=document.getElementById('session-count'),empty=document.getElementById('session-empty');document.querySelectorAll('.local-time').forEach(t=>{const n=Number(t.dataset.epoch);if(n>0){try{t.textContent=new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(new Date(n*1000));t.title=new Date(n*1000).toISOString()}catch(e){}}});const filter=()=>{const q=input.value.trim().toLocaleLowerCase();let shown=0;cards.forEach(c=>{const match=!q||c.dataset.search.includes(q);c.hidden=!match;if(match)shown++});count.textContent=shown+' / '+cards.length+' 台を表示';empty.classList.toggle('visible',shown===0)};input.addEventListener('input',filter);filter();const emailForm=document.getElementById('recovery-email-form'),codeForm=document.getElementById('recovery-code-form'),emailStatus=document.getElementById('recovery-email-status'),keyButton=document.getElementById('recovery-key-button'),keyOutput=document.getElementById('recovery-key-output');let emailFlow='';const csrf=keyButton.dataset.csrf,enc=x=>{let s='';new Uint8Array(x).forEach(v=>s+=String.fromCharCode(v));return btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')},dec=x=>Uint8Array.from(atob(x.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-x.length%4)%4)),c=>c.charCodeAt(0));async function post(url,data){const r=await fetch(url,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.message||'処理できませんでした');return j}emailForm.addEventListener('submit',async e=>{e.preventDefault();emailStatus.textContent='確認コードを送信しています…';try{const j=await post('/account/recovery-email/start',{csrf,email:document.getElementById('recovery-email').value});emailFlow=j.flow;codeForm.hidden=false;emailStatus.textContent=j.message;document.getElementById('recovery-code').focus()}catch(err){emailStatus.textContent=err.message}});codeForm.addEventListener('submit',async e=>{e.preventDefault();emailStatus.textContent='コードを確認しています…';try{const j=await post('/account/recovery-email/verify',{csrf,flow:emailFlow,code:document.getElementById('recovery-code').value,email:document.getElementById('recovery-email').value});emailStatus.textContent=j.message;codeForm.hidden=true;emailForm.hidden=true}catch(err){emailStatus.textContent=err.message}});function downloadCertificate(cert){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(cert,null,2)],{type:'application/json'}));a.href=url;a.download=(String(cert.subject||'SSO').replace(/[^A-Za-z0-9_-]/g,'')||'SSO')+'-recovery-certificate.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500)};keyButton.addEventListener('click',async()=>{keyButton.disabled=true;emailStatus.textContent='パスキーで本人確認しています…';try{const b=await post('/account/recovery-key/begin',{csrf});b.publicKey.challenge=dec(b.publicKey.challenge);b.publicKey.allowCredentials=b.publicKey.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));const c=await navigator.credentials.get({publicKey:b.publicKey}),j=await post('/account/recovery-key/finish',{csrf,flow:b.flow,credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),authenticatorData:enc(c.response.authenticatorData),signature:enc(c.response.signature),userHandle:c.response.userHandle?enc(c.response.userHandle):''}});keyOutput.hidden=false;downloadCertificate(j.recovery_certificate);keyOutput.hidden=false;keyOutput.textContent='復旧証明書をダウンロードしました。安全な場所に保存してください。再発行すると古いファイルは使えなくなります。';emailStatus.textContent='復旧証明書を保存してください。';keyButton.textContent='証明書を再発行（旧ファイルは無効）'}catch(err){emailStatus.textContent=err.name==='NotAllowedError'?'本人確認を完了できませんでした。もう一度お試しください。':err.message}finally{keyButton.disabled=false}});const add=document.getElementById('add-passkey'),ps=document.getElementById('passkey-status');add?.addEventListener('click',async()=>{add.disabled=true;ps.textContent='現在のパスキーで本人確認してください…';try{let s=await post('/account/passkey/add/begin',{csrf});s.publicKey.challenge=dec(s.publicKey.challenge);s.publicKey.allowCredentials=s.publicKey.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));const a=await navigator.credentials.get({publicKey:s.publicKey});s=await post('/account/passkey/add/verify',{csrf,flow:s.flow,credential:{id:enc(a.rawId),clientDataJSON:enc(a.response.clientDataJSON),authenticatorData:enc(a.response.authenticatorData),signature:enc(a.response.signature),userHandle:a.response.userHandle?enc(a.response.userHandle):''}});s.publicKey.challenge=dec(s.publicKey.challenge);s.publicKey.user.id=dec(s.publicKey.user.id);s.publicKey.excludeCredentials=s.publicKey.excludeCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));ps.textContent='新しい端末でパスキーを登録してください…';const c=await navigator.credentials.create({publicKey:s.publicKey});await post('/account/passkey/add/finish',{csrf,flow:s.flow,credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]}});ps.textContent='予備のパスキーを追加しました。';location.reload()}catch(err){ps.textContent=err.name==='NotAllowedError'?'操作がキャンセルされました。もう一度お試しください。':err.message;add.disabled=false}})})()</script></body>''', 1)
+    page = page.replace("</body>", '''<script>(()=>{const input=document.getElementById('session-search'),cards=[...document.querySelectorAll('.session-card')],count=document.getElementById('session-count'),empty=document.getElementById('session-empty');document.querySelectorAll('.local-time').forEach(t=>{const n=Number(t.dataset.epoch);if(n>0){try{t.textContent=new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(new Date(n*1000));t.title=new Date(n*1000).toISOString()}catch(e){}}});const filter=()=>{const q=input.value.trim().toLocaleLowerCase();let shown=0;cards.forEach(c=>{const match=!q||c.dataset.search.includes(q);c.hidden=!match;if(match)shown++});count.textContent=shown+' / '+cards.length+' 台を表示';empty.classList.toggle('visible',shown===0)};input.addEventListener('input',filter);filter();const emailForm=document.getElementById('recovery-email-form'),codeForm=document.getElementById('recovery-code-form'),emailStatus=document.getElementById('recovery-email-status'),keyButton=document.getElementById('recovery-key-button'),keyOutput=document.getElementById('recovery-key-output');let emailFlow='';const csrf=keyButton.dataset.csrf,enc=x=>{let s='';new Uint8Array(x).forEach(v=>s+=String.fromCharCode(v));return btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')},dec=x=>Uint8Array.from(atob(x.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-x.length%4)%4)),c=>c.charCodeAt(0));async function post(url,data){const r=await fetch(url,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.message||'処理できませんでした');return j}emailForm.addEventListener('submit',async e=>{e.preventDefault();emailStatus.textContent='確認コードを送信しています…';try{const j=await post('/account/recovery-email/start',{csrf,email:document.getElementById('recovery-email').value});emailFlow=j.flow;codeForm.hidden=false;emailStatus.textContent=j.message;document.getElementById('recovery-code').focus()}catch(err){emailStatus.textContent=err.message}});codeForm.addEventListener('submit',async e=>{e.preventDefault();emailStatus.textContent='コードを確認しています…';try{const j=await post('/account/recovery-email/verify',{csrf,flow:emailFlow,code:document.getElementById('recovery-code').value,email:document.getElementById('recovery-email').value});emailStatus.textContent=j.message;codeForm.hidden=true;emailForm.hidden=true}catch(err){emailStatus.textContent=err.message}});function downloadCertificate(cert){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(cert,null,2)],{type:'application/json'}));a.href=url;a.download=(String(cert.subject||'SSO').replace(/[^A-Za-z0-9_-]/g,'')||'SSO')+'-recovery-certificate.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500)};keyButton.addEventListener('click',async()=>{keyButton.disabled=true;emailStatus.textContent='パスキーで本人確認しています…';try{const b=await post('/account/recovery-key/begin',{csrf});b.publicKey.challenge=dec(b.publicKey.challenge);b.publicKey.allowCredentials=b.publicKey.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));const c=await navigator.credentials.get({publicKey:b.publicKey}),j=await post('/account/recovery-key/finish',{csrf,flow:b.flow,credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),authenticatorData:enc(c.response.authenticatorData),signature:enc(c.response.signature),userHandle:c.response.userHandle?enc(c.response.userHandle):''}});keyOutput.hidden=false;downloadCertificate(j.recovery_certificate);keyOutput.hidden=false;keyOutput.textContent='復旧証明書をダウンロードしました。安全な場所に保管してください。再発行・再ダウンロードはできません。';emailStatus.textContent='復旧証明書を保存してください。';keyButton.textContent='復旧証明書は一度だけ発行可能'}catch(err){emailStatus.textContent=err.name==='NotAllowedError'?'本人確認を完了できませんでした。もう一度お試しください。':err.message}finally{keyButton.disabled=false}});const add=document.getElementById('add-passkey'),ps=document.getElementById('passkey-status');add?.addEventListener('click',async()=>{add.disabled=true;ps.textContent='現在のパスキーで本人確認してください…';try{let s=await post('/account/passkey/add/begin',{csrf});s.publicKey.challenge=dec(s.publicKey.challenge);s.publicKey.allowCredentials=s.publicKey.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));const a=await navigator.credentials.get({publicKey:s.publicKey});s=await post('/account/passkey/add/verify',{csrf,flow:s.flow,credential:{id:enc(a.rawId),clientDataJSON:enc(a.response.clientDataJSON),authenticatorData:enc(a.response.authenticatorData),signature:enc(a.response.signature),userHandle:a.response.userHandle?enc(a.response.userHandle):''}});s.publicKey.challenge=dec(s.publicKey.challenge);s.publicKey.user.id=dec(s.publicKey.user.id);s.publicKey.excludeCredentials=s.publicKey.excludeCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));ps.textContent='新しい端末でパスキーを登録してください…';const c=await navigator.credentials.create({publicKey:s.publicKey});await post('/account/passkey/add/finish',{csrf,flow:s.flow,credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]}});ps.textContent='予備のパスキーを追加しました。';location.reload()}catch(err){ps.textContent=err.name==='NotAllowedError'?'操作がキャンセルされました。もう一度お試しください。':err.message;add.disabled=false}})})()</script></body>''', 1)
     totp_script = '''<script>(()=>{const start=document.getElementById('totp-begin'),status=document.getElementById('totp-status'),setup=document.getElementById('totp-setup'),secret=document.getElementById('totp-secret'),uriLink=document.getElementById('totp-uri-link'),output=document.getElementById('totp-output'),csrf=start.dataset.csrf,onboarding=document.getElementById('registration-onboarding'),onboardingStatus=document.getElementById('onboarding-status'),skip=document.getElementById('onboarding-skip'),continueButton=document.getElementById('onboarding-continue');let flow='';const enc=x=>{let s='';new Uint8Array(x).forEach(v=>s+=String.fromCharCode(v));return btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')},dec=x=>Uint8Array.from(atob(x.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-x.length%4)%4)),c=>c.charCodeAt(0));function downloadCertificate(cert){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(cert,null,2)],{type:'application/json'}));a.href=url;a.download=(String(cert.subject||'SSO').replace(/[^A-Za-z0-9_-]/g,'')||'SSO')+'-recovery-certificate.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500)}async function post(url,data){const r=await fetch(url,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.message||'処理できませんでした。');return j}async function finishOnboarding(action,button){button.disabled=true;onboardingStatus.textContent='ログインを完了しています…';try{const j=await post('/account/onboarding/complete',{csrf,action});location.assign(j.next)}catch(err){onboardingStatus.textContent=err.message;button.disabled=false}}if(onboarding){skip.addEventListener('click',()=>finishOnboarding('skip',skip));continueButton.addEventListener('click',()=>finishOnboarding('continue',continueButton))}start.addEventListener('click',async()=>{start.disabled=true;status.textContent='登録済みパスキーで本人確認しています…';try{let b=await post('/account/totp/begin',{csrf});b.publicKey.challenge=dec(b.publicKey.challenge);b.publicKey.allowCredentials=b.publicKey.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));const a=await navigator.credentials.get({publicKey:b.publicKey});const s=await post('/account/totp/verify-passkey',{csrf,flow:b.flow,credential:{id:enc(a.rawId),clientDataJSON:enc(a.response.clientDataJSON),authenticatorData:enc(a.response.authenticatorData),signature:enc(a.response.signature),userHandle:a.response.userHandle?enc(a.response.userHandle):''}});flow=s.flow;secret.textContent=s.secret;uriLink.href=s.otpauth_uri;setup.hidden=false;start.hidden=true;status.textContent='認証アプリへ設定キーを登録し、次のコードで有効化してください。'}catch(err){status.textContent=err.name==='NotAllowedError'?'パスキー確認を完了できませんでした。':err.message;start.disabled=false}});document.getElementById('totp-enable-form').addEventListener('submit',async e=>{e.preventDefault();const button=e.currentTarget.querySelector('button');button.disabled=true;try{const j=await post('/account/totp/enable',{csrf,flow,code:document.getElementById('totp-enable-code').value.trim()});if(j.recovery_certificate){downloadCertificate(j.recovery_certificate);output.hidden=false;output.textContent='復旧証明書をダウンロードしました。安全な場所に保管してください。'}else{output.hidden=false;output.textContent='復旧証明書は登録時に発行済みです。'}status.textContent='認証アプリを有効にしました。';setup.hidden=true;document.getElementById('totp-manage-form').hidden=false;document.getElementById('totp-begin').hidden=true;if(onboarding){skip.hidden=true;continueButton.hidden=false;onboardingStatus.textContent='復旧証明書をダウンロードしました。保存先を確認してから続けてください。'}}catch(err){status.textContent=err.message;button.disabled=false}});const code=document.getElementById('totp-manage-code');document.getElementById('totp-disable').addEventListener('click',async()=>{if(!window.confirm('認証アプリを解除しますか？ログイン時の追加認証が無効になります。'))return;const button=document.getElementById('totp-disable');button.disabled=true;try{await post('/account/totp/disable',{csrf,code:code.value.trim()});status.textContent='認証アプリを解除しました。';location.reload()}catch(err){status.textContent=err.message;button.disabled=false}})})();</script>'''
     page = page.replace("</body>", totp_script + "</body>", 1)
     return page.encode("utf-8")
@@ -926,8 +1005,6 @@ def app(environ, start_response):
     if path in ("/", "/authorize", "/login", "/login/begin", "/login/totp", "/logout", "/account", "/recover", "/token", "/userinfo", "/session/introspect") or path.startswith("/recover/") or path.startswith("/admin/identity/") or path.startswith("/account/recovery-key/") or path.startswith("/account/recovery-email/") or path.startswith("/account/passkey/") or path.startswith("/account/totp/") or path.startswith("/contractor/"):
         if DB.is_file():
             ensure_session_schema()
-    if path in ("/", "/authorize", "/login", "/logout", "/account") and DB.is_file():
-        ensure_session_schema()
     if path == "/healthz" and method == "GET":
         checks = readiness_checks()
         ready = all(status == "ok" for status in checks.values())
@@ -997,7 +1074,6 @@ def app(environ, start_response):
             salt = secrets.token_bytes(16)
             code_hash = hmac.new(EMAIL_KEY.read_bytes()[:32], b"sso-contractor-invite-v1|" + salt + flow_hash.encode("ascii") + code.encode("ascii"), hashlib.sha256).hexdigest()
             with db() as con:
-                con.execute("DELETE FROM contractor_invites WHERE expires_at<=?", (now,))
                 con.execute("DELETE FROM contractor_invites WHERE email_lookup=?", (lookup,))
                 con.execute("INSERT INTO contractor_invites(flow_hash,email_lookup,email_encrypted,public_id,user_handle,code_salt,code_hash,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
                             (flow_hash, lookup, encrypt_private_value(address, "email"), new_public_id(), new_user_handle(), salt.hex(), code_hash, now + 86400, now))
@@ -1034,7 +1110,6 @@ def app(environ, start_response):
                 if previous and now - int(previous["created_at"]) < 60:
                     return json_response(start_response, "429 Too Many Requests", {"error":"invite_rate_limited"})
                 public_id = new_public_id()
-                con.execute("DELETE FROM contractor_invites WHERE expires_at<=?", (now,))
                 con.execute("DELETE FROM contractor_invites WHERE email_lookup=?", (lookup,))
                 con.execute("INSERT INTO contractor_invites(flow_hash,email_lookup,email_encrypted,public_id,user_handle,code_salt,code_hash,expires_at,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
                             (flow_hash, lookup, encrypt_private_value(address, "email"), public_id, new_user_handle(), salt.hex(), code_hash, now + 86400, now, tenant_id))
@@ -1221,7 +1296,7 @@ def app(environ, start_response):
                 if limit and (limit["locked_until"]>now or now-limit["last_sent_at"]<60 or sends>=3): con.rollback(); return json_response(start_response,"429 Too Many Requests",{"error":"recovery_rate_limited","message":"時間をおいてから再度お試しください。"})
                 con.execute("INSERT OR REPLACE INTO recovery_limits(user_id,last_sent_at,window_started,sends,attempt_window,attempts,locked_until) VALUES(?,?,?,?,?,?,?)",(current["user_id"],now,window,sends+1,now,0,0)); con.commit()
                 flow=b64u(secrets.token_bytes(32)); flow_hash=hashlib.sha256(flow.encode()).hexdigest(); code="%08d"%secrets.randbelow(100000000); salt=secrets.token_bytes(16)
-                con.execute("DELETE FROM recovery_email_setup WHERE user_id=? OR expires_at<=?",(current["user_id"],now)); con.execute("INSERT INTO recovery_email_setup(flow_hash,user_id,csrf_hash,email_hash,code_salt,code_hash,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)",(flow_hash,current["user_id"],hashlib.sha256(f.get("csrf","").encode()).hexdigest(),email_lookup(address),salt.hex(),recovery_code_hash(flow_hash,salt,code),now+600,now))
+                con.execute("DELETE FROM recovery_email_setup WHERE user_id=?",(current["user_id"],)); con.execute("INSERT INTO recovery_email_setup(flow_hash,user_id,csrf_hash,email_hash,code_salt,code_hash,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)",(flow_hash,current["user_id"],hashlib.sha256(f.get("csrf","").encode()).hexdigest(),email_lookup(address),salt.hex(),recovery_code_hash(flow_hash,salt,code),now+600,now))
             if not send_recovery_code(address,code):
                 with db() as con: con.execute("DELETE FROM recovery_email_setup WHERE flow_hash=?",(flow_hash,))
                 return json_response(start_response,"503 Service Unavailable",{"error":"mail_unavailable","message":"メールを送信できませんでした。"})
@@ -1258,6 +1333,8 @@ def app(environ, start_response):
                 if not current or not hmac.compare_digest(current["csrf_hash"],hashlib.sha256(f.get("csrf","").encode()).hexdigest()): return json_response(start_response,"403 Forbidden",{"error":"csrf_validation_failed"})
                 keys=con.execute("SELECT credential_id,transports FROM passkeys WHERE user_id=?",(current["user_id"],)).fetchall()
                 if not keys: return json_response(start_response,"409 Conflict",{"error":"passkey_missing"})
+                issued=con.execute("SELECT 1 FROM recovery_keys WHERE user_id=? AND certificate_version=1",(current["user_id"],)).fetchone()
+                if issued: return json_response(start_response,"409 Conflict",{"error":"recovery_certificate_already_issued","message":"復旧証明書はすでに発行済みです。再発行できません。"},[("Cache-Control","no-store")])
                 flow=b64u(secrets.token_bytes(32)); flow_hash=hashlib.sha256(flow.encode()).hexdigest(); challenge=b64u(secrets.token_bytes(32)); con.execute("INSERT OR REPLACE INTO passkey_flows(flow_hash,user_id,challenge,mode,expires_at) VALUES(?,?,?,?,?)",(flow_hash,current["user_id"],challenge,"recovery_key",now+300))
             return json_response(start_response,"200 OK",{"ok":True,"flow":flow,"publicKey":{"challenge":challenge,"rpId":PASSKEY_RP_ID,"timeout":120000,"userVerification":"required","allowCredentials":[{"type":"public-key","id":k["credential_id"],"transports":json.loads(k["transports"] or "[]")} for k in keys]}},[("Cache-Control","no-store")])
         except Exception: return json_response(start_response,"400 Bad Request",{"error":"invalid_request"})
@@ -1271,7 +1348,9 @@ def app(environ, start_response):
                 keyrow=con.execute("SELECT * FROM passkeys WHERE credential_id=? AND user_id=?",(cred.get("id",""),current["user_id"])).fetchone()
                 if not keyrow: con.rollback(); return json_response(start_response,"401 Unauthorized",{"error":"invalid_passkey"})
                 count=webauthn_assertion(cred.get("clientDataJSON",""),cred.get("authenticatorData",""),cred.get("signature",""),pending["challenge"],keyrow["public_key"],keyrow["sign_count"],cred.get("userHandle",""))
-                con.execute("UPDATE passkeys SET sign_count=?,last_used=? WHERE credential_id=?",(count,now,keyrow["credential_id"])); certificate=new_recovery_certificate(current["public_id"],now); con.execute("INSERT OR REPLACE INTO recovery_keys(user_id,key_hash,created_at,used_at,certificate_version) VALUES(?,?,?,NULL,1)",(current["user_id"],recovery_key_hash(certificate["credential"]),now)); con.execute("DELETE FROM passkey_flows WHERE flow_hash=?",(flow_hash,)); con.commit()
+                if con.execute("SELECT 1 FROM recovery_keys WHERE user_id=? AND certificate_version=1",(current["user_id"],)).fetchone():
+                    con.rollback(); return json_response(start_response,"409 Conflict",{"error":"recovery_certificate_already_issued","message":"復旧証明書はすでに発行済みです。再発行できません。"},[("Cache-Control","no-store")])
+                con.execute("UPDATE passkeys SET sign_count=?,last_used=? WHERE credential_id=?",(count,now,keyrow["credential_id"])); certificate=new_recovery_certificate(current["public_id"],now); con.execute("INSERT INTO recovery_keys(user_id,key_hash,created_at,used_at,certificate_version) VALUES(?,?,?,NULL,1) ON CONFLICT(user_id) DO UPDATE SET key_hash=excluded.key_hash,created_at=excluded.created_at,used_at=NULL,certificate_version=1 WHERE recovery_keys.certificate_version=0",(current["user_id"],recovery_key_hash(certificate["credential"]),now)); con.execute("DELETE FROM passkey_flows WHERE flow_hash=?",(flow_hash,)); con.commit()
             return json_response(start_response,"200 OK",{"ok":True,"recovery_certificate":certificate},[("Cache-Control","no-store")])
         except Exception: return json_response(start_response,"400 Bad Request",{"error":"invalid_passkey","message":"パスキーを確認できませんでした。"})
     if path == "/recover/passkey-begin" and method == "POST":
@@ -1295,7 +1374,7 @@ def app(environ, start_response):
                 if certificate_hash and stored_certificate and hmac.compare_digest(certificate_hash,stored_certificate["key_hash"]):
                     con.rollback(); return json_response(start_response,"200 OK",{"ok":True,"hasPasskey":False,"certificateAccepted":True},[("Cache-Control","no-store")])
                 challenge=b64u(secrets.token_bytes(32))
-                con.execute("DELETE FROM recovery_flows WHERE user_id=? OR expires_at<=?",(user["id"],now))
+                con.execute("DELETE FROM recovery_flows WHERE user_id=?",(user["id"],))
                 con.execute("INSERT INTO recovery_flows(flow_hash,user_id,csrf_hash,code_salt,code_hash,expires_at,created_at,email_hash,existing_challenge,passkey_check_status) VALUES(?,?,?,?,?,?,?,?,?,'pending')",(flow_hash,user["id"],hashlib.sha256(csrf.encode()).hexdigest(),salt.hex(),"",now+600,now,"",challenge))
                 con.commit()
             options={"challenge":challenge,"rpId":PASSKEY_RP_ID,"timeout":120000,"userVerification":"required","allowCredentials":[{"type":"public-key","id":k["credential_id"],"transports":json.loads(k["transports"] or "[]")} for k in keys]}
@@ -1340,7 +1419,7 @@ def app(environ, start_response):
                 existing_keys = con.execute("SELECT credential_id,transports FROM passkeys WHERE user_id=?", (user["id"],)).fetchall()
                 if existing_keys and not certificate_valid:
                     existing_challenge = b64u(secrets.token_bytes(32))
-                    con.execute("DELETE FROM recovery_flows WHERE user_id=? OR expires_at<=?", (user["id"],now))
+                    con.execute("DELETE FROM recovery_flows WHERE user_id=?", (user["id"],))
                     con.execute("INSERT INTO recovery_flows(flow_hash,user_id,csrf_hash,code_salt,code_hash,expires_at,created_at,email_hash,existing_challenge,passkey_check_status) VALUES(?,?,?,?,?,?,?,?,?,'pending')", (flow_hash,user["id"],hashlib.sha256(csrf.encode()).hexdigest(),salt.hex(),"",now+600,now,address_hash,existing_challenge))
                     con.execute("UPDATE recovery_flows SET certificate_hash=? WHERE flow_hash=?", (certificate_hash if certificate_valid else "", flow_hash))
                     con.commit()
@@ -1352,7 +1431,7 @@ def app(environ, start_response):
                 if limit and (limit["locked_until"]>now or now-limit["last_sent_at"]<60 or sends>=3):
                     con.rollback(); return json_response(start_response, "429 Too Many Requests", {"error":"recovery_rate_limited","message":"時間をおいてから再度お試しください。"})
                 con.execute("INSERT OR REPLACE INTO recovery_limits(user_id,last_sent_at,window_started,sends,attempt_window,attempts,locked_until) VALUES(?,?,?,?,?,?,?)", (user["id"],now,window,sends+1,now,0,0))
-                con.execute("DELETE FROM recovery_flows WHERE user_id=? OR expires_at<=?", (user["id"],now))
+                con.execute("DELETE FROM recovery_flows WHERE user_id=?", (user["id"],))
                 con.execute("INSERT INTO recovery_flows(flow_hash,user_id,csrf_hash,code_salt,code_hash,expires_at,created_at,email_hash,passkey_check_status,certificate_hash) VALUES(?,?,?,?,?,?,?,?,'not_required',?)", (flow_hash,user["id"],hashlib.sha256(csrf.encode()).hexdigest(),salt.hex(),recovery_code_hash(flow_hash,salt,code),now+600,now,address_hash,certificate_hash if certificate_valid else "")); con.commit()
             if not send_recovery_code(address, code):
                 with db() as con: con.execute("DELETE FROM recovery_flows WHERE flow_hash=?",(flow_hash,))
@@ -1536,13 +1615,7 @@ def app(environ, start_response):
         p = query(environ)
         with db() as con:
             now = int(time.time())
-            con.execute("DELETE FROM login_flows WHERE expires_at<=?", (now,))
-            con.execute("DELETE FROM passkey_flows WHERE expires_at<=?", (now,))
-            con.execute("DELETE FROM registration_onboarding WHERE expires_at<=?", (now,))
-            con.execute("DELETE FROM auth_codes WHERE expires_at<=? OR consumed_at IS NOT NULL AND consumed_at<?", (now, now - 3600))
-            con.execute("DELETE FROM access_tokens WHERE expires_at<=?", (now,))
-            con.execute("DELETE FROM sessions WHERE expires_at<=? OR revoked_at IS NOT NULL", (now,))
-            con.execute("DELETE FROM login_limits WHERE window_started<? AND locked_until<?", (now - 86400, now))
+            cleanup_expired_auth_state(con, now)
             client, error = valid_authorize(p, con)
             if error:
                 return json_response(start_response, "400 Bad Request", {"error": error})
@@ -1577,7 +1650,6 @@ def app(environ, start_response):
                 flow = con.execute("SELECT csrf_hash FROM login_flows WHERE flow_hash=? AND expires_at>?", (flow_hash, int(time.time()))).fetchone()
                 if not flow or not hmac.compare_digest(flow["csrf_hash"], hashlib.sha256(f.get("csrf", "").encode()).hexdigest()):
                     return json_response(start_response, "400 Bad Request", {"error": "invalid_login_flow"})
-                con.execute("DELETE FROM passkey_flows WHERE expires_at<=?", (int(time.time()),))
                 public_id = f.get("public_id", "").strip().upper()
                 if public_id and not re.fullmatch(r"SID-[A-Z2-7]{26}", public_id):
                     return json_response(start_response, "401 Unauthorized", {"error": "invalid_credentials", "message": "認証できませんでした。入力内容を確認してください。"})
@@ -1697,8 +1769,11 @@ def app(environ, start_response):
                 con.execute("UPDATE sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL", (now, user["id"]))
                 session=b64u(secrets.token_bytes(32));csrf=b64u(secrets.token_bytes(32));session_hash=hashlib.sha256(session.encode()).hexdigest()
                 con.execute("INSERT INTO sessions(token_hash,user_id,expires_at,created_at,user_agent,csrf_hash) VALUES(?,?,?,?,?,?)",(session_hash,user["id"],now+SESSION_TTL,now,environ.get("HTTP_USER_AGENT","")[:180],hashlib.sha256(csrf.encode()).hexdigest()))
-                certificate=new_recovery_certificate(user["public_id"],now)
-                con.execute("INSERT OR REPLACE INTO recovery_keys(user_id,key_hash,created_at,used_at,certificate_version) VALUES(?,?,?,NULL,1)",(user["id"],recovery_key_hash(certificate["credential"]),now))
+                existing_certificate=con.execute("SELECT 1 FROM recovery_keys WHERE user_id=? AND certificate_version=1",(user["id"],)).fetchone()
+                certificate=None
+                if not existing_certificate:
+                    certificate=new_recovery_certificate(user["public_id"],now)
+                    con.execute("INSERT INTO recovery_keys(user_id,key_hash,created_at,used_at,certificate_version) VALUES(?,?,?,NULL,1) ON CONFLICT(user_id) DO UPDATE SET key_hash=excluded.key_hash,created_at=excluded.created_at,used_at=NULL,certificate_version=1 WHERE recovery_keys.certificate_version=0",(user["id"],recovery_key_hash(certificate["credential"]),now))
                 con.execute("DELETE FROM registration_onboarding WHERE user_id=?",(user["id"],))
                 con.execute("INSERT INTO registration_onboarding(session_hash,user_id,request_json,expires_at) VALUES(?,?,?,?)",(session_hash,user["id"],json.dumps(p,separators=(",",":")),now+1800))
                 con.commit()
@@ -1896,7 +1971,6 @@ def app(environ, start_response):
                     return json_response(start_response, "409 Conflict", {"error": "passkey_required", "message": "追加登録には、先に現在のパスキーを登録してください。"})
                 if len(keys) >= 5:
                     return json_response(start_response, "409 Conflict", {"error": "passkey_limit_reached", "message": "登録できるパスキーは5件までです。"})
-                con.execute("DELETE FROM passkey_flows WHERE expires_at<=?", (now,))
                 con.execute("INSERT OR REPLACE INTO passkey_flows(flow_hash,user_id,challenge,mode,expires_at) VALUES(?,?,?,?,?)", (hashlib.sha256(flow.encode()).hexdigest(), current["user_id"], challenge, "manage_add_assert", now + 300))
                 options = {"challenge": challenge, "rpId": PASSKEY_RP_ID, "timeout": 120000, "userVerification": "required", "allowCredentials": [{"type": "public-key", "id": row["credential_id"], "transports": json.loads(row["transports"] or "[]")} for row in keys]}
             return json_response(start_response, "200 OK", {"ok": True, "flow": flow, "publicKey": options}, [("Cache-Control", "no-store")])
@@ -1985,7 +2059,6 @@ def app(environ, start_response):
                 keys=con.execute("SELECT credential_id,transports FROM passkeys WHERE user_id=? ORDER BY created_at",(current["user_id"],)).fetchall()
                 if not keys:
                     con.rollback(); return json_response(start_response,"409 Conflict",{"error":"passkey_required","message":"設定には登録済みパスキーが必要です。"})
-                con.execute("DELETE FROM passkey_flows WHERE expires_at<=?",(now,))
                 con.execute("INSERT INTO passkey_flows(flow_hash,user_id,challenge,mode,expires_at) VALUES(?,?,?,?,?)",(hashlib.sha256(flow.encode()).hexdigest(),current["user_id"],challenge,"totp_setup_assert",now+300))
                 options={"challenge":challenge,"rpId":PASSKEY_RP_ID,"timeout":120000,"userVerification":"required","allowCredentials":[{"type":"public-key","id":row["credential_id"],"transports":json.loads(row["transports"] or "[]")} for row in keys]}
                 con.commit()
@@ -2040,12 +2113,12 @@ def app(environ, start_response):
                 if con.execute("SELECT 1 FROM totp_credentials WHERE user_id=?",(current["user_id"],)).fetchone():
                     con.rollback(); return json_response(start_response,"409 Conflict",{"error":"totp_already_enabled"})
                 con.execute("INSERT INTO totp_credentials(user_id,secret_encrypted,enabled_at,last_step) VALUES(?,?,?,?)",(current["user_id"],pending["secret_encrypted"],now,matched))
-                existing_certificate=con.execute("SELECT 1 FROM recovery_keys WHERE user_id=? AND certificate_version=1 AND used_at IS NULL",(current["user_id"],)).fetchone()
+                existing_certificate=con.execute("SELECT 1 FROM recovery_keys WHERE user_id=? AND certificate_version=1",(current["user_id"],)).fetchone()
                 if existing_certificate:
                     certificate=None
                 else:
                     certificate=new_recovery_certificate(current["public_id"],now)
-                    con.execute("INSERT OR REPLACE INTO recovery_keys(user_id,key_hash,created_at,used_at,certificate_version) VALUES(?,?,?,NULL,1)",(current["user_id"],recovery_key_hash(certificate["credential"]),now))
+                    con.execute("INSERT INTO recovery_keys(user_id,key_hash,created_at,used_at,certificate_version) VALUES(?,?,?,NULL,1) ON CONFLICT(user_id) DO UPDATE SET key_hash=excluded.key_hash,created_at=excluded.created_at,used_at=NULL,certificate_version=1 WHERE recovery_keys.certificate_version=0",(current["user_id"],recovery_key_hash(certificate["credential"]),now))
                 con.execute("UPDATE sessions SET revoked_at=? WHERE user_id=? AND token_hash<>? AND revoked_at IS NULL",(now,current["user_id"],token_hash))
                 con.execute("DELETE FROM login_flows WHERE flow_hash IN (SELECT flow_hash FROM passkey_flows WHERE user_id=?)",(current["user_id"],))
                 con.execute("DELETE FROM login_flows WHERE flow_hash IN (SELECT login_flow_hash FROM mfa_flows WHERE user_id=?)",(current["user_id"],))

@@ -11,6 +11,7 @@ import re
 import secrets
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 from contextlib import contextmanager
@@ -414,6 +415,7 @@ def ensure_session_schema():
         con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_created_active ON sessions(user_id,revoked_at,created_at DESC,expires_at)")
         con.execute("CREATE TABLE IF NOT EXISTS security_rate_limits(rate_key TEXT PRIMARY KEY,window_started INTEGER NOT NULL,attempts INTEGER NOT NULL)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_security_rate_limits_window ON security_rate_limits(window_started)")
+        con.execute("CREATE TABLE IF NOT EXISTS security_rate_limit_maintenance(singleton INTEGER PRIMARY KEY CHECK(singleton=1),last_cleanup INTEGER NOT NULL)")
         con.execute("CREATE TABLE IF NOT EXISTS database_maintenance(task TEXT PRIMARY KEY,last_run INTEGER NOT NULL)")
         con.execute("CREATE TABLE IF NOT EXISTS sso_admin_identity_audit(event_id TEXT PRIMARY KEY,actor_user_id INTEGER NOT NULL,action TEXT NOT NULL,target_hash TEXT NOT NULL,success INTEGER NOT NULL,created_at INTEGER NOT NULL)")
         for table, index_name, columns in (
@@ -443,19 +445,30 @@ def ensure_session_schema():
             (ADMIN_CLIENT_ID,),
         ).fetchone()
         if admin_client:
-            con.execute(
-                "INSERT INTO clients(client_id,secret_hash,redirect_uri,active,created_at) VALUES(?,?,?,?,?) "
-                "ON CONFLICT(client_id) DO UPDATE SET secret_hash=excluded.secret_hash,redirect_uri=excluded.redirect_uri,active=excluded.active",
-                (TENANT_CLIENT_ID, admin_client["secret_hash"], admin_client["redirect_uri"], admin_client["active"], admin_client["created_at"]),
-            )
-            con.execute(
-                "DELETE FROM client_redirect_uris WHERE client_id=?", (TENANT_CLIENT_ID,)
-            )
-            con.execute(
-                "INSERT OR IGNORE INTO client_redirect_uris(client_id,redirect_uri) "
-                "SELECT ?,redirect_uri FROM client_redirect_uris WHERE client_id=?",
-                (TENANT_CLIENT_ID, ADMIN_CLIENT_ID),
-            )
+            tenant_client = con.execute(
+                "SELECT secret_hash,redirect_uri,active,created_at FROM clients WHERE client_id=?",
+                (TENANT_CLIENT_ID,),
+            ).fetchone()
+            admin_redirects = {row[0] for row in con.execute(
+                "SELECT redirect_uri FROM client_redirect_uris WHERE client_id=?", (ADMIN_CLIENT_ID,)
+            )}
+            tenant_redirects = {row[0] for row in con.execute(
+                "SELECT redirect_uri FROM client_redirect_uris WHERE client_id=?", (TENANT_CLIENT_ID,)
+            )}
+            client_values = (admin_client["secret_hash"], admin_client["redirect_uri"], admin_client["active"], admin_client["created_at"])
+            tenant_values = tuple(tenant_client) if tenant_client else None
+            if tenant_values != client_values or tenant_redirects != admin_redirects:
+                con.execute(
+                    "INSERT INTO clients(client_id,secret_hash,redirect_uri,active,created_at) VALUES(?,?,?,?,?) "
+                    "ON CONFLICT(client_id) DO UPDATE SET secret_hash=excluded.secret_hash,redirect_uri=excluded.redirect_uri,active=excluded.active,created_at=excluded.created_at",
+                    (TENANT_CLIENT_ID,) + client_values,
+                )
+                if tenant_redirects != admin_redirects:
+                    con.execute("DELETE FROM client_redirect_uris WHERE client_id=?", (TENANT_CLIENT_ID,))
+                    con.executemany(
+                        "INSERT INTO client_redirect_uris(client_id,redirect_uri) VALUES(?,?)",
+                        [(TENANT_CLIENT_ID, uri) for uri in sorted(admin_redirects)],
+                    )
         con.execute("PRAGMA user_version=%d" % SSO_DATABASE_SCHEMA_VERSION)
         con.commit()
 
@@ -675,13 +688,13 @@ def consume_security_rate_limit_in_transaction(con, key, maximum, window_seconds
     """Consume a limit inside a caller's existing BEGIN IMMEDIATE transaction."""
     now = int(time.time()) if now is None else int(now)
     maintenance = con.execute(
-        "SELECT last_run FROM database_maintenance WHERE task='security_rate_limits'"
+        "SELECT last_cleanup FROM security_rate_limit_maintenance WHERE singleton=1"
     ).fetchone()
-    if not maintenance or int(maintenance["last_run"]) <= now - 3600:
+    if not maintenance or int(maintenance["last_cleanup"]) <= now - 3600:
         con.execute("DELETE FROM security_rate_limits WHERE window_started<?", (now - 86400,))
         con.execute(
-            "INSERT INTO database_maintenance(task,last_run) VALUES('security_rate_limits',?) "
-            "ON CONFLICT(task) DO UPDATE SET last_run=excluded.last_run",
+            "INSERT INTO security_rate_limit_maintenance(singleton,last_cleanup) VALUES(1,?) "
+            "ON CONFLICT(singleton) DO UPDATE SET last_cleanup=excluded.last_cleanup",
             (now,),
         )
     row = con.execute("SELECT window_started,attempts FROM security_rate_limits WHERE rate_key=?", (key,)).fetchone()
@@ -994,7 +1007,7 @@ def identity_home_page(user=None):
 </style></head><body><main><div class="brand"><span class="mark" aria-hidden="true">S</span><span>2415.jp / SSO ID</span></div><section class="card hero">%s</section><footer class="foot"><span>安全なシングルサインオン</span><span>sso.2415.jp</span></footer></main></body></html>'''.replace("%s", content)).encode("utf-8")
 
 
-def app(environ, start_response):
+def _app_impl(environ, start_response):
     path = environ.get("PATH_INFO", "")
     method = environ.get("REQUEST_METHOD", "GET")
     if path.startswith("/mnsl-signing/"):
@@ -2246,6 +2259,29 @@ def app(environ, start_response):
     if path == "/" and method == "GET":
         return response(start_response, "200 OK", identity_home_page(user_for_session(environ)), "text/html; charset=utf-8", headers=[("Cache-Control", "no-store")])
     return json_response(start_response, "404 Not Found", {"error": "not_found"})
+
+
+def app(environ, start_response):
+    """Keep unexpected request and database failures from escaping the CGI/WSGI boundary."""
+    try:
+        return _app_impl(environ, start_response)
+    except sqlite3.OperationalError:
+        # Busy/locked storage and transient filesystem errors are service outages,
+        # not client errors. Keep the message generic and ask clients to retry.
+        print("sso_request_failed category=database", file=sys.stderr)
+        return json_response(
+            start_response, "503 Service Unavailable",
+            {"error": "temporarily_unavailable", "message": "一時的に処理できません。少し待ってから再度お試しください。"},
+            headers=[("Retry-After", "2")],
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return json_response(start_response, "400 Bad Request", {"error": "invalid_request"})
+    except Exception as error:
+        print("sso_request_failed category=internal type=" + type(error).__name__, file=sys.stderr)
+        return json_response(
+            start_response, "500 Internal Server Error",
+            {"error": "server_error", "message": "要求を処理できませんでした。時間をおいて再度お試しください。"},
+        )
 
 
 if __name__ == "__main__":

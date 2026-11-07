@@ -31,7 +31,8 @@ _SCHEMA = (
         created_at BIGINT NOT NULL,
         expires_at BIGINT NOT NULL,
         revoked_at BIGINT NULL,
-        INDEX idx_sunabar_key_workspace (workspace_id)
+        INDEX idx_sunabar_key_workspace (workspace_id),
+        INDEX idx_sunabar_key_expiry (expires_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
     """CREATE TABLE IF NOT EXISTS sunabar_licenses (
         license_id CHAR(20) NOT NULL PRIMARY KEY,
@@ -47,6 +48,16 @@ _SCHEMA = (
         status VARCHAR(16) NOT NULL DEFAULT 'active',
         INDEX idx_sunabar_license_workspace (workspace_id),
         INDEX idx_sunabar_license_status_expiry (status, expires_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    """CREATE TABLE IF NOT EXISTS sunabar_sessions (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        workspace_id CHAR(32) NOT NULL, license_id CHAR(20) NOT NULL,
+        device_hash CHAR(64) NOT NULL, access_hash CHAR(64) NOT NULL,
+        refresh_hash CHAR(64) NOT NULL, access_expires_at BIGINT NOT NULL,
+        refresh_expires_at BIGINT NOT NULL, revoked_at BIGINT NULL,
+        UNIQUE KEY uq_sunabar_device (workspace_id, license_id, device_hash),
+        UNIQUE KEY uq_sunabar_access (access_hash),
+        UNIQUE KEY uq_sunabar_refresh (refresh_hash)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
 )
 PRODUCTS = [
@@ -131,12 +142,68 @@ def _db_connect():
         with connection.cursor() as cursor:
             for statement in _SCHEMA:
                 cursor.execute(statement)
+            cursor.execute("SHOW INDEX FROM sunabar_api_keys WHERE Key_name=%s", ("idx_sunabar_key_expiry",))
+            if not cursor.fetchone():
+                try:
+                    cursor.execute("CREATE INDEX idx_sunabar_key_expiry ON sunabar_api_keys (expires_at)")
+                except pymysql.err.Error as error:
+                    # Another CGI worker may add the index at the same time.
+                    if not error.args or error.args[0] != 1061:
+                        raise
         connection.commit()
     except Exception:
         connection.rollback()
         connection.close()
         raise
+    try:
+        _maybe_cleanup_expired_api_keys(connection)
+    except Exception:
+        # Expiry cleanup is maintenance. A transient filesystem or DB error must
+        # never turn an otherwise usable API request into an outage.
+        connection.rollback()
+        print("sunabar_maintenance_failed task=expired_api_keys", file=sys.stderr)
     return connection
+
+
+def _maybe_cleanup_expired_api_keys(connection):
+    """Delete expired key hashes at most hourly, without scheduling/cron support."""
+    now = int(time.time())
+    if STATE_DIR.is_symlink():
+        raise RuntimeError("unsafe_state_directory")
+    STATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(STATE_DIR, 0o700)
+    lock_path = STATE_DIR / "api-key-cleanup.lock"
+    state_path = STATE_DIR / "api-key-cleanup.json"
+    if lock_path.is_symlink() or state_path.is_symlink():
+        raise RuntimeError("unsafe_api_key_cleanup_state")
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(os.dup(fd), "r+b") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                last_cleanup = int(state_path.read_text(encoding="ascii").strip())
+            except FileNotFoundError:
+                last_cleanup = 0
+            except (OSError, ValueError):
+                # A damaged marker means run cleanup now and replace it atomically.
+                last_cleanup = 0
+            if now - last_cleanup < 3600:
+                return
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM sunabar_api_keys WHERE expires_at<=%s", (now,))
+            connection.commit()
+            temp_path = STATE_DIR / (".api-key-cleanup-" + secrets.token_hex(8))
+            temp_fd = os.open(str(temp_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            try:
+                os.write(temp_fd, str(now).encode("ascii"))
+                os.fsync(temp_fd)
+            finally:
+                os.close(temp_fd)
+            os.replace(str(temp_path), str(state_path))
+            os.chmod(state_path, 0o600)
+    finally:
+        os.close(fd)
 
 
 def _encode(prefix, claims):
@@ -297,6 +364,13 @@ def handle(method, path, headers, remote_addr, content_type, content_length, str
         connection.close()
         return _response(200, {"ok": True, "api_version": "sunabar-v1",
                                "dependencies": {"database": "ok"}})
+    if path in ("/api/v1/activate", "/api/v1/session/check", "/api/v1/session/refresh", "/api/v1/session/deactivate"):
+        if method != "POST":
+            raise ApiError(405, "method_not_allowed")
+        from sunabar_sessions import handle_session
+        identity = _api_key(headers, remote_addr)
+        data = _json_body(method, content_type, content_length, stream)
+        return handle_session(path, identity, data, _db_connect, _response, ApiError)
     if path == "/api/v1/key" and method == "POST":
         _json_body(method, content_type, content_length, stream)
         if not _limited("key:" + remote_addr, 10, 3600):
