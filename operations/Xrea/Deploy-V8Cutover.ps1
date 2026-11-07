@@ -110,27 +110,33 @@ foreach ($destination in $targets) {
                 if ([int]$migration.StatusCode -ne 200 -or -not $result.ok -or -not $result.product_key_issuance_v8.ok) { throw 'V8-only schema installation failed.' }
                 Write-Host "$($destination.Name): additive schema installation completed before handler activation."
             }
-            if ($Profile -eq 'LicenseV4' -and $file -eq 'ha_migrate.py') {
-                Write-Host "$($destination.Name): installing additive License V4 tables."
-                $migration = $null
-                for ($attempt=1; $attempt -le 3; $attempt++) {
-                    try {
-                        $migration = Invoke-WebRequest -Uri "https://$domain/license/ha/migrate.php" -Method Post -Headers $headers -ContentType 'application/json' -Body '{"scope":"license_v4"}' -TimeoutSec 240 -SkipHttpErrorCheck
-                        break
-                    } catch {
-                        if ($attempt -eq 3) { throw }
-                        Write-Host "$($destination.Name): migration response ended; retrying the idempotent additive migration ($attempt/3)."
-                        Start-Sleep -Seconds 3
-                    }
-                }
-                $result = $migration.Content | ConvertFrom-Json
-                if ([int]$migration.StatusCode -ne 200 -or -not $result.ok -or -not $result.license_v4.ok) { throw 'V4 additive schema installation failed.' }
-                foreach ($table in @('license_v4_challenges','license_v4_devices','license_v4_sessions','license_v4_proofs','license_v4_refresh_history')) {
-                    if ($table -notin $result.license_v4.tables) { throw "V4 migration omitted table: $table" }
-                }
-                Write-Host "$($destination.Name): additive V4 schema installation completed."
-            }
         }
+        if ($Profile -eq 'LicenseV4') {
+            Write-Host "$($destination.Name): confirming the deployed application is responding before schema migration."
+            $ready = Invoke-WebRequest -Uri $exportUrl -Headers $headers -TimeoutSec 60 -SkipHttpErrorCheck
+            if ([int]$ready.StatusCode -ne 200) { throw "Application readiness check failed before migration: HTTP $($ready.StatusCode)" }
+        }
+        if ($Profile -eq 'LicenseV4') {
+            Write-Host "$($destination.Name): installing additive License V4 tables."
+            $migration = $null
+            for ($attempt=1; $attempt -le 3; $attempt++) {
+                try {
+                    $migration = Invoke-WebRequest -Uri "https://$domain/license/ha/migrate.php" -Method Post -Headers $headers -ContentType 'application/json' -Body '{"scope":"license_v4"}' -TimeoutSec 240 -SkipHttpErrorCheck
+                    break
+                } catch {
+                    if ($attempt -eq 3) { throw }
+                    Write-Host "$($destination.Name): migration response ended; retrying the idempotent additive migration ($attempt/3)."
+                    Start-Sleep -Seconds 3
+                }
+            }
+            $result = $migration.Content | ConvertFrom-Json
+            if ([int]$migration.StatusCode -ne 200 -or -not $result.ok -or -not $result.license_v4.ok) { throw 'V4 additive schema installation failed.' }
+            foreach ($table in @('license_v4_challenges','license_v4_devices','license_v4_sessions','license_v4_proofs','license_v4_refresh_history')) {
+                if ($table -notin $result.license_v4.tables) { throw "V4 migration omitted table: $table" }
+            }
+            Write-Host "$($destination.Name): additive V4 schema installation completed."
+        }
+
         Write-Host "$($destination.Name): capturing post-migration database snapshot."
         $after = Save-PrivateSnapshot $exportUrl $headers (Join-Path $privateRoot ($destination.Name + '-after.dpapi'))
         if ($Profile -eq 'License' -or $Profile -eq 'LicenseV4') {
@@ -203,3 +209,4 @@ foreach ($destination in $targets) {
 Write-Host "Code backups: $backupRoot"
 Write-Host "Database snapshots (Windows current-user DPAPI): $privateRoot"
 & (Join-Path $PSScriptRoot '..\Prune-DeployBackups.ps1')
+
