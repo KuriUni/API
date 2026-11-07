@@ -677,10 +677,10 @@
     },
     {
       "path": "/api/v4/index.php",
-      "handler": "native_v4",
       "methods": [
         "GET"
-      ]
+      ],
+      "access": "endpoint_or_include"
     },
     {
       "path": "/api/v4/reauth.php",
@@ -1049,10 +1049,10 @@
     },
     {
       "path": "/license/api/v4/index.php",
-      "handler": "native_v4",
       "methods": [
         "GET"
-      ]
+      ],
+      "access": "endpoint_or_include"
     },
     {
       "path": "/license/api/v4/reauth.php",
