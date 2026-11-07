@@ -16,7 +16,7 @@
 | --- | --- | --- |
 | `operations/Xrea/Download-Xrea.ps1` | Primaryから公開ソースを取得 | 既定保存先はプロジェクトルートの `xrea-source`。リモート名のパストラバーサルとリンク先への書き込みを拒否し、各ファイルは一時保存後に置換 |
 | `operations/Xrea/Preview-XreaDeploy.ps1` | Primary/Backupの差分アップロード予定を確認 | ローカルの同期台帳のみ参照。FTP接続・資格情報入力・ファイル変更なし。初回は全対象ファイルを一覧表示 |
-| `operations/Xrea/Deploy-Xrea.ps1` | XREA Primary/Backupへ差分アップロード | 初回にDPAPI資格情報を設定。既定は両方。ローカルSHA-256台帳と比較し、変更分だけ送信。完了後、削除済みローカルファイルの台帳項目を整理。FTP側の全体一覧は取得しない |
+| `operations/Xrea/Deploy-Xrea.ps1` | XREA Primary/Backupへ差分アップロード | DPAPI資格情報があれば入力画面を省略。未保存時または認証失敗時だけ入力。既定は両方。ローカルSHA-256台帳と比較し、変更分だけ送信。完了後、削除済みローカルファイルの台帳項目を整理。FTP側の全体一覧は取得しない |
 | `operations/Xrea/Sync-XreaBackup.ps1` | Backupだけへ差分アップロード | ローカルSHA-256台帳と比較。ノード固有設定とローカルバックアップ類を除外し、リモートのみのファイルは保持。転送成功後に不要な台帳項目を整理 |
 | `operations/Xrea/Deploy-TUTI-Help.ps1` | ヘルプHTMLの配置 | 既存ページをローカルバックアップしてから更新 |
 | `operations/Xrea/Upload-Xrea.ps1` | 任意のフォルダーを任意の公開パスへアップロード | 高影響の汎用ツール。接続先を確認して個別実行 |

@@ -70,6 +70,10 @@ function Save-DeployCredentials {
 function Get-DeployCredential {
     param([Parameter(Mandatory = $true)] $Destination, [switch] $ForcePassword)
     $hasSaved = $savedCredentials.ContainsKey($Destination.Name) -and $savedCredentials[$Destination.Name].UserName -eq $Destination.User
+    if ($hasSaved -and -not $ForcePassword) {
+        Write-Host "Using the saved DPAPI credential for $($Destination.Name)."
+        return $savedCredentials[$Destination.Name]
+    }
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "XREA FTP - $($Destination.Name)"
