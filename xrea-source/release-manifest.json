@@ -1,9 +1,9 @@
 {
     "schema": 1,
-    "release_id": "license-v3-activate-guide-20261107T160309Z",
+    "release_id": "license-v3-guide-css-fix-20261107T161530Z",
     "framework": "fastapi",
     "layout": "existing-public-root",
-    "generated_at_utc": "2026-11-07T16:03:09Z",
+    "generated_at_utc": "2026-11-07T16:15:30Z",
     "files": [
         {
             "path": "admin-api-workbench.css",
@@ -117,8 +117,8 @@
         },
         {
             "path": "api/v3/activate.html",
-            "size": 9631,
-            "sha256": "8976319e21a5c4d8ec722aad261c4fe5ee32f8cf2a80c6e8649ebe5233eeacd6"
+            "size": 11417,
+            "sha256": "0c7a5e9fd15c917c1270938b1461ee3fd306e57f2e016ba30a457907ba0edeae"
         },
         {
             "path": "api_catalog.py",
