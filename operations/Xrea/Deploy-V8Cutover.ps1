@@ -31,7 +31,16 @@ foreach ($file in $files) {
     if (-not (Test-Path -LiteralPath (Join-Path $source $file))) { throw "Missing source: $file" }
 }
 function Save-PrivateSnapshot($Url, $Headers, $Path) {
-    $response = Invoke-WebRequest -Uri $Url -Headers $Headers -TimeoutSec 120 -SkipHttpErrorCheck
+    $response = $null
+    for ($attempt=1; $attempt -le 3; $attempt++) {
+        try {
+            $response = Invoke-WebRequest -Uri $Url -Headers $Headers -TimeoutSec 180 -SkipHttpErrorCheck
+            break
+        } catch {
+            if ($attempt -eq 3) { throw }
+            Start-Sleep -Seconds 2
+        }
+    }
     if ([int]$response.StatusCode -ne 200) { throw "Snapshot export failed: HTTP $($response.StatusCode)" }
     $snapshot = $response.Content | ConvertFrom-Json
     if (-not $snapshot.ok -or $snapshot.schema -ne 2 -or -not $snapshot.tables) { throw 'Invalid snapshot response.' }
@@ -51,6 +60,7 @@ foreach ($destination in $targets) {
     New-Item -ItemType Directory -Path $backup,$privateRoot -Force | Out-Null
     $session = [WinSCP.Session]::new()
     $session.ExecutablePath = Join-Path $install 'WinSCP.exe'
+    $session.SessionLogPath = Join-Path $backup 'winscp.log'
     $uploaded = [Collections.Generic.List[string]]::new()
     $hashes = @{}
     $missing = @{}
@@ -81,6 +91,7 @@ foreach ($destination in $targets) {
         $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $backup 'deployment.json') -Encoding utf8
         $exportUrl = "https://$domain/license/ha/export.php"
         if ($destination.Name -eq 'Backup') { $exportUrl += '?standby_backup=1' }
+        Write-Host "$($destination.Name): captured pre-deployment database snapshot."
         $before = Save-PrivateSnapshot $exportUrl $headers (Join-Path $privateRoot ($destination.Name + '-before.dpapi'))
         foreach ($file in $files) {
             $saved = Join-Path $backup $file
@@ -109,6 +120,7 @@ foreach ($destination in $targets) {
                 Write-Host "$($destination.Name): additive V4 schema installation completed."
             }
         }
+        Write-Host "$($destination.Name): capturing post-migration database snapshot."
         $after = Save-PrivateSnapshot $exportUrl $headers (Join-Path $privateRoot ($destination.Name + '-after.dpapi'))
         if ($Profile -eq 'License' -or $Profile -eq 'LicenseV4') {
             $v3 = Invoke-WebRequest -Uri "https://$domain/license/api/v3/refresh.php" -Method Post -ContentType 'application/json' -Body '{}' -TimeoutSec 30 -SkipHttpErrorCheck
