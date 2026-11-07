@@ -52,6 +52,10 @@ def handle_session(path, identity, data, connect, response, error):
                 if not license_row or license_row['status'] != 'active' or int(license_row['expires_at']) <= now:
                     raise error(401, 'license_unavailable')
                 license_id = license_row['license_id']
+                # Expired sessions cannot be used again; remove them before enforcing
+                # the device limit so abandoned test devices do not accumulate forever.
+                cursor.execute('DELETE FROM sunabar_sessions WHERE workspace_id=%s AND license_id=%s AND refresh_expires_at<=%s',
+                               (workspace, license_id, now))
                 cursor.execute('SELECT id, revoked_at, refresh_expires_at FROM sunabar_sessions WHERE workspace_id=%s AND license_id=%s AND device_hash=%s FOR UPDATE', (workspace, license_id, device_hash))
                 old = cursor.fetchone()
                 cursor.execute('SELECT COUNT(*) AS count FROM sunabar_sessions WHERE workspace_id=%s AND license_id=%s AND revoked_at IS NULL AND refresh_expires_at>%s', (workspace, license_id, now))

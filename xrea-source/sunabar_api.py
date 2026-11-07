@@ -1,6 +1,8 @@
 """Same-origin relay from 2415.jp to the isolated Core Server Sunabar API."""
 import urllib.error
 import urllib.request
+import sys
+import uuid
 
 from native_http import make_response
 
@@ -28,14 +30,16 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _json_error(status, code, message):
+def _json_error(status, code, message, request_id=None):
     import json
-    body = json.dumps({"ok": False, "error": code, "message": message},
+    request_id = request_id or uuid.uuid4().hex[:16]
+    body = json.dumps({"ok": False, "error": code, "message": message, "request_id": request_id},
                       ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return make_response(body, status, [
         ("Content-Type", "application/json; charset=utf-8"),
         ("Cache-Control", "no-store"),
         ("X-Content-Type-Options", "nosniff"),
+        ("X-Request-ID", request_id),
         ("Content-Length", str(len(body))),
     ])
 
@@ -103,14 +107,17 @@ def _relay(request, route_name):
                 ("Content-Length", str(len(response_body))),
             ]
             for name in ("Access-Control-Allow-Origin", "Access-Control-Allow-Headers",
-                         "Access-Control-Allow-Methods", "Retry-After"):
+                         "Access-Control-Allow-Methods", "Retry-After", "X-Request-ID"):
                 value = upstream.headers.get(name)
                 if value:
                     response_headers.append((name, value))
             return make_response(response_body, status, response_headers)
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        request_id = uuid.uuid4().hex[:16]
+        print("sunabar_relay_failed request_id=%s route=%s error_type=%s" %
+              (request_id, route_name, type(exc).__name__), file=sys.stderr, flush=True)
         return _json_error(503, "sunabar_upstream_unavailable",
-                           "The Sunabar Core Server is temporarily unavailable.")
+                           "The Sunabar Core Server is temporarily unavailable.", request_id)
 
 
 def issue_key(request):

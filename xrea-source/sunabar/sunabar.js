@@ -52,11 +52,26 @@
   };
 
   const byId = (id) => document.getElementById(id);
+  const REQUEST_TIMEOUT_MS = 20000;
   let current = 'health';
   let lastResponse = null;
   let lastLicense = null;
   let lastSession = null;
+  let requestBusy = false;
   const drafts = Object.create(null);
+
+  async function fetchWithTimeout(url, options) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } catch (error) {
+      if (controller.signal.aborted) throw new Error('サーバーの応答が20秒以内にありませんでした。時間をおいて再試行してください。');
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
 
   function readKey() {
     try {
@@ -186,7 +201,7 @@
     button.textContent = 'キーを発行中…';
     byId('key-message').textContent = '';
     try {
-      const response = await fetch(new URL(`${API_BASE}key.php`, document.baseURI), {
+      const response = await fetchWithTimeout(new URL(`${API_BASE}key.php`, document.baseURI), {
         method: 'POST', cache: 'no-store', credentials: 'omit',
         headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: '{}',
       });
@@ -209,6 +224,7 @@
   }
 
   async function runRequest() {
+    if (requestBusy) return;
     byId('form-error').textContent = '';
     const operation = operations[current];
     const saved = readKey();
@@ -229,8 +245,10 @@
     if (current === 'revoke' && !window.confirm('このデモライセンスを失効しますか？')) return;
     const started = performance.now();
     let result;
+    requestBusy = true;
+    byId('send').disabled = true;
     try {
-      const response = await fetch(new URL(operation.path, document.baseURI), {
+      const response = await fetchWithTimeout(new URL(operation.path, document.baseURI), {
         method: operation.method, cache: 'no-store', credentials: 'omit',
         headers: {
           Accept: 'application/json',
@@ -246,6 +264,9 @@
       }
     } catch (error) {
       result = { status: 0, body: { ok: false, error: 'network_error', message: `Sunabar APIに接続できません: ${error.message}` } };
+    } finally {
+      requestBusy = false;
+      byId('send').disabled = false;
     }
     result.duration = performance.now() - started;
     if (result.status >= 200 && result.status < 300 && result.body?.ok) handleSuccessfulResponse(current, body, result);

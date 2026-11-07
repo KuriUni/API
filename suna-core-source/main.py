@@ -17,6 +17,7 @@ from pathlib import Path
 API_KEY_TTL = 86400
 LICENSE_TTL = 30 * 86400
 MAX_BODY = 16384
+SCHEMA_VERSION = 2
 STATE_DIR = Path(__file__).resolve().parent / ".sunabar"
 sys.path.insert(0, str(Path(__file__).resolve().parent / "pymysql_vendor.zip"))
 import pymysql
@@ -31,7 +32,8 @@ _SCHEMA = (
         created_at BIGINT NOT NULL,
         expires_at BIGINT NOT NULL,
         revoked_at BIGINT NULL,
-        INDEX idx_sunabar_key_workspace (workspace_id)
+        INDEX idx_sunabar_key_workspace (workspace_id),
+        INDEX idx_sunabar_key_expiry (expires_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
     """CREATE TABLE IF NOT EXISTS sunabar_licenses (
         license_id CHAR(20) NOT NULL PRIMARY KEY,
@@ -46,6 +48,7 @@ _SCHEMA = (
         expires_at BIGINT NOT NULL,
         status VARCHAR(16) NOT NULL DEFAULT 'active',
         INDEX idx_sunabar_license_workspace (workspace_id),
+        INDEX idx_sunabar_license_recent (workspace_id, issued_at, license_id),
         INDEX idx_sunabar_license_status_expiry (status, expires_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
     """CREATE TABLE IF NOT EXISTS sunabar_sessions (
@@ -56,7 +59,8 @@ _SCHEMA = (
         refresh_expires_at BIGINT NOT NULL, revoked_at BIGINT NULL,
         UNIQUE KEY uq_sunabar_device (workspace_id, license_id, device_hash),
         UNIQUE KEY uq_sunabar_access (access_hash),
-        UNIQUE KEY uq_sunabar_refresh (refresh_hash)
+        UNIQUE KEY uq_sunabar_refresh (refresh_hash),
+        INDEX idx_sunabar_session_license_expiry (workspace_id, license_id, refresh_expires_at, revoked_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
 )
 PRODUCTS = [
@@ -114,6 +118,67 @@ def _secret():
     return hmac.new(raw, b"TUTI-SUNABAR-EMULATOR-v1", hashlib.sha256).digest()
 
 
+def _ensure_schema(connection):
+    """Apply additive schema changes once, serializing concurrent CGI workers."""
+    if STATE_DIR.is_symlink():
+        raise RuntimeError("unsafe_state_directory")
+    STATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(STATE_DIR, 0o700)
+    lock_path = STATE_DIR / "schema-migration.lock"
+
+    def current_version(cursor):
+        try:
+            cursor.execute("SELECT version FROM sunabar_schema_meta WHERE id=1")
+            row = cursor.fetchone()
+            return int(row["version"]) if row else 0
+        except pymysql.err.ProgrammingError as error:
+            # Error 1146 means a fresh or restored database needs migration.
+            if not error.args or error.args[0] != 1146:
+                raise
+            return 0
+
+    with connection.cursor() as cursor:
+        if current_version(cursor) >= SCHEMA_VERSION:
+            return
+    if lock_path.is_symlink():
+        raise RuntimeError("unsafe_schema_lock")
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(os.dup(fd), "r+b") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            with connection.cursor() as cursor:
+                if current_version(cursor) >= SCHEMA_VERSION:
+                    return
+                for statement in _SCHEMA:
+                    cursor.execute(statement)
+                # CREATE TABLE IF NOT EXISTS does not add indexes to existing installations.
+                indexes = (
+                    ("sunabar_api_keys", "idx_sunabar_key_expiry", "expires_at"),
+                    ("sunabar_licenses", "idx_sunabar_license_recent", "workspace_id, issued_at, license_id"),
+                    ("sunabar_sessions", "idx_sunabar_session_license_expiry",
+                     "workspace_id, license_id, refresh_expires_at, revoked_at"),
+                )
+                for table, name, columns in indexes:
+                    cursor.execute("SHOW INDEX FROM `" + table + "` WHERE Key_name=%s", (name,))
+                    if cursor.fetchone():
+                        continue
+                    try:
+                        cursor.execute("CREATE INDEX `" + name + "` ON `" + table + "` (" + columns + ")")
+                    except pymysql.err.Error as error:
+                        # Another host may have completed this additive migration concurrently.
+                        if not error.args or error.args[0] != 1061:
+                            raise
+                cursor.execute("""CREATE TABLE IF NOT EXISTS sunabar_schema_meta (
+                    id TINYINT NOT NULL PRIMARY KEY, version INT NOT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
+                cursor.execute("""INSERT INTO sunabar_schema_meta (id, version) VALUES (1, %s)
+                    ON DUPLICATE KEY UPDATE version=VALUES(version)""", (SCHEMA_VERSION,))
+            connection.commit()
+    finally:
+        os.close(fd)
+
+
 def _db_connect():
     config_path = STATE_DIR / "database.json"
     if STATE_DIR.is_symlink() or config_path.is_symlink():
@@ -138,15 +203,60 @@ def _db_connect():
         autocommit=False,
     )
     try:
-        with connection.cursor() as cursor:
-            for statement in _SCHEMA:
-                cursor.execute(statement)
-        connection.commit()
+        _ensure_schema(connection)
     except Exception:
         connection.rollback()
         connection.close()
         raise
+    try:
+        _maybe_cleanup_expired_api_keys(connection)
+    except Exception:
+        # Expiry cleanup is maintenance. A transient filesystem or DB error must
+        # never turn an otherwise usable API request into an outage.
+        connection.rollback()
+        print("sunabar_maintenance_failed task=expired_api_keys", file=sys.stderr)
     return connection
+
+
+def _maybe_cleanup_expired_api_keys(connection):
+    """Delete expired key hashes at most hourly, without scheduling/cron support."""
+    now = int(time.time())
+    if STATE_DIR.is_symlink():
+        raise RuntimeError("unsafe_state_directory")
+    STATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(STATE_DIR, 0o700)
+    lock_path = STATE_DIR / "api-key-cleanup.lock"
+    state_path = STATE_DIR / "api-key-cleanup.json"
+    if lock_path.is_symlink() or state_path.is_symlink():
+        raise RuntimeError("unsafe_api_key_cleanup_state")
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(os.dup(fd), "r+b") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                last_cleanup = int(state_path.read_text(encoding="ascii").strip())
+            except FileNotFoundError:
+                last_cleanup = 0
+            except (OSError, ValueError):
+                # A damaged marker means run cleanup now and replace it atomically.
+                last_cleanup = 0
+            if now - last_cleanup < 3600:
+                return
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM sunabar_api_keys WHERE expires_at<=%s", (now,))
+            connection.commit()
+            temp_path = STATE_DIR / (".api-key-cleanup-" + secrets.token_hex(8))
+            temp_fd = os.open(str(temp_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            try:
+                os.write(temp_fd, str(now).encode("ascii"))
+                os.fsync(temp_fd)
+            finally:
+                os.close(temp_fd)
+            os.replace(str(temp_path), str(state_path))
+            os.chmod(state_path, 0o600)
+    finally:
+        os.close(fd)
 
 
 def _encode(prefix, claims):
@@ -259,7 +369,7 @@ def _api_key(headers, remote_addr):
     return claims
 
 
-def _response(status, payload, headers=()):
+def _response(status, payload, headers=(), request_id=None):
     phrases = {200: "OK", 201: "Created", 204: "No Content", 400: "Bad Request", 401: "Unauthorized",
                404: "Not Found", 405: "Method Not Allowed", 409: "Conflict", 413: "Content Too Large",
                415: "Unsupported Media Type", 422: "Unprocessable Content", 429: "Too Many Requests",
@@ -270,6 +380,12 @@ def _response(status, payload, headers=()):
              "X-Content-Type-Options: nosniff\r\n", "Access-Control-Allow-Origin: *\r\n",
              "Access-Control-Allow-Headers: X-Sunabar-API-Key, Authorization, Content-Type\r\n",
              "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"]
+    if request_id:
+        lines.append("X-Request-ID: %s\r\n" % request_id)
+    if status == 429 and not any(key.lower() == "retry-after" for key, _ in headers):
+        lines.append("Retry-After: 60\r\n")
+    elif status == 503:
+        lines.append("Retry-After: 5\r\n")
     for key, value in headers:
         lines.append("%s: %s\r\n" % (key, value))
     lines.append("Content-Length: %d\r\n" % len(body))
@@ -299,13 +415,14 @@ def _json_body(method, content_type, content_length, stream):
     return data
 
 
-def handle(method, path, headers, remote_addr, content_type, content_length, stream):
+def handle(method, path, headers, remote_addr, content_type, content_length, stream, request_id=None):
+    reply = lambda status, payload, headers=(): _response(status, payload, headers, request_id)
     if method == "OPTIONS":
-        return _response(204, {})
+        return reply(204, {})
     if path == "/api/v1/healthz" and method == "GET":
         connection = _db_connect()
         connection.close()
-        return _response(200, {"ok": True, "api_version": "sunabar-v1",
+        return reply(200, {"ok": True, "api_version": "sunabar-v1",
                                "dependencies": {"database": "ok"}})
     if path in ("/api/v1/activate", "/api/v1/session/check", "/api/v1/session/refresh", "/api/v1/session/deactivate"):
         if method != "POST":
@@ -313,7 +430,7 @@ def handle(method, path, headers, remote_addr, content_type, content_length, str
         from sunabar_sessions import handle_session
         identity = _api_key(headers, remote_addr)
         data = _json_body(method, content_type, content_length, stream)
-        return handle_session(path, identity, data, _db_connect, _response, ApiError)
+        return handle_session(path, identity, data, _db_connect, reply, ApiError)
     if path == "/api/v1/key" and method == "POST":
         _json_body(method, content_type, content_length, stream)
         if not _limited("key:" + remote_addr, 10, 3600):
@@ -336,14 +453,14 @@ def handle(method, path, headers, remote_addr, content_type, content_length, str
             raise
         finally:
             connection.close()
-        return _response(201, {"ok": True, "api_version": "sunabar-v1", "data": {
+        return reply(201, {"ok": True, "api_version": "sunabar-v1", "data": {
             "api_key": key, "scope": "sunabar:emulate", "key_type": "Sunabar emulator only",
             "expires_at": now + API_KEY_TTL, "expires_in": API_KEY_TTL,
             "warning": "This key cannot access production or Sandbox BaaS APIs."}})
 
     if path == "/api/v1/products" and method == "GET":
         _api_key(headers, remote_addr)
-        return _response(200, {"ok": True, "api_version": "sunabar-v1", "data": {"products": PRODUCTS}})
+        return reply(200, {"ok": True, "api_version": "sunabar-v1", "data": {"products": PRODUCTS}})
 
     if path == "/api/v1/licenses/list" and method == "GET":
         api_key = _api_key(headers, remote_addr)
@@ -359,7 +476,7 @@ def handle(method, path, headers, remote_addr, content_type, content_length, str
             for row in rows:
                 if row["status"] == "active" and int(row["expires_at"]) <= now:
                     row["status"] = "expired"
-            return _response(200, {"ok": True, "api_version": "sunabar-v1", "data": {"licenses": rows, "limit": 100}})
+            return reply(200, {"ok": True, "api_version": "sunabar-v1", "data": {"licenses": rows, "limit": 100}})
         finally:
             connection.close()
 
@@ -378,7 +495,7 @@ def handle(method, path, headers, remote_addr, content_type, content_length, str
                     raise ApiError(404, "license_not_found")
                 cursor.execute("UPDATE sunabar_licenses SET status='revoked' WHERE license_id=%s AND workspace_id=%s", (license_id, api_key["workspace"]))
             connection.commit()
-            return _response(200, {"ok": True, "api_version": "sunabar-v1", "data": {"license_id": license_id, "status": "revoked"}})
+            return reply(200, {"ok": True, "api_version": "sunabar-v1", "data": {"license_id": license_id, "status": "revoked"}})
         except Exception:
             connection.rollback()
             raise
@@ -399,6 +516,9 @@ def handle(method, path, headers, remote_addr, content_type, content_length, str
             mode = str(data.get("license_mode", "single"))
             if mode not in product["license_modes"]:
                 raise ApiError(422, "invalid_license_mode")
+            if not _limited("license:" + api_key["workspace"], 20, 3600):
+                raise ApiError(429, "license_issue_limit",
+                               "This workspace can issue at most 20 demo licenses per hour.")
             try:
                 max_devices = int(data.get("max_devices", 1))
             except (TypeError, ValueError):
@@ -432,7 +552,7 @@ def handle(method, path, headers, remote_addr, content_type, content_length, str
                 raise
             finally:
                 connection.close()
-            return _response(201, {"ok": True, "api_version": "sunabar-v1", "data": {"license": {
+            return reply(201, {"ok": True, "api_version": "sunabar-v1", "data": {"license": {
                 "license_id": claims["id"], "license_key": demo_key, "product_key": demo_key, "product_id": product_id,
                 "product_name": product["name"], "license_mode": mode, "max_devices": max_devices,
                 "label": claims["label"], "status": "active", "expires_at": claims["exp"]}},
@@ -451,9 +571,9 @@ def handle(method, path, headers, remote_addr, content_type, content_length, str
             finally:
                 connection.close()
             if not record:
-                return _response(200, {"ok": True, "api_version": "sunabar-v1", "data": {"valid": False, "status": "not_found"}})
+                return reply(200, {"ok": True, "api_version": "sunabar-v1", "data": {"valid": False, "status": "not_found"}})
             if record["status"] != "active":
-                return _response(200, {"ok": True, "api_version": "sunabar-v1", "data": {"valid": False, "status": record["status"]}})
+                return reply(200, {"ok": True, "api_version": "sunabar-v1", "data": {"valid": False, "status": record["status"]}})
             try:
                 requested_product = int(data.get("product_id", record["product_id"]))
             except (TypeError, ValueError):
@@ -462,15 +582,15 @@ def handle(method, path, headers, remote_addr, content_type, content_length, str
                 raise ApiError(409, "product_mismatch")
             expired = int(record["expires_at"]) <= int(time.time())
             record.pop("status", None)
-            return _response(200, {"ok": True, "api_version": "sunabar-v1", "data": {
+            return reply(200, {"ok": True, "api_version": "sunabar-v1", "data": {
                 "valid": not expired, "status": "expired" if expired else "active", "license": record}})
 
         try:
             license_claims = _decode(supplied_key, "sunabar_license", allow_expired=True)
         except (ValueError, json.JSONDecodeError):
-            return _response(200, {"ok": True, "api_version": "sunabar-v1", "data": {"valid": False, "status": "not_found"}})
+            return reply(200, {"ok": True, "api_version": "sunabar-v1", "data": {"valid": False, "status": "not_found"}})
         if not hmac.compare_digest(str(license_claims.get("workspace", "")), str(api_key["workspace"])):
-            return _response(200, {"ok": True, "api_version": "sunabar-v1", "data": {"valid": False, "status": "not_found"}})
+            return reply(200, {"ok": True, "api_version": "sunabar-v1", "data": {"valid": False, "status": "not_found"}})
         connection = _db_connect()
         try:
             with connection.cursor() as cursor:
@@ -483,9 +603,9 @@ def handle(method, path, headers, remote_addr, content_type, content_length, str
         finally:
             connection.close()
         if not stored_license:
-            return _response(200, {"ok": True, "api_version": "sunabar-v1", "data": {"valid": False, "status": "not_found"}})
+            return reply(200, {"ok": True, "api_version": "sunabar-v1", "data": {"valid": False, "status": "not_found"}})
         if stored_license["status"] != "active":
-            return _response(200, {"ok": True, "api_version": "sunabar-v1", "data": {"valid": False, "status": stored_license["status"]}})
+            return reply(200, {"ok": True, "api_version": "sunabar-v1", "data": {"valid": False, "status": stored_license["status"]}})
         try:
             product_id = int(data.get("product_id", license_claims["product_id"]))
         except (TypeError, ValueError):
@@ -493,7 +613,7 @@ def handle(method, path, headers, remote_addr, content_type, content_length, str
         if product_id != int(license_claims["product_id"]):
             raise ApiError(409, "product_mismatch")
         expired = int(license_claims.get("exp", 0)) <= int(time.time())
-        return _response(200, {"ok": True, "api_version": "sunabar-v1", "data": {
+        return reply(200, {"ok": True, "api_version": "sunabar-v1", "data": {
             "valid": not expired, "status": "expired" if expired else "active", "license": {
                 "license_id": license_claims["id"], "product_id": license_claims["product_id"],
                 "product_name": license_claims["product_name"], "license_mode": license_claims["license_mode"],
@@ -515,17 +635,22 @@ if __name__ == "__main__":
         if name.startswith("HTTP_"):
             headers[name[5:].lower().replace("_", "-")] = value
     remote_addr = os.environ.get("REMOTE_ADDR", "unknown")[:128]
+    request_id = uuid.uuid4().hex[:16]
     try:
         response = handle(method, path, headers, remote_addr,
                           os.environ.get("CONTENT_TYPE", ""),
-                          os.environ.get("CONTENT_LENGTH", "0"), sys.stdin.buffer)
+                          os.environ.get("CONTENT_LENGTH", "0"), sys.stdin.buffer, request_id)
     except ApiError as exc:
-        response = _response(exc.status, {"ok": False, "api_version": "sunabar-v1",
-                                          "error": exc.code, "message": exc.message,
-                                          "request_id": uuid.uuid4().hex[:16]})
-    except Exception:
+        payload = {"ok": False, "api_version": "sunabar-v1", "error": exc.code,
+                   "message": exc.message, "request_id": request_id}
+        retry_after = 3600 if exc.code == "license_issue_limit" else 60
+        response = _response(exc.status, payload, (("Retry-After", str(retry_after)),), request_id)
+    except Exception as exc:
+        safe_path = path[:120] if re.fullmatch(r"/[A-Za-z0-9_./-]{0,119}", path) else "/<invalid>"
+        print("sunabar_request_failed request_id=%s path=%s error_type=%s" %
+              (request_id, safe_path, type(exc).__name__), file=sys.stderr, flush=True)
         response = _response(503, {"ok": False, "api_version": "sunabar-v1",
                                    "error": "service_unavailable",
                                    "message": "The Sunabar emulator is temporarily unavailable.",
-                                   "request_id": uuid.uuid4().hex[:16]})
+                                   "request_id": request_id}, request_id=request_id)
     sys.stdout.buffer.write(response)
