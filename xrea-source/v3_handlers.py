@@ -225,7 +225,10 @@ def _consume_challenge(connection, purpose, challenge_id, nonce, public_key, sig
 
 def _license_by_key(connection, key_hash):
     with connection.cursor() as cursor:
-        cursor.execute('SELECT * FROM licenses WHERE key_hash=%s AND deleted_at IS NULL LIMIT 1', (key_hash,))
+        # Take the per-license lock before any consistent read in the activation
+        # transaction. Under MySQL REPEATABLE READ, a plain lookup here could
+        # establish a stale snapshot while waiting for the later capacity lock.
+        cursor.execute('SELECT * FROM licenses WHERE key_hash=%s AND deleted_at IS NULL LIMIT 1 FOR UPDATE', (key_hash,))
         return cursor.fetchone()
 
 def _lock_license(connection, license_id):
