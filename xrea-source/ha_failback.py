@@ -2,6 +2,7 @@
 from native_http import make_response, add_headers, legacy_compatible
 import json
 import os
+import re
 import secrets
 import tempfile
 import time
@@ -11,8 +12,10 @@ from email.policy import default as default_email_policy
 from pathlib import Path
 from urllib.parse import parse_qsl
 from core import php_int_cast
-from http_utils import json_response
+from file_locking import fcntl
+from http_utils import json_response, read_bounded_body, RequestError
 STAGES = ['STARTED', 'EXPORTED', 'VALIDATED', 'IMPORTED', 'VERIFIED', 'DEMOTED', 'PRIMARY_RESUMED', 'SYNCED']
+MAX_FAILBACK_BODY_BYTES = 65536
 
 def _now_iso():
     return datetime.now(timezone.utc).isoformat(timespec='seconds')
@@ -25,8 +28,22 @@ def _state_path():
 
 def _read_state(path):
     try:
+        if path.is_symlink() or path.stat().st_size > 16384:
+            raise ValueError('invalid_failback_state')
         value = json.loads(path.read_text(encoding='utf-8'))
-        return value if isinstance(value, dict) else {}
+        if not isinstance(value, dict):
+            raise ValueError('invalid_failback_state')
+        if value:
+            try:
+                valid = (value.get('status') in {'active', 'complete'}
+                         and value.get('stage') in set(STAGES + ['COMPLETE'])
+                         and re.fullmatch('[a-f0-9]{32}', str(value.get('operation_id', ''))) is not None
+                         and int(value.get('expires_at', 0)) > 0)
+            except (TypeError, ValueError, OverflowError):
+                valid = False
+            if not valid:
+                raise ValueError('invalid_failback_state')
+        return value
     except FileNotFoundError:
         return {}
 
@@ -41,6 +58,14 @@ def _write_state(path, state):
             os.fsync(handle.fileno())
         os.replace(temporary, path)
         os.chmod(path, 384)
+        try:
+            directory_fd = os.open(str(path.parent), os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass
     finally:
         try:
             temporary.unlink()
@@ -49,8 +74,7 @@ def _write_state(path, state):
 
 @legacy_compatible(callback_index=None, request_index=0)
 def _request_data(request_context):
-    stream = request_context.get('body_stream')
-    raw = stream.read() if stream is not None else b''
+    raw = read_bounded_body(request_context, MAX_FAILBACK_BODY_BYTES)
     content_type = str(request_context.get('content_type', ''))
     form = {}
     if 'application/x-www-form-urlencoded' in content_type.lower():
@@ -107,11 +131,14 @@ def _php_string(value, default=''):
 def _reply(status, payload):
     return json_response(status, payload)
 
-@legacy_compatible(callback_index=1, request_index=0)
-def failback_operation(request_context):
+def _failback_operation_impl(request_context):
     from ha_handlers import _append_ha_audit, _effective_role, _ha_authorized_scope
     if request_context.get('method', '') == 'POST':
-        data, post_fields = _request_data(request_context)
+        try:
+            data, post_fields = _request_data(request_context)
+        except RequestError as error:
+            status = '413 Payload Too Large' if str(error) == 'request_too_large' else '400 Bad Request'
+            return _reply(status, {'ok': False, 'error': str(error)})
     else:
         data, post_fields = ({}, {})
     if post_fields.get('token') and (not request_context.get('header:x-ha-token')):
@@ -129,8 +156,10 @@ def failback_operation(request_context):
     now = int(time.time())
     try:
         state = _read_state(path)
-    except (OSError, ValueError):
+    except FileNotFoundError:
         state = {}
+    except (OSError, ValueError):
+        return _reply('503 Service Unavailable', {'ok': False, 'error': 'failback_state_invalid'})
     active = state.get('status') == 'active' and php_int_cast(state.get('expires_at', 0)) > now
     if action == 'status':
         return _reply('200 OK', {'ok': True, 'active': active, 'operation': state})
@@ -175,3 +204,28 @@ def failback_operation(request_context):
         _append_ha_audit('failback_operation_completed', {'operation_id_hash': __import__('hashlib').sha256(operation_id.encode()).hexdigest()}, request_context)
         return _reply('200 OK', {'ok': True, 'operation': state})
     return _reply('400 Bad Request', {'ok': False, 'error': 'invalid_action'})
+
+@legacy_compatible(callback_index=1, request_index=0)
+def failback_operation(request_context):
+    path = _state_path()
+    if path is None:
+        return _failback_operation_impl(request_context)
+    try:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        lock_path = path.with_name(path.name + '.lock')
+        if lock_path.is_symlink():
+            return _reply('503 Service Unavailable', {'ok': False, 'error': 'failback_lock_unavailable'})
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0)
+        lock_fd = os.open(str(lock_path), flags, 0o600)
+        with os.fdopen(lock_fd, 'a+b') as lock:
+            os.chmod(lock_path, 0o600)
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return _reply('409 Conflict', {'ok': False, 'error': 'failback_operation_busy'})
+            try:
+                return _failback_operation_impl(request_context)
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        return _reply('503 Service Unavailable', {'ok': False, 'error': 'failback_lock_unavailable'})

@@ -7,6 +7,7 @@ import hmac
 import json
 import re
 import secrets
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -21,6 +22,10 @@ TENANT_CLIENT_ID = 'tuti-tenant-portal'
 FLOW_COOKIE = 'tuti_python_migration_admin_oidc_flow'
 TENANT_FLOW_COOKIE = 'tuti_python_migration_tenant_oidc_flow'
 ALLOWED_HOSTS = {'2415.jp', 'backup.2415.jp', 'main.2415.jp'}
+JWKS_CACHE_TTL_SECONDS = 300
+_JWKS_CACHE = None
+_JWKS_CACHE_EXPIRES = 0.0
+_JWKS_LOCK = threading.Lock()
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
@@ -118,7 +123,23 @@ def _http_json(url, form=None, basic=None):
         raise RuntimeError('oidc_invalid_response')
     return value
 
+def _jwks(force_refresh=False):
+    global _JWKS_CACHE, _JWKS_CACHE_EXPIRES
+    with _JWKS_LOCK:
+        now = time.monotonic()
+        if not force_refresh and _JWKS_CACHE is not None and now < _JWKS_CACHE_EXPIRES:
+            return _JWKS_CACHE
+        value = _http_json(ISSUER + '/jwks')
+        keys = value.get('keys')
+        if not isinstance(keys, list) or len(keys) > 100:
+            raise RuntimeError('oidc_invalid_jwks')
+        _JWKS_CACHE = tuple(key for key in keys if isinstance(key, dict))
+        _JWKS_CACHE_EXPIRES = now + JWKS_CACHE_TTL_SECONDS
+        return _JWKS_CACHE
+
 def _verify_id_token(token, nonce, expected_client_id=CLIENT_ID):
+    if not isinstance(token, str) or len(token) > 65536:
+        raise RuntimeError('oidc_bad_token')
     pieces = str(token).split('.')
     if len(pieces) != 3:
         raise RuntimeError('oidc_bad_token')
@@ -127,16 +148,24 @@ def _verify_id_token(token, nonce, expected_client_id=CLIENT_ID):
         claims = json.loads(_b64d(pieces[1]).decode('utf-8'))
     except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RuntimeError('oidc_bad_token') from exc
-    if not isinstance(header, dict) or not isinstance(claims, dict) or header.get('alg') != 'RS256' or (not isinstance(header.get('kid'), str)):
+    if not isinstance(header, dict) or not isinstance(claims, dict) or header.get('alg') != 'RS256' or (not isinstance(header.get('kid'), str)) or len(header.get('kid', '')) > 256:
         raise RuntimeError('oidc_bad_token_header')
-    jwks = _http_json(ISSUER + '/jwks')
-    keys = jwks.get('keys', [])
-    jwk = next((key for key in keys if isinstance(key, dict) and key.get('kid') == header['kid']), None) if isinstance(keys, list) else None
-    if not jwk or jwk.get('kty') != 'RSA':
+    keys = _jwks()
+    jwk = next((key for key in keys if key.get('kid') == header['kid']), None)
+    if jwk is None:
+        keys = _jwks(force_refresh=True)
+        jwk = next((key for key in keys if key.get('kid') == header['kid']), None)
+    if (not jwk or jwk.get('kty') != 'RSA'
+            or jwk.get('alg', 'RS256') != 'RS256' or jwk.get('use', 'sig') != 'sig'):
         raise RuntimeError('oidc_key_missing')
     try:
+        if (not isinstance(jwk.get('n'), str) or len(jwk['n']) > 1400
+                or not isinstance(jwk.get('e'), str) or len(jwk['e']) > 16):
+            raise ValueError('oidc_rsa_key_size_invalid')
         n, e = (int.from_bytes(_b64d(jwk['n']), 'big'), int.from_bytes(_b64d(jwk['e']), 'big'))
         public = rsa.RSAPublicNumbers(e, n).public_key()
+        if public.key_size < 2048 or public.key_size > 8192 or e < 3 or e % 2 == 0:
+            raise ValueError('oidc_rsa_key_size_invalid')
         public.verify(_b64d(pieces[2]), (pieces[0] + '.' + pieces[1]).encode('ascii'), padding.PKCS1v15(), hashes.SHA256())
     except Exception as exc:
         raise RuntimeError('oidc_signature_invalid') from exc
@@ -147,6 +176,10 @@ def _verify_id_token(token, nonce, expected_client_id=CLIENT_ID):
         raise RuntimeError('oidc_claims_invalid') from exc
     aud = claims.get('aud')
     audience_ok = expected_client_id in aud if isinstance(aud, list) else aud == expected_client_id
+    if isinstance(aud, list) and len(aud) > 1 and claims.get('azp') != expected_client_id:
+        audience_ok = False
+    if 'azp' in claims and claims.get('azp') != expected_client_id:
+        audience_ok = False
     if claims.get('iss') != ISSUER or not audience_ok or issued < 1 or (issued > now + 60) or (expires <= now) or (expires - issued > 600) or (not hmac.compare_digest(str(claims.get('nonce', '')), nonce)) or (not isinstance(claims.get('sub'), str)) or (len(claims['sub']) < 16) or (not re.fullmatch('[a-f0-9]{64}', str(claims.get('sid', '')))):
         raise RuntimeError('oidc_claims_invalid')
     if 'tenant_id' in claims and (type(claims['tenant_id']) is not int or not 0 < claims['tenant_id'] < 2**63):

@@ -34,6 +34,37 @@ if (Test-Path -LiteralPath $localRoot -PathType Leaf) {
     throw "LocalPath exists as a file: $localRoot"
 }
 New-Item -ItemType Directory -Path $localRoot -Force | Out-Null
+$localRoot = [System.IO.Path]::GetFullPath($localRoot)
+
+function Assert-XreaLocalPathSafe([string] $Path) {
+    $root = [System.IO.Path]::GetFullPath($script:localRoot)
+    $rootPrefix = if ($root.EndsWith([string][System.IO.Path]::DirectorySeparatorChar)) { $root } else { $root + [System.IO.Path]::DirectorySeparatorChar }
+    $current = [System.IO.Path]::GetFullPath($Path)
+    if ($current -ne $root -and -not $current.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Remote FTP entry escapes LocalPath: $Path"
+    }
+    while ($true) {
+        if (Test-Path -LiteralPath $current) {
+            $item = Get-Item -LiteralPath $current -Force
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Refusing to download through a link or junction: $current"
+            }
+        }
+        if ($current -eq $root) { break }
+        $parent = [System.IO.Directory]::GetParent($current)
+        if ($null -eq $parent) { throw "Could not validate LocalPath boundary: $Path" }
+        $current = $parent.FullName
+    }
+}
+
+function Get-XreaLocalChild([string] $BaseDirectory, [string] $Name) {
+    if ([string]::IsNullOrWhiteSpace($Name) -or $Name -in @('.', '..') -or $Name -match '[\\/:\x00-\x1f]' -or $Name.EndsWith(' ') -or $Name.EndsWith('.') -or $Name -match '(?i)^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$') {
+        throw "Refusing unsafe remote FTP filename."
+    }
+    $child = [System.IO.Path]::GetFullPath((Join-Path $BaseDirectory $Name))
+    Assert-XreaLocalPathSafe $child
+    return $child
+}
 
 $securePassword = Read-Host "XREA FTP password" -AsSecureString
 if ($securePassword.Length -eq 0) { throw "An XREA FTP password is required." }
@@ -59,7 +90,9 @@ function New-XreaRequest([string] $Path, [string] $Method) {
 
 $downloadCount = 0
 function Receive-XreaDirectory([string] $RemoteDirectory, [string] $LocalDirectory) {
+    Assert-XreaLocalPathSafe $LocalDirectory
     New-Item -ItemType Directory -Path $LocalDirectory -Force | Out-Null
+    Assert-XreaLocalPathSafe $LocalDirectory
     $request = New-XreaRequest $RemoteDirectory ([System.Net.WebRequestMethods+Ftp]::ListDirectoryDetails)
     $response = $request.GetResponse()
     try {
@@ -82,19 +115,31 @@ function Receive-XreaDirectory([string] $RemoteDirectory, [string] $LocalDirecto
         if ($kind -ne 'd' -and ($name -eq 'fastapi-runtime.json' -or $name -like '*.pyc' -or $name -like '*.pyo')) { continue }
 
         $remoteChild = $RemoteDirectory.TrimEnd('/') + '/' + $name
-        $localChild = Join-Path $LocalDirectory $name
+        try { $localChild = Get-XreaLocalChild $LocalDirectory $name }
+        catch {
+            Write-Warning "Skipping an unsafe FTP filename in $RemoteDirectory."
+            continue
+        }
         if ($kind -eq 'd') {
+            if (Test-Path -LiteralPath $localChild -PathType Leaf) { throw "Remote directory conflicts with a local file: $localChild" }
             Receive-XreaDirectory $remoteChild $localChild
             continue
         }
+        if (Test-Path -LiteralPath $localChild -PathType Container) { throw "Remote file conflicts with a local directory: $localChild" }
 
         $fileRequest = New-XreaRequest $remoteChild ([System.Net.WebRequestMethods+Ftp]::DownloadFile)
         $fileResponse = $fileRequest.GetResponse()
+        $temporaryPath = Join-Path $LocalDirectory ('.tuti-download-' + [Guid]::NewGuid().ToString('N') + '.tmp')
         try {
             $inputStream = $fileResponse.GetResponseStream()
-            $outputStream = [System.IO.File]::Create($localChild)
+            $outputStream = [System.IO.File]::Open($temporaryPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
             try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose(); $inputStream.Dispose() }
-        } finally { $fileResponse.Dispose() }
+            Assert-XreaLocalPathSafe $localChild
+            Move-Item -LiteralPath $temporaryPath -Destination $localChild -Force
+        } finally {
+            $fileResponse.Dispose()
+            if (Test-Path -LiteralPath $temporaryPath) { Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue }
+        }
         $script:downloadCount++
         Write-Verbose "Downloaded $remoteChild"
     }

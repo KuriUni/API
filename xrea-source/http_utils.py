@@ -19,6 +19,21 @@ def php_parse_query(query_string, keep_blank_values=True):
 class RequestError(ValueError):
     pass
 
+
+def read_bounded_body(request_context, maximum_bytes):
+    """Read an HTTP body with a hard cap, even when Content-Length is absent or false."""
+    from core import php_int_cast
+    length = php_int_cast(request_context.get('content_length') or 0)
+    if length < 0:
+        raise RequestError('invalid_content_length')
+    if length > maximum_bytes:
+        raise RequestError('request_too_large')
+    stream = request_context.get('body_stream')
+    raw = stream.read(maximum_bytes + 1) if stream is not None else b''
+    if len(raw) > maximum_bytes:
+        raise RequestError('request_too_large')
+    return raw
+
 def request_id():
     from request_metrics import current_request_id
     return current_request_id() or uuid.uuid4().hex[:16]
@@ -104,10 +119,10 @@ def json_response(status, payload, headers=()):
 
 @legacy_compatible(callback_index=0, request_index=None)
 def v2_response(status_code, payload, rid=None):
-    status_name = {200: '200 OK', 201: '201 Created', 400: '400 Bad Request', 401: '401 Unauthorized', 403: '403 Forbidden', 404: '404 Not Found', 405: '405 Method Not Allowed', 409: '409 Conflict', 429: '429 Too Many Requests', 500: '500 Internal Server Error', 501: '501 Not Implemented', 503: '503 Service Unavailable'}.get(status_code, '%d Error' % status_code)
+    status_name = {200: '200 OK', 201: '201 Created', 400: '400 Bad Request', 401: '401 Unauthorized', 403: '403 Forbidden', 404: '404 Not Found', 405: '405 Method Not Allowed', 409: '409 Conflict', 413: '413 Payload Too Large', 429: '429 Too Many Requests', 500: '500 Internal Server Error', 501: '501 Not Implemented', 503: '503 Service Unavailable'}.get(status_code, '%d Error' % status_code)
     result = dict(payload)
     result.setdefault('request_id', rid or request_id())
     if result.get('success') is False:
-        result.setdefault('error_code', {400: 'INVALID_REQUEST', 401: 'UNAUTHORIZED', 403: 'FORBIDDEN', 404: 'NOT_FOUND', 409: 'CONFLICT', 429: 'RATE_LIMITED', 503: 'SERVICE_UNAVAILABLE'}.get(status_code, 'ERROR'))
+        result.setdefault('error_code', {400: 'INVALID_REQUEST', 401: 'UNAUTHORIZED', 403: 'FORBIDDEN', 404: 'NOT_FOUND', 409: 'CONFLICT', 413: 'REQUEST_TOO_LARGE', 429: 'RATE_LIMITED', 503: 'SERVICE_UNAVAILABLE'}.get(status_code, 'ERROR'))
     result.setdefault('api_version', '2.0')
     return json_response(status_name, result)

@@ -7,8 +7,10 @@ import ipaddress
 import json
 import os
 import re
+import queue
 import socket
 import ssl
+import threading
 import time
 from email.parser import BytesParser
 from email.policy import default as default_email_policy
@@ -19,6 +21,15 @@ from http_utils import json_response
 from migration_config import secret_value
 from baas_handlers import _webhook_url_allowed
 from v3_handlers import _assert_write_fence
+
+MAX_DISPATCH_BODY_BYTES = 65536
+MAX_DELIVERIES_PER_RUN = 10
+DNS_LOOKUP_TIMEOUT_SECONDS = 2
+DISPATCH_BUDGET_SECONDS = 25
+_DNS_QUEUE = queue.Queue(maxsize=16)
+_DNS_THREAD = None
+_DNS_THREAD_LOCK = threading.Lock()
+_DNS_ERROR = object()
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
 
@@ -31,8 +42,29 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
         self.sock = self._context.wrap_socket(raw, server_hostname=self.host)
 
 def _public_ipv4_addresses(host):
+    global _DNS_THREAD
     try:
-        values = socket.gethostbyname_ex(host)[2]
+        literal = ipaddress.ip_address(host)
+        return [str(literal)] if literal.version == 4 and literal.is_global else []
+    except ValueError:
+        pass
+
+    with _DNS_THREAD_LOCK:
+        if _DNS_THREAD is None or not _DNS_THREAD.is_alive():
+            _DNS_THREAD = threading.Thread(target=_dns_worker, name='webhook-dns', daemon=True)
+            _DNS_THREAD.start()
+    result = queue.Queue(maxsize=1)
+    try:
+        _DNS_QUEUE.put_nowait((host, result))
+    except queue.Full:
+        return None
+    try:
+        values = result.get(timeout=DNS_LOOKUP_TIMEOUT_SECONDS)
+    except queue.Empty:
+        return None
+    if values is _DNS_ERROR:
+        return None
+    try:
         addresses = list(dict.fromkeys(values))
         if not addresses:
             return []
@@ -42,11 +74,22 @@ def _public_ipv4_addresses(host):
                 return []
         return addresses
     except (OSError, ValueError):
+        return []
+
+def _dns_worker():
+    while True:
+        host, result = _DNS_QUEUE.get()
         try:
-            address = ipaddress.ip_address(host)
-            return [str(address)] if address.version == 4 and address.is_global else []
-        except ValueError:
-            return []
+            try:
+                values = socket.gethostbyname_ex(host)[2]
+            except OSError:
+                values = _DNS_ERROR
+            try:
+                result.put_nowait(values)
+            except queue.Full:
+                pass
+        finally:
+            _DNS_QUEUE.task_done()
 
 def _delay_seconds(attempt):
     return min(21600, 30 * 2 ** min(9, max(0, int(attempt) - 1)))
@@ -55,10 +98,15 @@ def _delay_seconds(attempt):
 def _php_post_limit(request_context):
     """Read only PHP's POST form variable; query and JSON bodies are ignored."""
     fields = {}
+    content_length = php_int_cast(request_context.get('content_length'))
+    if content_length > MAX_DISPATCH_BODY_BYTES:
+        raise ValueError('request_too_large')
     content_type = str(request_context.get('content_type', ''))
     media_type = content_type.split(';', 1)[0].strip().lower()
     stream = request_context.get('body_stream')
-    raw = stream.read() if stream is not None else b''
+    raw = stream.read(MAX_DISPATCH_BODY_BYTES + 1) if stream is not None else b''
+    if len(raw) > MAX_DISPATCH_BODY_BYTES:
+        raise ValueError('request_too_large')
     if media_type == 'application/x-www-form-urlencoded':
         pairs = parse_qsl(raw.decode('utf-8', 'replace'), keep_blank_values=True)
         for name, value in pairs:
@@ -108,8 +156,18 @@ def _dispatch_one(connection, row, config):
     except ValueError:
         host, port = ('', 0)
         parsed = None
+    if not parsed or not _webhook_url_allowed(url) or (port != 443):
+        _safe_update(connection, "UPDATE tenant_webhook_deliveries SET status='failed',last_error='unsafe_destination' WHERE id=%s AND status IN ('pending','retry')", (delivery_id,))
+        return 'failed'
     addresses = _public_ipv4_addresses(host) if host else []
-    if not parsed or not _webhook_url_allowed(url) or (not addresses) or (port != 443):
+    if addresses is None:
+        attempt = int(row.get('attempt_count') or 0) + 1
+        if attempt >= 8:
+            _safe_update(connection, "UPDATE tenant_webhook_deliveries SET status='failed',attempt_count=%s,last_error='dns_timeout' WHERE id=%s AND status IN ('pending','retry')", (attempt, delivery_id))
+            return 'failed'
+        _safe_update(connection, "UPDATE tenant_webhook_deliveries SET status='retry',attempt_count=%s,last_error='dns_timeout',next_attempt_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL %s SECOND) WHERE id=%s AND status IN ('pending','retry')", (attempt, _delay_seconds(attempt), delivery_id))
+        return 'retried'
+    if not addresses:
         _safe_update(connection, "UPDATE tenant_webhook_deliveries SET status='failed',last_error='unsafe_destination' WHERE id=%s AND status IN ('pending','retry')", (delivery_id,))
         return 'failed'
     if re.fullmatch('[A-Za-z0-9._-]{1,120}', event_type) is None or re.fullmatch('[A-Za-z0-9_-]{1,128}', event_id) is None:
@@ -147,7 +205,7 @@ def _dispatch_one(connection, row, config):
     status, error = (0, '')
     connection_http = None
     try:
-        connection_http = _PinnedHTTPSConnection(host, addresses[0], timeout=5)
+        connection_http = _PinnedHTTPSConnection(host, addresses[0], timeout=3)
         connection_http.request('POST', target, body=payload.encode('utf-8'), headers=headers)
         response = connection_http.getresponse()
         status = int(response.status)
@@ -178,7 +236,10 @@ def webhook_dispatch(request_context):
     effective = _effective_role()
     if not (role == 'primary' and effective != 'maintenance' or (role == 'standby' and effective == 'promoted')):
         return json_response('503 Service Unavailable', {'ok': False, 'error': 'server_not_writable'})
-    limit = _php_post_limit(request_context)
+    try:
+        limit = _php_post_limit(request_context)
+    except ValueError:
+        return json_response('413 Payload Too Large', {'ok': False, 'error': 'request_too_large'})
     connection = None
     locked = False
     try:
@@ -191,16 +252,20 @@ def webhook_dispatch(request_context):
         if not locked:
             return json_response('409 Conflict', {'ok': False, 'error': 'dispatcher_already_running'})
         with connection.cursor() as cursor:
-            cursor.execute("SELECT d.*,w.url,w.secret_enc FROM tenant_webhook_deliveries d JOIN tenant_webhooks w ON w.id=d.webhook_id AND w.tenant_id=d.tenant_id WHERE d.status IN ('pending','retry') AND d.next_attempt_at<=UTC_TIMESTAMP() AND w.status='active' ORDER BY d.id LIMIT %s", (limit,))
+            cursor.execute("SELECT d.*,w.url,w.secret_enc FROM tenant_webhook_deliveries d JOIN tenant_webhooks w ON w.id=d.webhook_id AND w.tenant_id=d.tenant_id WHERE d.status IN ('pending','retry') AND d.next_attempt_at<=UTC_TIMESTAMP() AND w.status='active' ORDER BY d.id LIMIT %s", (min(limit, MAX_DELIVERIES_PER_RUN),))
             rows = cursor.fetchall()
         connection.commit()
         config = {'token_secret': secret_value('token_secret')}
         counts = {'delivered': 0, 'retried': 0, 'failed': 0}
+        deadline = time.monotonic() + DISPATCH_BUDGET_SECONDS
         for row in rows:
+            if time.monotonic() >= deadline:
+                break
             counts[_dispatch_one(connection, row, config)] += 1
             connection.commit()
         connection.commit()
-        return json_response('200 OK', {'ok': True, 'processed': len(rows), 'delivered': counts['delivered'], 'retried': counts['retried'], 'failed': counts['failed']})
+        processed = sum(counts.values())
+        return json_response('200 OK', {'ok': True, 'processed': processed, 'deferred': len(rows) - processed, 'delivered': counts['delivered'], 'retried': counts['retried'], 'failed': counts['failed']})
     except database.DatabaseConfigurationError:
         return json_response('503 Service Unavailable', {'ok': False, 'error': 'service_unavailable'})
     except Exception:

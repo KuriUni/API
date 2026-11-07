@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from urllib.parse import parse_qsl
 import database
 from core import PHP_TRIM_CHARS, is_valid_license_key_format, license_key_hash, php_int_cast, normalize_license_key
-from http_utils import json_response
+from http_utils import json_response, read_bounded_body, RequestError
 from v2_handlers import _runtime_config
 from v3_handlers import _assert_write_fence
 _ENV_SQL = "CASE WHEN t.parent_tenant_id IS NOT NULL OR t.environment='sandbox' THEN 'sandbox' WHEN t.environment='production' THEN 'production' ELSE 'unknown' END"
@@ -52,8 +52,10 @@ def _php_get_query(request_context):
 @legacy_compatible(callback_index=None, request_index=0)
 def _license_admin_json_data(request_context):
     """Decode the endpoint's direct json_decode(..., true, 16, THROW) body."""
-    stream = request_context.get('body_stream')
-    raw = stream.read() if stream is not None else b''
+    try:
+        raw = read_bounded_body(request_context, 65536)
+    except RequestError as exc:
+        raise LicenseAdminInputError(str(exc)) from exc
     try:
         decoded = json.loads(raw.decode('utf-8'), parse_constant=lambda _value: (_ for _ in ()).throw(ValueError('Syntax error')))
     except UnicodeDecodeError as exc:
@@ -290,7 +292,8 @@ def license_admin(request_context):
     except LicenseAdminInputError as exc:
         if connection:
             connection.rollback()
-        return json_response('400 Bad Request', {'ok': False, 'error': str(exc)})
+        status = '413 Payload Too Large' if str(exc) == 'request_too_large' else '400 Bad Request'
+        return json_response(status, {'ok': False, 'error': str(exc)})
     except database.DatabaseConfigurationError:
         return json_response('503 Service Unavailable', {'ok': False, 'error': 'service_unavailable'})
     except Exception:

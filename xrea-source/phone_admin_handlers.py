@@ -7,7 +7,7 @@ import time
 from urllib.parse import parse_qs
 import database
 from core import phone_confirmation_code, phone_email_decrypt, parse_utc_datetime, token_hash, format_grouped_digits, normalize_digits, hash_secret, php_int_cast, php_bool_cast, PHP_TRIM_CHARS
-from http_utils import json_response
+from http_utils import json_response, read_bounded_body
 from v2_handlers import _runtime_config
 from v3_handlers import _assert_write_fence
 
@@ -36,8 +36,7 @@ def _php_query_value(query, name, default):
 
 @legacy_compatible(callback_index=None, request_index=0)
 def _post_json(request_context):
-    stream = request_context.get('body_stream')
-    raw = stream.read() if stream is not None else b''
+    raw = read_bounded_body(request_context, 131072)
     try:
         value = json.loads(raw.decode('utf-8'), parse_constant=lambda _: (_ for _ in ()).throw(ValueError('Syntax error')))
     except UnicodeDecodeError:
@@ -142,7 +141,8 @@ def phone_admin(request_context):
         try:
             data = _post_json(request_context)
         except Exception as exc:
-            return _reply('400 Bad Request', {'ok': False, 'error': str(exc)})
+            status = '413 Payload Too Large' if str(exc) == 'request_too_large' else '400 Bad Request'
+            return _reply(status, {'ok': False, 'error': str(exc)})
         action = _php_string(data.get('action')).strip(PHP_TRIM_CHARS)
         installation = ''.join((ch for ch in _php_string(data.get('installation_id')).strip() if ch in '0123456789'))
         if not installation:

@@ -16,7 +16,8 @@ from urllib.parse import parse_qsl
 from urllib.request import Request, urlopen
 import database
 from core import PHP_TRIM_CHARS, php_int_cast
-from http_utils import json_response
+from http_utils import json_response, read_bounded_body, RequestError
+MAX_FORM_BODY_BYTES = 262144
 
 @legacy_compatible(callback_index=0, request_index=None)
 def _response(status, payload):
@@ -32,8 +33,7 @@ def _php_post(request_context):
         fields[match.group(1) if match else name] = 'Array' if match else value
     content_type_header = str(request_context.get('content_type', ''))
     content_type = content_type_header.lower()
-    stream = request_context.get('body_stream')
-    raw = stream.read() if stream is not None else b''
+    raw = read_bounded_body(request_context, MAX_FORM_BODY_BYTES)
     if content_type.startswith('application/x-www-form-urlencoded'):
         try:
             raw_fields = parse_qsl(raw.decode('utf-8'), keep_blank_values=True)
@@ -149,7 +149,11 @@ def ha_mode(request_context):
     if str(request_context.get('method', '')) != 'POST':
         _http_status, _http_headers = ('405 Method Not Allowed', [('Content-Length', '0')])
         return make_response([b''], _http_status, _http_headers)
-    data = _php_post(request_context)
+    try:
+        data = _php_post(request_context)
+    except RequestError as error:
+        status = '413 Payload Too Large' if str(error) == 'request_too_large' else '400 Bad Request'
+        return _response(status, {'ok': False, 'error': str(error)})
     if data.get('token') and (not request_context.get('header:x-ha-token')):
         request_context['header:x-ha-token'] = str(data['token'])
     action_value = data.get('action')

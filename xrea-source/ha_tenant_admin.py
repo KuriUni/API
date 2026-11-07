@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 import database
 from core import PHP_TRIM_CHARS, hash_secret, php_int_cast
-from http_utils import json_response
+from http_utils import json_response, read_bounded_body
 from migration_config import secret_value
 from v2_handlers import _runtime_config
 from v3_handlers import _assert_write_fence
@@ -57,8 +57,7 @@ def _normalize_expiry(value):
 
 @legacy_compatible(callback_index=None, request_index=0)
 def _post_json(request_context):
-    stream = request_context.get('body_stream')
-    raw = stream.read() if stream is not None else b''
+    raw = read_bounded_body(request_context, 262144)
     try:
         value = json.loads(raw.decode('utf-8'), parse_constant=lambda _: (_ for _ in ()).throw(ValueError('Syntax error')))
     except UnicodeDecodeError:
@@ -273,7 +272,8 @@ def tenant_admin(request_context):
         try:
             data = _post_json(request_context)
         except ValueError as exc:
-            return json_response('400 Bad Request', {'ok': False, 'error': str(exc)})
+            status = '413 Payload Too Large' if str(exc) == 'request_too_large' else '400 Bad Request'
+            return json_response(status, {'ok': False, 'error': str(exc)})
         action = _php_string(data.get('action') if data.get('action') is not None else '')
         if action == 'preview_tenant_license_delete':
             tenant_id = php_int_cast(data.get('tenant_id'))

@@ -48,7 +48,11 @@ def issuance_worker(request_context, version):
             return _reply(503, _schema_error(version, missing))
         try:
             stream = request_context.get('body_stream')
-            raw = stream.read() if stream is not None else b''
+            if php_int_cast(request_context.get('content_length')) > 65536:
+                return _reply(413, {'ok': False, 'error': 'request_too_large'})
+            raw = stream.read(65537) if stream is not None else b''
+            if len(raw) > 65536:
+                return _reply(413, {'ok': False, 'error': 'request_too_large'})
             data = json.loads(raw.decode('utf-8') or '{}')
             if not isinstance(data, dict):
                 data = {}

@@ -14,7 +14,7 @@
 
 | スクリプト | 用途 | 注意 |
 | --- | --- | --- |
-| `operations/Xrea/Download-Xrea.ps1` | Primaryから公開ソースを取得 | 既定保存先はプロジェクトルートの `xrea-source` |
+| `operations/Xrea/Download-Xrea.ps1` | Primaryから公開ソースを取得 | 既定保存先はプロジェクトルートの `xrea-source`。リモート名のパストラバーサルとリンク先への書き込みを拒否し、各ファイルは一時保存後に置換 |
 | `operations/Xrea/Deploy-Xrea.ps1` | XREA Primary/Backupへ差分アップロード | 初回にDPAPI資格情報を設定。既定は両方。ローカルSHA-256台帳と比較し、変更分だけ送信。FTP側の全体一覧は取得しない |
 | `operations/Xrea/Sync-XreaBackup.ps1` | Backupだけへ差分アップロード | ローカルSHA-256台帳と比較。ノード固有設定とローカルバックアップ類を除外し、リモートのみのファイルは保持 |
 | `operations/Xrea/Deploy-TUTI-Help.ps1` | ヘルプHTMLの配置 | 既存ページをローカルバックアップしてから更新 |

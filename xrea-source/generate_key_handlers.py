@@ -335,7 +335,12 @@ def generate_key(request_context):
         csrf = _cookie(request_context, CSRF)
         _, headers = _refresh_session(claims, csrf)
         return _page(True, csrf, headers=headers)
-    data = _form_post(request_context)
+    try:
+        data = _form_post(request_context)
+    except ValueError as error:
+        message = str(error)
+        status = '413 Payload Too Large' if message == 'request_too_large' else '400 Bad Request'
+        return _reply(status, {'success': False, 'error': message})
     if not _cookie(request_context, COOKIE) and 'password' in data and (str(data.get('api_action', '')) != 'generate_key') and _legacy_password_allowed():
         return _legacy_login(request_context, str(data.get('password', '')))
     emergency_api = False

@@ -15,6 +15,7 @@ from v3_handlers import _assert_write_fence
 _KEY_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 _IDEMPOTENCY_RE = re.compile('^[A-Za-z0-9_-]{20,100}$')
 _ASCII_LOWER = str.maketrans('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
+_MAX_REQUEST_BYTES = 131072
 
 def _php_string(value):
     if value is None or value is False:
@@ -33,12 +34,17 @@ def _php_trim_lower(value):
 
 @legacy_compatible(callback_index=None, request_index=0)
 def _post_data(request_context):
-    content_type = str(request_context.get('content_type', ''))
+    content_type = str(request_context.get('content_type', '')).lower()
+    if php_int_cast(request_context.get('content_length')) > _MAX_REQUEST_BYTES:
+        raise ValueError('request_too_large')
+    stream = request_context.get('body_stream')
+    raw = stream.read(_MAX_REQUEST_BYTES + 1) if stream is not None else b''
+    if len(raw) > _MAX_REQUEST_BYTES:
+        raise ValueError('request_too_large')
     if 'application/json' not in content_type:
         from ha_mode import _php_post
-        return _php_post(request_context)
-    stream = request_context.get('body_stream')
-    raw = stream.read() if stream is not None else b''
+        import io
+        return _php_post({**request_context, 'body_stream': io.BytesIO(raw)})
     if raw == b'':
         raise ValueError('Syntax error')
     try:
@@ -81,7 +87,8 @@ def issue_license(request_context):
         try:
             data = _post_data(request_context)
         except ValueError as exc:
-            return json_response('400 Bad Request', {'ok': False, 'error': str(exc)})
+            status = '413 Payload Too Large' if str(exc) == 'request_too_large' else '400 Bad Request'
+            return json_response(status, {'ok': False, 'error': str(exc)})
         idem_value = data.get('idempotency_key')
         if idem_value is None:
             idem_value = request_context.get('header:idempotency-key', '')

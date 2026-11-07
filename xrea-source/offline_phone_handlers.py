@@ -17,9 +17,10 @@ from path_utils import is_relative_to
 from urllib.parse import parse_qsl
 import database
 from core import PHP_TRIM_CHARS, php_int_cast
-from http_utils import json_response
+from http_utils import json_response, read_bounded_body, RequestError
 from migration_config import secret_value
 IID_PATTERN = re.compile('IID-([0-9A-F]{20})-([0-9A-F]{20})-([0-9A-F]{12})-([0-9A-F]{8})\\Z')
+MAX_OFFLINE_PHONE_BODY_BYTES = 262144
 
 class OfflinePhoneInputError(ValueError):
     pass
@@ -66,8 +67,7 @@ def _reject_json_constant(_value):
 
 @legacy_compatible(callback_index=None, request_index=0)
 def _request_data(request_context):
-    stream = request_context.get('body_stream')
-    raw = stream.read() if stream is not None else b''
+    raw = read_bounded_body(request_context, MAX_OFFLINE_PHONE_BODY_BYTES)
     try:
         value = json.loads(raw.decode('utf-8'), parse_constant=_reject_json_constant) if raw else None
         if isinstance(value, dict):
@@ -84,8 +84,7 @@ def _auth_post_fields(request_context):
     """Read PHP-style $_POST auth fields without decoding JSON before auth."""
     if request_context.get('method', '') != 'POST':
         return {}
-    stream = request_context.get('body_stream')
-    raw = stream.read() if stream is not None else b''
+    raw = read_bounded_body(request_context, MAX_OFFLINE_PHONE_BODY_BYTES)
     request_context['body_stream'] = io.BytesIO(raw)
     content_type = str(request_context.get('content_type') or request_context.get('header:content-type') or '').lower()
     if content_type.startswith(('application/x-www-form-urlencoded', 'multipart/form-data')):
@@ -162,7 +161,11 @@ def _status(code, payload):
 def offline_phone(request_context):
     from ha_handlers import _append_ha_audit, _ha_authorized_scope
     from v3_handlers import _assert_write_fence
-    post_fields = _auth_post_fields(request_context)
+    try:
+        post_fields = _auth_post_fields(request_context)
+    except RequestError as error:
+        status = '413 Payload Too Large' if str(error) == 'request_too_large' else '400 Bad Request'
+        return json_response(status, {'ok': False, 'error': str(error)})
     auth_environ = request_context
     if post_fields.get('token') and (not request_context.get('header:x-ha-token')):
         auth_environ = dict(request_context)
@@ -178,7 +181,11 @@ def offline_phone(request_context):
     promoted = state.get('promoted') is True if 'promoted' in state else os.environ.get('PYTHON_MIGRATION_HA_PROMOTED') == '1'
     if not (role == 'primary' and (not maintenance) or (role == 'standby' and promoted)):
         return _status(503, {'ok': False, 'error': 'server_not_writable'})
-    data, _post_fields = _request_data(request_context)
+    try:
+        data, _post_fields = _request_data(request_context)
+    except RequestError as error:
+        status = '413 Payload Too Large' if str(error) == 'request_too_large' else '400 Bad Request'
+        return json_response(status, {'ok': False, 'error': str(error)})
     connection = None
     try:
         action_value = data.get('action')

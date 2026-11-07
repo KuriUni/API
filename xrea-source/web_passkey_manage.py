@@ -9,7 +9,8 @@ from http.cookies import SimpleCookie
 from urllib.parse import quote
 from file_locking import fcntl
 from admin_api_handlers import CSRF_COOKIE, SESSION_COOKIE
-from passkey_handlers import _read_store, _store_path, _write_store
+from passkey_handlers import STORE_CAPS, _read_store, _store_path, _write_store
+from http_utils import read_bounded_body, RequestError
 
 @legacy_compatible(callback_index=0, request_index=None)
 def _json(status, payload):
@@ -49,8 +50,7 @@ def web_passkey_manage(request_context):
         if str(request_context.get('header:origin', '')) != 'https://' + host or not csrf_cookie or (not hmac.compare_digest(csrf_cookie, csrf_header)):
             return _json('403 Forbidden', {'ok': False, 'error': 'csrf_validation_failed'})
     try:
-        stream = request_context.get('body_stream')
-        raw = stream.read() if stream is not None else b''
+        raw = read_bounded_body(request_context, 1024 * 1024)
         decoded = json.loads(raw.decode('utf-8')) if raw else None
         if isinstance(decoded, dict):
             data = decoded
@@ -58,6 +58,9 @@ def web_passkey_manage(request_context):
             data = {}
         else:
             raise ValueError()
+    except RequestError as error:
+        status = '413 Payload Too Large' if str(error) == 'request_too_large' else '400 Bad Request'
+        return _json(status, {'ok': False, 'error': str(error)})
     except Exception:
         return _json('400 Bad Request', {'ok': False, 'error': 'invalid_json'})
     action_value = data.get('action')
@@ -78,6 +81,8 @@ def web_passkey_manage(request_context):
                 items = [{'id': key, 'label': str(row.get('label') or 'パスキー'), 'created_at': row.get('created'), 'last_used_at': row.get('last_used'), 'sign_count': int(row.get('count', 0))} for key, row in credentials.items()]
                 result = {'ok': True, 'credentials': items}
             elif action == 'enroll':
+                if len(credentials) >= STORE_CAPS['credentials']:
+                    return _json('409 Conflict', {'ok': False, 'error': 'credential_limit_reached'})
                 host = str(request_context.get('header:host', '2415.jp')).lower().split(':', 1)[0]
                 if host not in {'2415.jp', 'backup.2415.jp', 'main.2415.jp'}:
                     host = '2415.jp'

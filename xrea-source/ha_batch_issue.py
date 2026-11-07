@@ -16,6 +16,7 @@ from v3_handlers import _assert_write_fence
 _ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 _IDEMPOTENCY = re.compile('^[A-Za-z0-9_-]{20,100}$')
 _ASCII_LOWER = str.maketrans('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
+_MAX_BODY_BYTES = {'v2': 262144, 'v3': 65536}
 
 def _php_string(value):
     if value is None or value is False:
@@ -45,15 +46,16 @@ def _is_integrity_conflict(error):
 @legacy_compatible(callback_index=None, request_index=0)
 def _batch_input(request_context, version):
     v3 = version == 'v3'
+    maximum = _MAX_BODY_BYTES.get(version, _MAX_BODY_BYTES['v2'])
     content_type = str(request_context.get('content_type', '')).lower()
+    if php_int_cast(request_context.get('content_length')) > maximum:
+        raise BatchIssueError(413, 'request_too_large')
     if v3:
-        if php_int_cast(request_context.get('content_length')) > 65536:
-            raise BatchIssueError(413, 'request_too_large')
         if 'application/json' not in content_type:
             raise BatchIssueError(415, 'application_json_required')
     stream = request_context.get('body_stream')
-    raw = stream.read() if stream is not None else b''
-    if v3 and len(raw) > 65536:
+    raw = stream.read(maximum + 1) if stream is not None else b''
+    if len(raw) > maximum:
         raise BatchIssueError(413, 'request_too_large')
     if not v3 and 'application/json' not in content_type:
         from ha_mode import _php_post
@@ -134,7 +136,12 @@ def batch_issue(request_context, version):
     auth_environ = request_context
     if str(request_context.get('method', '')) == 'POST' and 'application/json' not in str(request_context.get('content_type', '')).lower():
         stream = request_context.get('body_stream')
-        raw = stream.read() if stream is not None else b''
+        maximum_bytes = _MAX_BODY_BYTES.get(version, _MAX_BODY_BYTES['v2'])
+        if php_int_cast(request_context.get('content_length')) > maximum_bytes:
+            return json_response('413 Payload Too Large', {'ok': False, 'error': 'request_too_large'})
+        raw = stream.read(maximum_bytes + 1) if stream is not None else b''
+        if len(raw) > maximum_bytes:
+            return json_response('413 Payload Too Large', {'ok': False, 'error': 'request_too_large'})
         from ha_mode import _php_post
         form = _php_post({**request_context, 'body_stream': io.BytesIO(raw)})
         auth_environ = dict(request_context)

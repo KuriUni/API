@@ -5,7 +5,7 @@ import uuid
 from datetime import date, datetime
 import database
 from core import is_valid_license_key_format, license_key_hash, normalize_license_key
-from http_utils import json_response
+from http_utils import json_response, read_bounded_body, RequestError
 from migration_config import secret_value
 
 class LookupInputError(ValueError):
@@ -37,8 +37,10 @@ def license_lookup(request_context):
         return json_response('405 Method Not Allowed', {'ok': False, 'error': 'method_not_allowed'}, [('Allow', 'POST')])
     connection = None
     try:
-        stream = request_context.get('body_stream')
-        raw = stream.read() if stream is not None else b''
+        try:
+            raw = read_bounded_body(request_context, 16384)
+        except RequestError as exc:
+            raise LookupInputError(str(exc)) from exc
         try:
             data = json.loads(raw.decode('utf-8'), parse_constant=_reject_json_constant)
         except UnicodeDecodeError:
@@ -86,7 +88,8 @@ def license_lookup(request_context):
         _append_ha_audit('product_key_lookup', {'license_id': license_id, 'found': found, 'fast_path': True}, request_context)
         return json_response('200 OK', {'ok': True, 'found': found, 'license_id': license_id or None, 'environment': license_row.get('environment') if found else None, 'tenant_id': int(license_row.get('tenant_id') or 0) if found else None, 'product_id': int(license_row.get('product_id') or 0) if found else None, 'license': _json_value(license_row) if found else None})
     except LookupInputError as exc:
-        return json_response('400 Bad Request', {'ok': False, 'error': str(exc)})
+        status = '413 Payload Too Large' if str(exc) == 'request_too_large' else '400 Bad Request'
+        return json_response(status, {'ok': False, 'error': str(exc)})
     except Exception:
         request_id = uuid.uuid4().hex[:16]
         _append_ha_audit('product_key_lookup_failed', {'request_id': request_id}, request_context)

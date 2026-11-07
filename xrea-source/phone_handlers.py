@@ -17,7 +17,7 @@ from email.message import EmailMessage
 from urllib.parse import parse_qsl
 import database
 from core import PHP_TRIM_CHARS, device_display_label, device_hash, device_reference, first_non_empty, hash_secret, is_valid_device_fingerprint, is_valid_license_key_format, license_key_hash, normalize_device_fingerprint, normalize_digits, normalize_license_key, normalize_text, normalize_app_version, parse_utc_datetime, normalize_email_address, mask_email_address, phone_email_encrypt, phone_confirmation_code, random_digits, token_hash, key_pepper, random_token
-from http_utils import MAX_JSON_BYTES, RequestError, v2_response
+from http_utils import MAX_JSON_BYTES, RequestError, read_bounded_body, v2_response
 from v2_handlers import V2Error, _attempt_count, _clear_auth_attempts, _record_auth_attempt, _runtime_config, _license_payload, ACCESS_TTL, REFRESH_TTL, _non_writable_role
 from v3_handlers import _assert_write_fence
 _log = logging.getLogger(__name__)
@@ -51,14 +51,8 @@ def _php_form_key(value):
 def _phone_request_data(request_context):
     """Match v2_request_data(): JSON only for JSON media, otherwise $_POST + $_GET."""
     content_type = str(request_context.get('content_type') or request_context.get('header:content-type') or '').translate(_ASCII_LOWER)
-    stream = request_context.get('body_stream')
     if 'application/json' in content_type:
-        from core import php_int_cast
-        if php_int_cast(request_context.get('content_length') or 0) > MAX_JSON_BYTES:
-            raise RequestError('request_too_large')
-        raw = stream.read(MAX_JSON_BYTES + 1) if stream is not None else b''
-        if len(raw) > MAX_JSON_BYTES:
-            raise RequestError('request_too_large')
+        raw = read_bounded_body(request_context, MAX_JSON_BYTES)
         try:
             decoded = json.loads(raw.decode('utf-8'), parse_constant=_reject_json_constant)
         except (UnicodeDecodeError, ValueError, RecursionError):
@@ -69,7 +63,7 @@ def _phone_request_data(request_context):
             raise RequestError('invalid_request_shape')
         data = decoded
     else:
-        raw = stream.read() if stream is not None else b''
+        raw = read_bounded_body(request_context, MAX_JSON_BYTES)
         post = {}
         if content_type.startswith('application/x-www-form-urlencoded'):
             try:
@@ -524,7 +518,9 @@ def phone_activate(request_context):
             bootstrap_connection.close()
     try:
         data = _phone_request_data(request_context)
-    except RequestError:
+    except RequestError as error:
+        if str(error) == 'request_too_large':
+            return v2_response(413, {'success': False, 'error': 'リクエストが大きすぎます。'}, rid)
         return _error_response(400, 'phone_activation_input', rid)
     action_value = data.get('api_action')
     action = _phone_trim('phone_request' if action_value is None else action_value).translate(_ASCII_LOWER)

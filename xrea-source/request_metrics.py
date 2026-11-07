@@ -1,5 +1,6 @@
 """Request-local CGI/DB timing with bounded, private, metadata-only logs."""
 import contextvars
+from functools import lru_cache
 import json
 import os
 import re
@@ -39,6 +40,18 @@ def timed_database(kind):
         state.database_calls[kind] = state.database_calls.get(kind, 0) + 1
 
 
+@lru_cache(maxsize=16)
+def _load_route_paths(path, modified_ns, size):
+    """Cache the route inventory per file version; deployment updates invalidate it."""
+    try:
+        data = json.loads(Path(path).read_text(encoding='utf-8'))
+        routes = data.get('routes', []) if isinstance(data, dict) else []
+        return frozenset(item['path'] for item in routes
+                         if isinstance(item, dict) and isinstance(item.get('path'), str))
+    except (OSError, ValueError, TypeError):
+        return frozenset()
+
+
 def instrument_connection(connection):
     """Preserve connection identity and driver/transaction semantics."""
     if _current.get() is None:
@@ -66,11 +79,11 @@ def _route(environ):
                 '/_fastapi/redoc', '/_fastapi/openapi.json'):
         return path
     try:
-        app_directory = Path(environ.get('TUTI_METRICS_APP_DIR') or Path(__file__).parent)
-        data = json.loads((app_directory / 'routes.json').read_text(encoding='utf-8'))
-        if path in {item['path'] for item in data['routes']}:
+        routes_path = Path(environ.get('TUTI_METRICS_APP_DIR') or Path(__file__).parent) / 'routes.json'
+        info = routes_path.stat()
+        if path in _load_route_paths(str(routes_path), info.st_mtime_ns, info.st_size):
             return path
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, TypeError):
         pass
     for prefix in ('/tenant-portal/', '/mobile-manager/'):
         if path.startswith(prefix):
@@ -117,7 +130,12 @@ def _append_private(environ, record):
             try:
                 if hasattr(os, 'fchmod'):
                     os.fchmod(fd, 0o600)
-                os.write(fd, data)
+                view = memoryview(data)
+                while view:
+                    written = os.write(fd, view)
+                    if written <= 0:
+                        raise OSError('short request-metrics write')
+                    view = view[written:]
             finally:
                 os.close(fd)
         finally:

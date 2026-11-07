@@ -719,6 +719,7 @@ internal sealed class DesktopCallback : IDisposable
 {
     private readonly TcpListener listener = new(IPAddress.Loopback, 0);
     private readonly TaskCompletionSource<string> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly SemaphoreSlim clientSlots = new(8, 8);
     private bool disposed;
     public int Port => ((IPEndPoint)listener.LocalEndpoint).Port;
 
@@ -740,23 +741,25 @@ internal sealed class DesktopCallback : IDisposable
             TcpClient client;
             try { client = await listener.AcceptTcpClientAsync(); }
             catch { return; }
+            if (!clientSlots.Wait(0)) { client.Dispose(); continue; }
             _ = HandleClientAsync(client);
         }
     }
 
     private async Task HandleClientAsync(TcpClient client)
     {
-        using (client)
+        try
         {
-            try
+            using (client)
             {
+                using var readTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                 var stream = client.GetStream();
                 var bytes = new List<byte>(4096);
                 var buffer = new byte[4096];
                 var headerEnd = -1;
                 while (headerEnd < 0 && bytes.Count < 32768)
                 {
-                    var read = await stream.ReadAsync(buffer);
+                    var read = await stream.ReadAsync(buffer.AsMemory(), readTimeout.Token);
                     if (read == 0) return;
                     bytes.AddRange(buffer.AsSpan(0, read).ToArray());
                     headerEnd = FindHeaderEnd(bytes);
@@ -768,12 +771,14 @@ internal sealed class DesktopCallback : IDisposable
                 var method = firstLine[0];
                 var path = firstLine[1];
                 var lengthLine = header.Split("\r\n").FirstOrDefault(x => x.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase));
-                var length = lengthLine is null ? 0 : int.Parse(lengthLine.Split(':', 2)[1].Trim());
+                var length = 0;
+                if (lengthLine is not null && !int.TryParse(lengthLine.Split(':', 2)[1].Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out length))
+                { await SendAsync(stream, 400, "text/plain", "Bad Request"); return; }
                 if (length > 16384) { await SendAsync(stream, 413, "text/plain", "Too Large"); return; }
                 var bodyOffset = headerEnd + 4;
                 while (bytes.Count - bodyOffset < length)
                 {
-                    var read = await stream.ReadAsync(buffer);
+                    var read = await stream.ReadAsync(buffer.AsMemory(), readTimeout.Token);
                     if (read == 0) return;
                     bytes.AddRange(buffer.AsSpan(0, read).ToArray());
                 }
@@ -797,8 +802,9 @@ internal sealed class DesktopCallback : IDisposable
                 }
                 await SendAsync(stream, 404, "text/plain", "Not Found");
             }
-            catch { }
         }
+        catch { }
+        finally { clientSlots.Release(); }
     }
 
     private static int FindHeaderEnd(List<byte> bytes)

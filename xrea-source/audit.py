@@ -10,7 +10,48 @@ from pathlib import Path
 APP_ROOT = Path(__file__).resolve().parent
 
 
-REDACT_KEYS = {"token", "session", "automation", "password", "sync_token"}
+REDACT_KEY_PARTS = (
+    "token", "session", "password", "secret", "credential", "authorization",
+    "cookie", "apikey", "privatekey", "signature", "auth", "dapi", "sid",
+)
+MAX_AUDIT_CONTEXT_BYTES = 8 * 1024
+MAX_AUDIT_DEPTH = 6
+MAX_AUDIT_ITEMS = 64
+MAX_AUDIT_STRING = 1024
+
+
+def _redact_key(key):
+    normalized = "".join(char for char in str(key).casefold() if char.isalnum())
+    return any(part in normalized for part in REDACT_KEY_PARTS)
+
+
+def _sanitize_audit_value(value, depth=0):
+    """Bound audit data and remove secrets, including nested credential fields."""
+    if depth >= MAX_AUDIT_DEPTH:
+        return "[maximum depth]"
+    if isinstance(value, dict):
+        safe = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= MAX_AUDIT_ITEMS:
+                safe["_truncated"] = True
+                break
+            key_text = str(key)[:128]
+            if _redact_key(key_text):
+                safe[key_text] = "[redacted]"
+            else:
+                safe[key_text] = _sanitize_audit_value(item, depth + 1)
+        return safe
+    if isinstance(value, (list, tuple)):
+        safe = [_sanitize_audit_value(item, depth + 1) for item in value[:MAX_AUDIT_ITEMS]]
+        if len(value) > MAX_AUDIT_ITEMS:
+            safe.append("[truncated]")
+        return safe
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    text = str(value)
+    if len(text) > MAX_AUDIT_STRING:
+        return text[:MAX_AUDIT_STRING] + "[truncated]"
+    return text
 
 
 def _private_dir():
@@ -102,12 +143,15 @@ def append_event(event, context=None, ip_address="", path=None, role=None):
                             previous = ""
                         if not previous:
                             previous = hashlib.sha256(lines[-1].encode("utf-8")).hexdigest()
-                safe_context = {key: value for key, value in (context or {}).items() if key not in REDACT_KEYS}
+                safe_context = _sanitize_audit_value(context if isinstance(context, dict) else {})
+                context_json = json.dumps(safe_context, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+                if len(context_json.encode("utf-8")) > MAX_AUDIT_CONTEXT_BYTES:
+                    safe_context = {"_truncated": True, "reason": "context_size_limit"}
                 record = {
                     "event_id": secrets.token_hex(12),
                     "at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                    "event": str(event),
-                    "configured_role": role or os.environ.get("PYTHON_MIGRATION_HA_ROLE", "unknown"),
+                    "event": str(event)[:128],
+                    "configured_role": str(role or os.environ.get("PYTHON_MIGRATION_HA_ROLE", "unknown"))[:128],
                     "ip_hash": hashlib.sha256(str(ip_address).encode("utf-8")).hexdigest(),
                     "context": safe_context,
                     "prev_hash": previous,
