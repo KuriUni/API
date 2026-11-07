@@ -510,7 +510,8 @@ def issuance(request_context):
                            "FROM product_key_v8_jobs WHERE tenant_id=%s AND status IN "
                            "('queued','processing','cancel_requested')", (tenant_id,))
             reserved = int((cursor.fetchone() or {}).get("n", 0))
-            # V8 reserves against legacy unified jobs, while V1–V7 rows remain untouched.
+            # Keep quota reservations for V4-V6 jobs already accepted before
+            # cutover; all new submissions now enter the independent V8 queue.
             for engine in (4, 5, 6):
                 cursor.execute("SELECT COALESCE(SUM(GREATEST(requested_count-processed_count,0)),0) AS n "
                                "FROM issuance_jobs WHERE tenant_id=%s AND engine_version=%s AND status IN "

@@ -10,7 +10,7 @@ import re
 import secrets
 import database
 REQUIRED_TABLES = ['tenants', 'products', 'tenant_api_clients', 'tenant_api_usage', 'tenant_api_usage_daily', 'tenant_api_attempts', 'licenses', 'license_devices', 'auth_attempts', 'phone_activation_requests', 'offline_activation_requests', 'idempotency_keys', 'admin_principals', 'admin_audit_events', 'data_change_journal', 'ha_fence_state', 'tenant_webhooks', 'baas_batch_jobs', 'tenant_webhook_deliveries']
-OPTIONAL_TABLES = ['archived_identity_records', 'issuance_jobs', 'issuance_plans', 'issuance_items', 'tenant_key_issue_sessions', 'tenant_key_issue_session_items', 'product_key_issue_batches', 'product_key_issue_items', 'license_v3_challenges', 'license_v3_devices', 'license_v3_sessions', 'license_v3_refresh_history', 'license_v3_proofs', 'license_v3_offline_tickets', 'api_billing_invoices', 'subscriber_sdk_setup_codes', 'tenant_portal_key_reissues', 'admin_service_intakes', 'jpki_verifications', 'tenant_sso_bootstrap_tickets', 'tenant_sso_memberships', 'tenant_sso_sessions']
+OPTIONAL_TABLES = ['archived_identity_records', 'issuance_jobs', 'issuance_plans', 'issuance_items', 'product_key_v8_jobs', 'product_key_v8_items', 'tenant_key_issue_sessions', 'tenant_key_issue_session_items', 'product_key_issue_batches', 'product_key_issue_items', 'license_v3_challenges', 'license_v3_devices', 'license_v3_sessions', 'license_v3_refresh_history', 'license_v3_proofs', 'license_v3_offline_tickets', 'api_billing_invoices', 'subscriber_sdk_setup_codes', 'tenant_portal_key_reissues', 'admin_service_intakes', 'jpki_verifications', 'tenant_sso_bootstrap_tickets', 'tenant_sso_memberships', 'tenant_sso_sessions']
 
 @legacy_compatible(callback_index=0, request_index=None)
 def _response(status, payload):
@@ -95,7 +95,10 @@ def export_snapshot(request_context):
                 return _response('404 Not Found', {'ok': False, 'error': 'not_found'})
         from ha_handlers import _runtime_json
         promoted = os.environ.get('PYTHON_MIGRATION_HA_PROMOTED') == '1' or (_runtime_json('state.json') or {}).get('promoted') is True
-        if request_context.get('method', '') != 'GET' or not (role == 'primary' or (role == 'standby' and promoted)):
+        from http_utils import php_parse_query
+        standby_backup = (role == 'standby' and sync_authorized and
+                          php_parse_query(request_context.get('query', '')).get('standby_backup', [''])[-1] == '1')
+        if request_context.get('method', '') != 'GET' or not (role == 'primary' or (role == 'standby' and promoted) or standby_backup):
             _http_status, _http_headers = ('405 Method Not Allowed', [])
             return make_response([b''], _http_status, _http_headers)
         if connection is None:

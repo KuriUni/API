@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "2415.jp API (V8 independent product-key issuance)",
-    "version": "1.13.0",
-    "description": "製品・ライセンス管理、発行V1〜V7、端末認証、MNSL、HA管理の公開API仕様です。Try it outは選択したAPIを実際に呼び出します。発行や更新には既存の権限・料金・冪等性ルールが適用されます。例のID・鍵・署名は自分の値へ置き換えてください。CGIの生存確認はDB接続や全面移行の完了を保証しません。"
+    "version": "1.14.0",
+    "description": "製品・ライセンス管理、プロダクトキー発行V1/V8、端末認証、MNSL、HA管理の公開API仕様です。V2〜V7の新規発行は終了しました。既存のV4〜V6ジョブは照会・結果取得・取消のみ利用できます。"
   },
   "paths": {
     "/api/baas/v1/service.php": {
@@ -215,7 +215,6 @@
                       "licenses.batch_issue",
                       "licenses.bulk_issue",
                       "licenses.bulk_cancel",
-                      "licenses.sync_issue",
                       "sandbox_keys.issue",
                       "sandbox_keys.rotate",
                       "sandbox_keys.revoke",
@@ -1565,6 +1564,9 @@
           },
           "503": {
             "description": "書き込みノードが利用できません。"
+          },
+          "410": {
+            "description": "This issuance version is retired. Use /api/baas/v8/issuance.php."
           }
         },
         "description": "V6発行エンジンの互換URLです。旧速度レーン別の新規発行加算はありません。小さい要求は同期処理し、大きい要求はジョブで進行します。冪等キーはJSONまたはIdempotency-Keyヘッダーで指定します。",
@@ -1674,7 +1676,8 @@
             }
           }
         },
-        "operationId": "post_api_baas_v2_licenses_php"
+        "operationId": "post_api_baas_v2_licenses_php",
+        "deprecated": true
       }
     },
     "/api/baas/v3/licenses.php": {
@@ -1717,6 +1720,9 @@
           },
           "503": {
             "description": "書き込みノードが利用できません。"
+          },
+          "410": {
+            "description": "This issuance version is retired. Use /api/baas/v8/issuance.php."
           }
         },
         "description": "V6発行エンジンの互換URLです。旧速度レーン別の新規発行加算はありません。小さい要求は同期処理し、大きい要求はジョブで進行します。冪等キーはJSONまたはIdempotency-Keyヘッダーで指定します。",
@@ -1826,7 +1832,8 @@
             }
           }
         },
-        "operationId": "post_api_baas_v3_licenses_php"
+        "operationId": "post_api_baas_v3_licenses_php",
+        "deprecated": true
       }
     },
     "/api/baas/v4/issuance-jobs.php": {
@@ -3625,6 +3632,9 @@
           },
           "503": {
             "description": "書き込みノードが利用できません。"
+          },
+          "410": {
+            "description": "This issuance version is retired. Use /api/baas/v8/issuance.php."
           }
         },
         "description": "singleモード専用の同期型Beta。冪等キーはJSONまたはIdempotency-Keyで指定します。料金は現行V7規則に従います。",
@@ -3693,7 +3703,8 @@
             "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
           }
         ],
-        "operationId": "post_api_baas_v7_issuance_php"
+        "operationId": "post_api_baas_v7_issuance_php",
+        "deprecated": true
       }
     },
     "/api/v3/challenge.php": {
@@ -4896,7 +4907,7 @@
     },
     {
       "name": "プロダクトキー発行",
-      "description": "V1発行と管理、V2〜V5互換URL、V6最大100,000件、V7同期最大1,000件。"
+      "description": "V1互換の単発発行とV8独立一括発行。V2・V3・V7の新規発行は終了。V4〜V6は新規受付を終了し、既存ジョブの照会・結果取得・取消のみ利用可能。"
     },
     {
       "name": "ライセンス管理",

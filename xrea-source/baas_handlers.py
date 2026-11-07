@@ -1124,6 +1124,11 @@ def licenses(request_context):
             return _reply(200, result, headers)
         action = str(data.get('action', 'issue')).strip().lower()
         if action == 'issue':
+            count = data.get('count', 1)
+            if isinstance(count, bool) or re.fullmatch(r'[0-9]{1,6}', str(count)) is None or int(count) < 1:
+                raise BaaSError(400, 'invalid_issue_count')
+            if int(count) != 1:
+                raise BaaSError(410, 'bulk_issuance_moved_to_v8', {'replacement': '/api/baas/v8/issuance.php'})
             try:
                 product_id = int(data.get('product_id') or 0)
             except (TypeError, ValueError):

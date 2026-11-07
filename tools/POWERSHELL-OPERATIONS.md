@@ -19,6 +19,7 @@
 | `operations/Xrea/Deploy-Xrea.ps1` | XREA Primary/Backupへ差分アップロード | DPAPI資格情報があれば入力画面を省略。未保存時または認証失敗時だけ入力。既定は両方。ローカルSHA-256台帳と比較し、変更分だけ送信。完了後、削除済みローカルファイルの台帳項目を整理。FTP側の全体一覧は取得しない |
 | `operations/Xrea/Sync-XreaBackup.ps1` | Backupだけへ差分アップロード | ローカルSHA-256台帳と比較。ノード固有設定とローカルバックアップ類を除外し、リモートのみのファイルは保持。転送成功後に不要な台帳項目を整理 |
 | `operations/Xrea/Deploy-TUTI-Help.ps1` | ヘルプHTMLの配置 | 既存ページをローカルバックアップしてから更新 |
+| `operations/Xrea/Deploy-V8Cutover.ps1` | V8移行をPrimary/Backupへ配備 | PowerShell 7・保存済みDPAPI資格情報を使用。既知の対象ファイルだけを比較・差分送信し、SHA-256照合。DBスナップショットは公開領域外にDPAPI暗号化保存。必要ならV8専用の追加移行を実行。失敗時は配備ファイルを復元し、追加したDBテーブルは保持 |
 | `operations/Xrea/Upload-Xrea.ps1` | 任意のフォルダーを任意の公開パスへアップロード | 高影響の汎用ツール。接続先を確認して個別実行 |
 
 PowerShell 7でXREAをデプロイする場合は、WinSCP Automation packageの `.NET Standard 2.0` 版 `WinSCPnet.dll` をインストール先の `netstandard2.0` フォルダーに置きます。Windows PowerShell 5.1では通常の `WinSCPnet.dll` を使用します。どちらも同じWinSCPインストールの `WinSCP.exe` を指定して起動します。

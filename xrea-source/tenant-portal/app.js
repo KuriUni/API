@@ -364,7 +364,7 @@
     active.forEach((item) => product.add(new Option(`${item.name} · ${item.code}`, item.id)));
     if (active.length === 1) product.value = String(active[0].id);
     const count = element('input');
-    count.type = 'number'; count.min = '1'; count.max = '5000'; count.value = '10'; count.required = true;
+    count.type = 'number'; count.min = '1'; count.max = '100000'; count.value = '10'; count.required = true;
     const mode = element('select');
     [['single', '1台用'], ['volume', '複数台用'], ['evaluation', '評価版']].forEach(([value, label]) => mode.add(new Option(label, value)));
     const devices = element('input'); devices.type = 'number'; devices.min = '2'; devices.max = '10000'; devices.value = '10';
@@ -372,7 +372,7 @@
     const deviceField = field('利用できる端末数', devices);
     const dayField = field('評価できる日数', days);
     const label = element('input'); label.maxLength = 100; label.placeholder = '例：営業チーム';
-    form.append(field('対象の製品', product), field('発行件数（最大5,000件）', count), field('発行方式', mode), deviceField, dayField, field('管理用ラベル（任意）', label));
+    form.append(field('対象の製品', product), field('発行件数（最大100,000件）', count), field('発行方式', mode), deviceField, dayField, field('管理用ラベル（任意）', label));
     const explanation = element('p', 'form-foot span-all', '大量発行はバックグラウンド処理になります。完了後に、発行キーを含むCSVを明示操作でダウンロードできます。');
     const errorBox = element('p', 'form-error span-all'); errorBox.setAttribute('role', 'alert');
     const submit = element('button', 'button button-primary span-all', '内容を確認して一括発行'); submit.type = 'submit';
@@ -397,7 +397,7 @@
       let quote;
       try {
         const quoteQuery = new URLSearchParams({ action: 'quote', count: String(body.count) });
-        quote = await api(`/api/baas/v6/issuance.php?${quoteQuery}`);
+        quote = await api(`/api/baas/v8/issuance.php?${quoteQuery}`);
       } catch (error) {
         errorBox.textContent = error.message; submit.disabled = false; submit.textContent = '内容を確認して一括発行'; return;
       }
@@ -419,7 +419,7 @@
       }
       taskBusy(true); submit.disabled = true; submit.textContent = '発行を受け付けています…'; errorBox.textContent = '';
       try {
-        const result = await api('/api/baas/v6/issuance.php', {
+        const result = await api('/api/baas/v8/issuance.php', {
           method: 'POST', body: { ...body, idempotency_key: pending.idempotencyKey, execution_mode: Number(body.count) > 100 ? 'async' : 'auto' }, idempotency: pending.idempotencyKey,
         });
         if (connection !== state.connectionVersion || taskVersion !== state.taskVersion || !$('task-dialog').open) return;
@@ -434,10 +434,10 @@
           try { sessionStorage.setItem(storageKey, JSON.stringify(pending)); } catch {}
           renderBulkJobActions(resultView, jobId, connection, taskVersion);
         }
-        if (result.execution === 'sync' && !jobId && Array.isArray(result.items)) {
+        if (result.execution === 'completed_inline' && Array.isArray(result.items)) {
           resultView.append(actionButton('発行キーをCSVで保存', 'key', () => downloadCsv('license-keys.csv', [['ライセンスID', '指紋', 'ライセンスキー'], ...result.items.map((item) => [item.license_id, item.key_fingerprint, item.product_key])] ), 'button-primary'));
         }
-        if (result.job?.terminal || result.execution === 'sync') {
+        if (result.job?.terminal) {
           try { sessionStorage.removeItem(storageKey); } catch {}
         }
         $('task-content').replaceChildren(resultView);
@@ -457,7 +457,7 @@
     const refreshStatus = button('進捗を更新', async (event) => {
       event.currentTarget.disabled = true;
       try {
-        const result = await api(`/api/baas/v6/issuance.php?job_id=${encodeURIComponent(jobId)}`);
+        const result = await api(`/api/baas/v8/issuance.php?job_id=${encodeURIComponent(jobId)}`);
         if (connection !== state.connectionVersion || taskVersion !== state.taskVersion) return;
         const job = result.job;
         statusLine.textContent = `状態: ${job.status} · ${job.progress_percent}% · 成功 ${job.succeeded_count}件 · 失敗 ${job.failed_count}件`;
@@ -475,9 +475,9 @@
                 const all = []; let cursor = 0; let hasMore = true;
                 while (hasMore) {
                   const query = new URLSearchParams({ job_id: jobId, cursor: String(cursor), limit: '500', reveal: 'true' });
-                  const page = await api(`/api/baas/v6/issuance-results.php?${query}`);
+                  const page = await api(`/api/baas/v8/issuance-results.php?${query}`);
                   all.push(...(page.items || [])); cursor = Number(page.next_cursor || 0); hasMore = Boolean(page.has_more);
-                  if (all.length > 5000) throw new Error('一度に保存できる件数の上限を超えました。管理者へお問い合わせください。');
+                  if (all.length > 100000) throw new Error('一度に保存できる上限100,000件を超えました。管理者へお問い合わせください。');
                 }
                 downloadCsv(`license-keys-${jobId.slice(0, 8)}.csv`, [['ライセンスID', '指紋', 'ライセンスキー'], ...all.map((item) => [item.license_id, item.key_fingerprint, item.product_key])]);
                 statusLine.textContent = `${all.length.toLocaleString('ja-JP')}件のキーをCSVに保存しました。安全な場所で管理してください。`;
@@ -493,7 +493,7 @@
     const cancelJob = button('ジョブを停止', async () => {
       if (!await confirmAction('処理中のジョブを停止します。停止前に発行済みのキーは取り消されません。続けますか？')) return;
       cancelJob.disabled = true;
-      try { await api('/api/baas/v6/issuance-cancel.php', { method: 'POST', body: { job_id: jobId } }); await refreshStatus.click(); }
+      try { await api('/api/baas/v8/issuance-cancel.php', { method: 'POST', body: { job_id: jobId } }); await refreshStatus.click(); }
       catch (error) { statusLine.textContent = error.message; cancelJob.disabled = false; }
     }, 'button-danger');
     controls.append(refreshStatus, cancelJob); container.append(statusLine, controls);
@@ -569,9 +569,9 @@
     const models = data.api_pricing_models || {};
     if (Object.keys(models).length) {
       const pricing = panel('ライセンス発行APIの料金目安', '1回の発行リクエストで指定するキー数に応じた料金です。通常のAPI利用料金は下の利用内訳をご覧ください。');
-      const rows = Object.entries(models).map(([name, model]) => [name.includes('.v7.') ? 'V7（ベータ）' : 'V6', model.production_formula || model.basis || '料金モデル', model.production_formula ? 'Sandboxは本番の10%' : 'V6料金から10%引き']);
+      const rows = Object.entries(models).map(([name, model]) => [name.includes('.v8.') ? 'V8' : (name.includes('.v7.') ? 'V7（旧版）' : 'V6（旧版）'), model.production_formula || model.basis || '料金モデル', model.production_formula ? 'Sandboxは本番の10%' : 'V6料金から10%引き']);
       pricing.append(table(['方式', '本番の料金計算', 'Sandbox'], rows));
-      pricing.append(element('p', 'form-foot', '料金は1リクエスト単位で計算されます。V7は1回あたり最大1,000キーです。現在の設定はテスト用で、本番料金として確定したものではありません。'));
+      pricing.append(element('p', 'form-foot', '新しい一括発行はV8で、1回あたり最大100,000キーです。旧版の料金は過去の利用確認用です。料金は1リクエスト単位で計算され、現在の設定はテスト用です。'));
       const detail=element('details','billing-details');detail.append(element('summary','','ライセンス発行APIの料金を見る'),pricing);summary.append(detail);
     }
     if (Array.isArray(data.details) && data.details.length) {

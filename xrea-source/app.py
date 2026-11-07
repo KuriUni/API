@@ -237,13 +237,38 @@ def application(environ, start_response):
         return error_page(environ, start_response, 404)
     if path.startswith('/ha/passkey-federation/') or path == '/ha/passkey-federation-lib.php':
         return error_page(environ, start_response, 404)
-    from retired_auth import RETIRED_ROUTES, RETIRED_ALIASES, BOOKMARK_ROUTE, response
-    if path in RETIRED_ROUTES + RETIRED_ALIASES + (BOOKMARK_ROUTE,):
+    from retired_auth import (RETIRED_ROUTES, RETIRED_ALIASES, RETIRED_ISSUANCE_ROUTES,
+                              LEGACY_ISSUANCE_ROUTES, BOOKMARK_ROUTE,
+                              is_retired_issuance_request, response)
+    if path in RETIRED_ROUTES + RETIRED_ALIASES + RETIRED_ISSUANCE_ROUTES + (BOOKMARK_ROUTE,):
         status, headers, body = response(dict(environ, SCRIPT_NAME='/python-endpoints/legacy-auth.cgi',
                                              REQUEST_URI=path))
         headers.append(('Content-Length', str(len(body))))
         start_response(status, headers)
         return [b'' if environ.get('REQUEST_METHOD') == 'HEAD' else body]
+    if is_retired_issuance_request(path, environ.get('REQUEST_METHOD', 'GET')):
+        status, headers, body = response(dict(environ, SCRIPT_NAME='/python-endpoints/legacy-auth.cgi',
+                                             REQUEST_URI=path))
+        headers.append(('Content-Length', str(len(body))))
+        start_response(status, headers)
+        return [b'' if environ.get('REQUEST_METHOD') == 'HEAD' else body]
+    if path in LEGACY_ISSUANCE_ROUTES:
+        from baas_issuance_handlers import issuance_cancel, issuance_results, issuance_status
+        handler_map = {
+            '/api/baas/v4/issuance-jobs.php': ('status', 'v4'),
+            '/api/baas/v4/issuance-results.php': ('results', 'v4'),
+            '/api/baas/v4/issuance-cancel.php': ('cancel', 'v4'),
+            '/api/baas/v5/issuance.php': ('status', 'v5'),
+            '/api/baas/v5/issuance-results.php': ('results', 'v5'),
+            '/api/baas/v5/issuance-cancel.php': ('cancel', 'v5'),
+            '/api/baas/v6/issuance.php': ('status', 'v6'),
+            '/api/baas/v6/issuance-results.php': ('results', 'v6'),
+            '/api/baas/v6/issuance-cancel.php': ('cancel', 'v6'),
+        }
+        kind, version = handler_map[path]
+        handler = {'status': issuance_status, 'results': issuance_results,
+                   'cancel': issuance_cancel}[kind]
+        return handler(environ, start_response, version)
     if path == '/error.php':
         return error_page(environ, start_response, error_status(environ))
     if path == '/ha/error-page.php':
@@ -540,10 +565,6 @@ def application(environ, start_response):
     if path == "/api/baas/v1/licenses-bulk-delete.php":
         from baas_handlers import licenses_bulk_delete
         return licenses_bulk_delete(environ, start_response)
-
-    if path == "/api/baas/v7/issuance.php":
-        from baas_v7_handlers import issuance
-        return issuance(environ, start_response)
 
     issuance_routes = {
         "/api/baas/v2/licenses.php": ("status", "v2"),

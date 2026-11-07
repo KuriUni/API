@@ -4,6 +4,7 @@ import json
 import database
 from ha_handlers import _ha_authorized_scope, _response
 from schema39_storage import run_migrations
+from http_utils import request_data, RequestError
 
 @legacy_compatible(callback_index=1, request_index=0)
 def migrate(request_context):
@@ -13,12 +14,21 @@ def migrate(request_context):
         return _response('405 Method Not Allowed', b'{"ok":false,"error":"method_not_allowed"}')
     connection = None
     try:
+        data = request_data(request_context)
+        scope = data.get('scope', 'all') if isinstance(data, dict) else 'all'
+        if scope not in ('all', 'v8'):
+            return _response('400 Bad Request', b'{"ok":false,"error":"invalid_migration_scope"}')
         connection = database.connect()
-        from schema39_storage import run_migrations as current_migrations
-        payload = current_migrations(connection)
+        if scope == 'v8':
+            payload = {'ok': True, 'scope': 'v8'}
+        else:
+            from schema39_storage import run_migrations as current_migrations
+            payload = current_migrations(connection)
         from product_key_v8_storage import ensure_schema as ensure_v8_issuance_schema
         payload['product_key_issuance_v8'] = ensure_v8_issuance_schema(connection)
         return _response('200 OK', json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+    except RequestError:
+        return _response('400 Bad Request', b'{"ok":false,"error":"invalid_request"}')
     except Exception as error:
         if connection is not None:
             connection.rollback()

@@ -40,7 +40,6 @@ HANDLERS = {
     '/api/baas/v1/mnsl-card-auth.php': ('mnsl_card_auth_handlers', 'mnsl_card_auth'),
     '/api/baas/v1/mnsl-android-card-read.php': ('mnsl_android_card_read_handlers', 'mnsl_android_card_read'),
     '/api/baas/v1/service.php': ('service_handlers', 'service'),
-    '/api/baas/v7/issuance.php': ('baas_v7_handlers', 'issuance'),
     '/api/baas/v8/issuance.php': ('baas_v8_handlers', 'issuance'),
     '/api/baas/v8/issuance-results.php': ('baas_v8_handlers', 'issuance_results'),
     '/api/baas/v8/issuance-cancel.php': ('baas_v8_handlers', 'issuance_cancel'),
@@ -50,8 +49,6 @@ HANDLERS = {
     '/ha/mobile-face.php': ('ha_mobile_face', 'mobile_face'),
     '/ha/license-lookup.php': ('ha_license_lookup', 'license_lookup'),
     '/ha/issue-license.php': ('ha_issue_license', 'issue_license'),
-    '/ha/issue-license-v2.php': ('ha_batch_issue', 'issue_license_v2'),
-    '/ha/issue-license-v3.php': ('ha_batch_issue', 'issue_license_v3'),
     '/ha/product-key-v4-worker.php': ('ha_issuance_worker', 'issuance_worker', 'v4'),
     '/ha/product-key-v5-worker.php': ('ha_issuance_worker', 'issuance_worker', 'v5'),
     '/ha/product-key-v8-worker.php': ('ha_product_key_v8_worker', 'product_key_v8_worker'),
@@ -81,8 +78,9 @@ for leaf, handler in (
     ('import', 'ha_import'), ('sync', 'ha_sync'), ('retry-sync', 'ha_retry_sync'),
 ):
     HANDLERS['/ha/' + leaf + '.php'] = ('ha_handlers', handler)
+# Legacy status/results/cancel remain readable for already accepted V4-V6 jobs;
+# new submissions are rejected by is_retired_issuance_request before dispatch.
 for version, leaves in {
-    'v2': [('licenses', 'issuance_status')], 'v3': [('licenses', 'issuance_status')],
     'v4': [('issuance-jobs', 'issuance_status'), ('issuance-results', 'issuance_results'), ('issuance-cancel', 'issuance_cancel')],
     'v5': [('issuance', 'issuance_status'), ('issuance-results', 'issuance_results'), ('issuance-cancel', 'issuance_cancel')],
     'v6': [('issuance', 'issuance_status'), ('issuance-results', 'issuance_results'), ('issuance-cancel', 'issuance_cancel')],
@@ -114,8 +112,8 @@ SPECIAL = ERRORS | {'/ha/release.php', '/api/baas/v1/jpki.php', '/api-catalog/in
 
 
 def route_manifest(existing=()):
-    from retired_auth import BOOKMARK_ROUTE, RETIRED_ALIASES, RETIRED_ROUTES
-    retired = set(RETIRED_ROUTES + RETIRED_ALIASES + (BOOKMARK_ROUTE,))
+    from retired_auth import BOOKMARK_ROUTE, RETIRED_ALIASES, RETIRED_ROUTES, RETIRED_ISSUANCE_ROUTES
+    retired = set(RETIRED_ROUTES + RETIRED_ALIASES + RETIRED_ISSUANCE_ROUTES + (BOOKMARK_ROUTE,))
     result = {}
     for row in INVENTORY:
         path = row['path']
@@ -234,13 +232,15 @@ def serve_static(context):
 
 def dispatch_native(context):
     from http_error_handlers import MAINTENANCE_ALLOWED, error_page, is_maintenance, maintenance_response
-    from retired_auth import BOOKMARK_ROUTE, RETIRED_ALIASES, RETIRED_ROUTES, response as retired_response
+    from retired_auth import (BOOKMARK_ROUTE, RETIRED_ALIASES, RETIRED_ROUTES,
+                              RETIRED_ISSUANCE_ROUTES, is_retired_issuance_request,
+                              response as retired_response)
     path = context['path']
     if is_maintenance() and path not in MAINTENANCE_ALLOWED:
         return maintenance_response(context)
     if path in DENIED or path.startswith(('/admin_api/', '/api/baas/v1/common-id-sso/', '/ha/passkey-federation/')) or path == '/ha/passkey-federation-lib.php':
         return error_page(context, 404)
-    if path in RETIRED_ROUTES + RETIRED_ALIASES + (BOOKMARK_ROUTE,):
+    if path in RETIRED_ROUTES + RETIRED_ALIASES + RETIRED_ISSUANCE_ROUTES + (BOOKMARK_ROUTE,) or is_retired_issuance_request(path, context.get('method')):
         retired = HttpContext(context, mount_path='/python-endpoints/legacy-auth.cgi', uri=path)
         status, headers, body = retired_response(retired)
         return make_response(body, status, headers + [('Content-Length', str(len(body)))])
