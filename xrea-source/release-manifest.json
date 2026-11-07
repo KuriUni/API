@@ -1,9 +1,9 @@
 {
     "schema": 1,
-    "release_id": "product-key-v8-inline-fastpath-20261103T103213Z-b618cf793f",
+    "release_id": "license-v3-activate-guide-20261107T160309Z",
     "framework": "fastapi",
     "layout": "existing-public-root",
-    "generated_at_utc": "2026-11-03T10:32:13Z",
+    "generated_at_utc": "2026-11-07T16:03:09Z",
     "files": [
         {
             "path": "admin-api-workbench.css",
@@ -116,14 +116,19 @@
             "sha256": "d3b4f0c9e39bf74934152a81d7599e105c574193cb374a9c204c4a77169c2245"
         },
         {
+            "path": "api/v3/activate.html",
+            "size": 9631,
+            "sha256": "8976319e21a5c4d8ec722aad261c4fe5ee32f8cf2a80c6e8649ebe5233eeacd6"
+        },
+        {
             "path": "api_catalog.py",
             "size": 1112,
             "sha256": "76fae0b1e7961c7e73874e3a6dfaa9993febdebbf89d4443db5e0d53a6e8ddd1"
         },
         {
             "path": "app.py",
-            "size": 39393,
-            "sha256": "b1b103d22ce842faaf514b2d96ce1af0ebf9da51bcee01291f9ae73d7c0505be"
+            "size": 41934,
+            "sha256": "cbeeda0526f9b7290d4c54e59a639ac66685a2c0be890d8588e1df8446c9e00d"
         },
         {
             "path": "app_sso.py",
@@ -467,8 +472,8 @@
         },
         {
             "path": "native_v3.py",
-            "size": 20813,
-            "sha256": "edc5541b9d1cd6ea0c43653ed6348b944b2ac5c43fd17db0ee8025c606b66c16"
+            "size": 19414,
+            "sha256": "275f649f3dd64783b7377cb3b277dde9b8cbee5225af9379a2c56170b31a8ec0"
         },
         {
             "path": "offline_key_handlers.py",

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f2f7f6">
+  <meta name="description" content="TUTI License API v3 の端末鍵認証ガイド。チャレンジ取得から署名、セッション発行までを説明します。">
+  <title>ライセンスAPI v3 端末認証ガイド | TUTI LICENSE</title>
+  <link rel="stylesheet" href="../v2/api-guide.css?v=20261108-v3-guide-1">
+  <style>
+    .sequence{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:16px 0 28px}.sequence article{position:relative;min-width:0;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--paper)}.sequence .step{display:grid;place-items:center;width:28px;height:28px;margin-bottom:10px;border-radius:9px;background:var(--soft);color:var(--brand-dark);font-size:12px;font-weight:850}.sequence h2{margin:0;font-size:13px}.sequence p{margin:5px 0 0;color:var(--muted);font-size:11px}.section{margin:24px 0;padding:clamp(17px,3vw,25px);border:1px solid var(--line);border-radius:16px;background:var(--paper)}.section h2{margin:0;font-size:18px}.section>p{margin:6px 0 14px;color:var(--muted);font-size:12px}.section h3{margin:16px 0 6px;font-size:13px}.section pre{margin:8px 0 0;padding:14px;overflow:auto;border:1px solid #203d44;border-radius:11px;background:#10232a;color:#d9f1ec;font:11px/1.7 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.endpoint{margin-top:12px}.pill{display:inline-block;margin:0 5px 5px 0;padding:4px 8px;border:1px solid #dce8e7;border-radius:99px;background:#f8fbfa;color:#416067;font:600 10px ui-monospace,SFMono-Regular,Menlo,monospace}.callout{display:flex;gap:11px;margin-top:14px;padding:14px;border:1px solid #cce3dc;border-radius:12px;background:#eef8f4}.callout strong{display:block;margin-bottom:2px;color:#24464b;font-size:12px}.callout p{margin:0;color:#4f6a6f;font-size:11px}.fine{color:var(--muted);font-size:10px}.flow-item{min-height:66px}@media(max-width:760px){.sequence{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:480px){.sequence{grid-template-columns:1fr}.sequence article{display:grid;grid-template-columns:30px 1fr;column-gap:10px;padding:12px}.sequence .step{grid-row:span 2;margin:0}.sequence p{margin-top:2px}}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="topline"><span class="mark" aria-hidden="true">T</span><span>TUTI LICENSE<small>DEVELOPER API</small></span></div>
+    <section class="hero" aria-labelledby="page-title">
+      <p class="eyebrow">DEVICE-BOUND AUTHENTICATION</p>
+      <h1 id="page-title">ライセンスAPI v3<br>端末認証ガイド</h1>
+      <p>端末ごとの公開鍵で本人性を確認してから、ライセンスを認証します。秘密鍵は端末内に保管し、ライセンスキーと一緒にサーバーへ送らない方式です。</p>
+      <span class="version">REST API · v3.0-beta1</span>
+    </section>
+
+    <section class="sequence" aria-label="端末認証の流れ">
+      <article><span class="step">01</span><h2>端末鍵を用意</h2><p>端末内でRSA鍵ペアを作成します。</p></article>
+      <article><span class="step">02</span><h2>チャレンジを取得</h2><p>公開鍵を送り、一度限りの値を受け取ります。</p></article>
+      <article><span class="step">03</span><h2>端末内で署名</h2><p>秘密鍵でチャレンジへ署名します。</p></article>
+      <article><span class="step">04</span><h2>認証して発行</h2><p>署名とライセンス情報を送り、セッションを受け取ります。</p></article>
+    </section>
+
+    <section class="section" aria-labelledby="prerequisites">
+      <h2 id="prerequisites">認証前に用意するもの</h2>
+      <p>V2のライセンスキーと端末IDだけの方式とは異なり、V3では端末鍵の署名が必要です。</p>
+      <span class="pill">license_key</span><span class="pill">product_code（任意）</span><span class="pill">device_fingerprint（SHA-256 hex）</span><span class="pill">RSA 2048 bit以上</span>
+      <div class="callout"><span class="note-icon" aria-hidden="true">!</span><div><strong>秘密鍵は端末から出さない</strong><p>秘密鍵はOSの安全な鍵保管領域へ保存してください。チャレンジ署名を作るときだけ端末内で使います。公開鍵と署名はAPIへ送信します。</p></div></div>
+    </section>
+
+    <section class="section" aria-labelledby="challenge">
+      <h2 id="challenge">1. チャレンジを取得する</h2>
+      <p>端末で作成した公開鍵をPEM形式で送信します。チャレンジは短時間で失効し、一度だけ使用できます。</p>
+      <article class="endpoint"><div class="endpoint-head"><span class="method">POST</span><h3>端末鍵のチャレンジ</h3></div><code class="endpoint-path">/license/api/v3/challenge.php</code><ul class="fields"><li class="required">device_public_key</li><li>purpose: activate</li></ul></article>
+      <pre><code>curl -sS -X POST 'https://2415.jp/license/api/v3/challenge.php' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "device_public_key": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n",
+    "purpose": "activate"
+  }'</code></pre>
+      <h3>応答例</h3>
+      <pre><code>{
+  "success": true,
+  "challenge": {
+    "challenge_id": "発行されたID",
+    "nonce": "一度限りの値",
+    "purpose": "activate",
+    "expires_at": "有効期限",
+    "device_key_thumbprint": "公開鍵のSHA-256",
+    "signature_algorithm": "RSA-SHA256"
+  }
+}</code></pre>
+    </section>
+
+    <section class="section" aria-labelledby="signature">
+      <h2 id="signature">2. チャレンジへ署名する</h2>
+      <p>次の文字列をUTF-8で署名します。行の順序と改行をそのまま保ち、最後に改行を追加しません。</p>
+      <pre><code>TUTI-LICENSE-V3
+activate
+{challenge_id}
+{nonce}
+{device_key_thumbprint}</code></pre>
+      <p class="fine">署名方式はRSA PKCS#1 v1.5 + SHA-256です。署名結果はBase64 URL-safe形式（末尾の = を省略）にします。鍵生成と署名処理はアプリ内の暗号ライブラリで行ってください。</p>
+    </section>
+
+    <section class="section" aria-labelledby="activate">
+      <h2 id="activate">3. ライセンスを認証する</h2>
+      <p>チャレンジ取得時と同じ公開鍵を指定します。fingerprintは端末の安定した識別子から生成したSHA-256 hex値を使います。</p>
+      <article class="endpoint"><div class="endpoint-head"><span class="method">POST</span><h3>端末認証・セッション発行</h3></div><code class="endpoint-path">/license/api/v3/activate.php</code><ul class="fields"><li class="required">license_key</li><li>product_code</li><li class="required">device_fingerprint</li><li class="required">device_public_key</li><li class="required">challenge_id</li><li class="required">nonce</li><li class="required">signature</li><li>device_label</li><li>app_version</li></ul></article>
+      <pre><code>curl -sS -X POST 'https://2415.jp/license/api/v3/activate.php' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "license_key": "発行済みライセンスキー",
+    "product_code": "製品コード",
+    "device_fingerprint": "64桁のSHA-256 hex値",
+    "device_public_key": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n",
+    "challenge_id": "チャレンジ応答のID",
+    "nonce": "チャレンジ応答のnonce",
+    "signature": "端末内で作成したBase64URL署名",
+    "device_label": "利用端末の表示名",
+    "app_version": "1.0.0"
+  }'</code></pre>
+      <div class="callout"><span class="note-icon" aria-hidden="true">✓</span><div><strong>認証成功時</strong><p>ライセンス情報、端末参照情報、アクセストークンと更新トークンが返ります。トークンは秘密情報として安全に保管し、ログや画面共有に出さないでください。</p></div></div>
+    </section>
+
+    <section class="section" aria-labelledby="responses">
+      <h2 id="responses">応答とエラー</h2>
+      <p><span class="pill">200 認証成功</span><span class="pill">400 入力・署名形式エラー</span><span class="pill">401 チャレンジ・署名不一致</span><span class="pill">403 ライセンス無効・期限切れ</span><span class="pill">409 端末数上限</span><span class="pill">429 試行回数上限</span><span class="pill">503 一時的なサービス障害</span></p>
+      <p>調査時は応答ヘッダーの <code>X-Request-ID</code> を記録してください。503応答には再試行の目安として <code>Retry-After: 2</code> が付きます。成功したチャレンジ発行を含め、同一IPからの発行は15分間に60件までです。</p>
+    </section>
+
+    <aside class="note"><span class="note-icon" aria-hidden="true">i</span><p><b>実装上の注意</b><br>このページはAPIの利用ガイドです。ブラウザーへライセンスキーや秘密鍵を入力する認証フォームではありません。V3の他の操作は<a href="/license/api/v3/index.php">API一覧</a>と<a href="/license/api-catalog/index.php?document=docs">APIリファレンス</a>を参照してください。V2の説明は<a href="/license/api/v2/activate.php">V2認証ガイド</a>で確認できます。</p></aside>
+    <footer>TUTI LICENSE · ライセンスAPI v3</footer>
+  </main>
+</body>
+</html>

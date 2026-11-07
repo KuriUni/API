@@ -226,7 +226,8 @@ try {
             $transferOptions.FileMask = '| ' + ($excludeMasks -join '; ')
             $excludePatterns = @('(^|/)__pycache__(/|$)', '\.py[co]$', '(^|/)\.tuti-deploy-(backup|stage)-')
             if ($destination.Name -eq 'Backup') { $excludePatterns += '(^|/)fastapi-runtime\.json$' }
-            $result = Invoke-XreaDifferentialUpload -Session $session -LocalRoot $resolvedLocalPath -RemoteRoot $destination.Remote -StateKey "$($destination.Host)|$($destination.Remote)" -TransferOptions $transferOptions -ExcludePatterns $excludePatterns
+            $preserveUnselectedState = $resolvedLocalPath -ne [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\xrea-source'))
+            $result = Invoke-XreaDifferentialUpload -Session $session -LocalRoot $resolvedLocalPath -RemoteRoot $destination.Remote -StateKey "$($destination.Host)|$($destination.Remote)" -TransferOptions $transferOptions -ExcludePatterns $excludePatterns -PreserveUnselectedState:$preserveUnselectedState
             Write-Host "Completed $($destination.Name). Uploaded changed files: $($result.Uploaded); local files checked: $($result.CheckedLocal); stale local state entries pruned: $($result.PrunedStateEntries). Remote directory listings were not scanned."
         }
         finally { if ($null -ne $session) { $session.Dispose() } }

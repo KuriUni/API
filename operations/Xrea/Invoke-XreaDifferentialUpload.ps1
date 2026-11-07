@@ -70,7 +70,8 @@ function Invoke-XreaDifferentialUpload {
         [Parameter(Mandatory = $true)][string] $RemoteRoot,
         [Parameter(Mandatory = $true)][string] $StateKey,
         [Parameter(Mandatory = $true)] $TransferOptions,
-        [string[]] $ExcludePatterns = @()
+        [string[]] $ExcludePatterns = @(),
+        [switch] $PreserveUnselectedState
     )
 
     $stateRoot = Join-Path $env:LOCALAPPDATA 'XreaDeploy\sync-state'
@@ -106,24 +107,26 @@ function Invoke-XreaDifferentialUpload {
         Move-Item -LiteralPath $tempFile -Destination $stateFile -Force
     }
 
-    # Prune only after all uploads succeeded. This cleans local bookkeeping for
-    # deleted/excluded files without deleting anything from the remote server.
-    $activeFiles = @{}
-    foreach ($file in $files) {
-        $relative = $file.FullName.Substring(($root + [System.IO.Path]::DirectorySeparatorChar).Length).Replace('\', '/')
-        $activeFiles[$relative] = $true
-    }
     $removedStateEntries = 0
-    foreach ($key in @($state.Keys)) {
-        if (-not $activeFiles.ContainsKey([string]$key)) {
-            [void]$state.Remove([string]$key)
-            $removedStateEntries++
+    if (-not $PreserveUnselectedState) {
+        # Prune only after all uploads succeeded. This cleans local bookkeeping
+        # for deleted/excluded files without deleting anything from the server.
+        $activeFiles = @{}
+        foreach ($file in $files) {
+            $relative = $file.FullName.Substring(($root + [System.IO.Path]::DirectorySeparatorChar).Length).Replace('\', '/')
+            $activeFiles[$relative] = $true
         }
-    }
-    if ($removedStateEntries -gt 0) {
-        $tempFile = $stateFile + '.tmp'
-        $state | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $tempFile -Encoding utf8
-        Move-Item -LiteralPath $tempFile -Destination $stateFile -Force
+        foreach ($key in @($state.Keys)) {
+            if (-not $activeFiles.ContainsKey([string]$key)) {
+                [void]$state.Remove([string]$key)
+                $removedStateEntries++
+            }
+        }
+        if ($removedStateEntries -gt 0) {
+            $tempFile = $stateFile + '.tmp'
+            $state | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $tempFile -Encoding utf8
+            Move-Item -LiteralPath $tempFile -Destination $stateFile -Force
+        }
     }
 
     [pscustomobject]@{ Uploaded = $changed.Count; CheckedLocal = $files.Count; PrunedStateEntries = $removedStateEntries; StateFile = $stateFile }

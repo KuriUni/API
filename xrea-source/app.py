@@ -362,6 +362,22 @@ def application(environ, start_response):
         return reauth(environ, start_response)
 
     if path == "/api/v3/activate.php":
+        if environ.get("REQUEST_METHOD", "GET") == "GET":
+            guide = ROOT / "api" / "v3" / "activate.html"
+            try:
+                body = site_url(guide.read_bytes().decode("utf-8")).encode("utf-8")
+            except OSError:
+                return json_response(start_response, "503 Service Unavailable", {
+                    "success": False, "error_code": "SERVICE_UNAVAILABLE", "request_id": request_id,
+                })
+            start_response("200 OK", [
+                ("Content-Type", "text/html; charset=utf-8"),
+                ("Cache-Control", "no-store"),
+                ("X-Content-Type-Options", "nosniff"),
+                ("X-Frame-Options", "DENY"),
+                ("Content-Length", str(len(body))),
+            ])
+            return [body]
         from v3_handlers import activate
         return activate(environ, start_response)
 

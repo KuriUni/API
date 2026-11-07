@@ -5,10 +5,12 @@ input, transaction orchestration and HTTP output are owned by these routes.
 """
 import hashlib
 import json
+import os
 import re
 import uuid
 import sys
 from contextlib import contextmanager
+from pathlib import Path
 from urllib.parse import parse_qsl
 
 import database
@@ -309,6 +311,18 @@ def install_routes(api, maintenance_if_needed):
             if maintenance is not None:
                 return maintenance
             rid = uuid.uuid4().hex[:16]
+            if action == 'activate' and request.method == 'GET':
+                static_root = Path(os.environ.get('TUTI_STATIC_ROOT') or Path(__file__).resolve().parent)
+                guide = static_root / 'api' / 'v3' / 'activate.html'
+                try:
+                    body = guide.read_bytes()
+                except OSError:
+                    return error_response(domain.V3Error(503, 'SERVICE_UNAVAILABLE', '認証ガイドを表示できません。'), rid)
+                return Response(body, media_type='text/html; charset=utf-8', headers={
+                    'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+                    'X-Request-ID': rid, 'Referrer-Policy': 'strict-origin-when-cross-origin',
+                    'X-Frame-Options': 'DENY',
+                })
             if request.method != 'POST':
                 return error_response(domain.V3Error(405, 'METHOD_NOT_ALLOWED', 'POST を使用してください。'), rid)
             try:
