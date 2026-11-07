@@ -114,7 +114,11 @@ foreach ($destination in $targets) {
         if ($Profile -eq 'LicenseV4') {
             Write-Host "$($destination.Name): confirming V4 route startup before schema migration."
             $ready = Invoke-WebRequest -Uri "https://$domain/license/api/v4/activate.php" -TimeoutSec 60 -SkipHttpErrorCheck
-            if ([int]$ready.StatusCode -ne 200 -or -not ([string]$ready.Content).Contains('License API v4')) { throw "V4 route readiness failed before migration: HTTP $($ready.StatusCode)" }
+            if ([int]$ready.StatusCode -ne 200 -or -not ([string]$ready.Content).Contains('License API v4')) {
+                $bodyText = if ($ready.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($ready.Content) } else { [string]$ready.Content }
+                $bodyText = $bodyText.Substring(0,[Math]::Min(400,$bodyText.Length))
+                throw "V4 route readiness failed before migration: HTTP $($ready.StatusCode); body=$bodyText"
+            }
         }
         if ($Profile -eq 'LicenseV4') {
             Write-Host "$($destination.Name): installing additive License V4 tables."
