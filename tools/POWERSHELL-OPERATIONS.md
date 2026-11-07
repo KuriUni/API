@@ -21,6 +21,8 @@
 | `operations/Xrea/Deploy-TUTI-Help.ps1` | ヘルプHTMLの配置 | 既存ページをローカルバックアップしてから更新 |
 | `operations/Xrea/Upload-Xrea.ps1` | 任意のフォルダーを任意の公開パスへアップロード | 高影響の汎用ツール。接続先を確認して個別実行 |
 
+PowerShell 7でXREAをデプロイする場合は、WinSCP Automation packageの `.NET Standard 2.0` 版 `WinSCPnet.dll` をインストール先の `netstandard2.0` フォルダーに置きます。Windows PowerShell 5.1では通常の `WinSCPnet.dll` を使用します。どちらも同じWinSCPインストールの `WinSCP.exe` を指定して起動します。
+
 同期元にある `.tuti-deploy-backup-*`、`.tuti-deploy-stage-*`、`__pycache__`、`*.pyc`、`*.pyo` は本番・Backup・Main.2415.jpへ送りません。BackupにはBackup側専用の `fastapi-runtime.json` を保持します。XREA取得時も同じローカルバックアップ類と `fastapi-runtime.json` は取り込みません。差分判定台帳は `%LOCALAPPDATA%\XreaDeploy\sync-state` に配置し、ローカルファイルのSHA-256を使います。初回はファイル一式を送って台帳を作り、2回目以降は追加・変更分のみを送ります。転送がすべて成功した後、削除済み・除外対象になったローカルファイルの台帳記録だけを整理します。転送途中で失敗した場合は台帳整理を行わず、次回再開に備えます。FTP側を走査しないため、サーバー側で手動変更・削除されたファイルの検出はしません。再全送信したい場合は対象台帳を削除します。サーバー側のみのファイルは削除しません。
 
 ## Sunabar

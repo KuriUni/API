@@ -28,14 +28,28 @@ if ([string]::IsNullOrWhiteSpace($LocalPath)) {
 $resolvedLocalPath = [System.IO.Path]::GetFullPath($LocalPath)
 if (-not (Test-Path -LiteralPath $resolvedLocalPath -PathType Container)) { throw "Source folder not found: $resolvedLocalPath" }
 
-$assemblyCandidates = @(
+$winScpInstallCandidates = @(
     (Join-Path $env:LOCALAPPDATA 'Programs\WinSCP\WinSCPnet.dll'),
     (Join-Path $env:ProgramFiles 'WinSCP\WinSCPnet.dll'),
     (Join-Path ${env:ProgramFiles(x86)} 'WinSCP\WinSCPnet.dll')
 ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) }
-if (-not $assemblyCandidates) { throw 'WinSCP was not found. Install WinSCP, then retry.' }
-Add-Type -Path ($assemblyCandidates | Select-Object -First 1)
+if (-not $winScpInstallCandidates) { throw 'WinSCP was not found. Install WinSCP, then retry.' }
+if ($PSVersionTable.PSEdition -eq 'Core') {
+    $assemblyCandidates = @($winScpInstallCandidates | ForEach-Object { Join-Path (Split-Path $_ -Parent) 'netstandard2.0\WinSCPnet.dll' } | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+    if (-not $assemblyCandidates) {
+        throw 'PowerShell 7 requires WinSCP .NET Standard 2.0 assembly. Install the WinSCP Automation package and place netstandard2.0\WinSCPnet.dll beside the installed WinSCP files, or run this script with Windows PowerShell 5.1.'
+    }
+} else {
+    $assemblyCandidates = $winScpInstallCandidates
+}
 $assemblyPath = $assemblyCandidates | Select-Object -First 1
+$winScpDirectory = Split-Path $assemblyPath -Parent
+$winScpExecutablePath = Join-Path $winScpDirectory 'WinSCP.exe'
+if (-not (Test-Path -LiteralPath $winScpExecutablePath -PathType Leaf)) {
+    $winScpExecutablePath = Join-Path (Split-Path $winScpDirectory -Parent) 'WinSCP.exe'
+}
+if (-not (Test-Path -LiteralPath $winScpExecutablePath -PathType Leaf)) { throw "WinSCP executable was not found beside $assemblyPath." }
+Add-Type -Path $assemblyPath
 $fingerprint = '9c:fb:c9:21:d2:6f:de:43:43:bc:cb:e2:65:b0:99:e4:20:11:e1:72:bb:26:16:48:d1:3e:30:89:68:6d:d4:c7'
 $targets = @(Get-XreaDeployTargets | Where-Object { $Target -eq 'Both' -or $_.Name -eq $Target })
 
@@ -170,6 +184,7 @@ try {
                 TlsHostCertificateFingerprint = $fingerprint
             }
             $session = New-Object WinSCP.Session
+            $session.ExecutablePath = $winScpExecutablePath
             $session.Open($sessionOptions)
         }
         catch {
@@ -188,6 +203,7 @@ try {
                 TlsHostCertificateFingerprint = $fingerprint
             }
             $session = New-Object WinSCP.Session
+            $session.ExecutablePath = $winScpExecutablePath
             try { $session.Open($sessionOptions) }
             catch {
                 $savedCredentials.Remove($destination.Name)
