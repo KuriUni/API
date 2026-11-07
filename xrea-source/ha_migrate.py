@@ -16,11 +16,14 @@ def migrate(request_context):
     try:
         data = request_data(request_context)
         scope = data.get('scope', 'all') if isinstance(data, dict) else 'all'
-        if scope not in ('all', 'v8'):
+        if scope not in ('all', 'v8', 'license_v4'):
             return _response('400 Bad Request', b'{"ok":false,"error":"invalid_migration_scope"}')
         connection = database.connect()
         if scope == 'v8':
             payload = {'ok': True, 'scope': 'v8'}
+        elif scope == 'license_v4':
+            from license_v4_storage import ensure_schema
+            payload = {'ok': True, 'scope': 'license_v4', 'license_v4': ensure_schema(connection)}
         else:
             from schema39_storage import run_migrations as current_migrations
             payload = current_migrations(connection)

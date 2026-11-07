@@ -274,7 +274,7 @@ def _active_license(license_row):
     if license_row.get('expires_at') and _as_utc(license_row['expires_at']) <= datetime.now(timezone.utc):
         raise RuntimeError('このライセンスは期限切れです。')
 
-def _guard_capacity(connection, license_row, device_hash_value, include_v3=True):
+def _guard_capacity(connection, license_row, device_hash_value, include_v3=True, include_v4=True):
     license_id = int(license_row['id'])
     with connection.cursor() as cursor:
         sources = 'SELECT device_hash FROM license_devices WHERE license_id=%s AND revoked_at IS NULL AND refresh_expires_at>UTC_TIMESTAMP()'
@@ -282,6 +282,11 @@ def _guard_capacity(connection, license_row, device_hash_value, include_v3=True)
         if include_v3:
             sources += ' UNION ALL SELECT device_hash FROM license_v3_devices WHERE license_id=%s AND revoked_at IS NULL'
             args += (license_id,)
+        if include_v4:
+            cursor.execute("SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='license_v4_devices'")
+            if int((cursor.fetchone() or {}).get('n') or 0) == 1:
+                sources += ' UNION ALL SELECT device_hash FROM license_v4_devices WHERE license_id=%s AND revoked_at IS NULL'
+                args += (license_id,)
         cursor.execute('SELECT 1 AS found FROM (' + sources + ') d WHERE device_hash=%s LIMIT 1', args + (device_hash_value,))
         existing = cursor.fetchone()
         if existing:

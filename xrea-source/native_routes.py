@@ -122,7 +122,7 @@ def route_manifest(existing=()):
         elif path in retired:
             kind, handler = 'retired', 'retired_auth.response'
         elif path in existing:
-            kind, handler = 'endpoint', 'native_v3'
+            kind, handler = 'endpoint', 'native_v4' if path.startswith(('/api/v4/', '/license/api/v4/')) else 'native_v3'
         elif path in HANDLERS:
             kind, handler = 'endpoint', '.'.join(HANDLERS[path][:2])
         elif path in EMPTY:

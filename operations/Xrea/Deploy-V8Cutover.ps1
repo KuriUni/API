@@ -1,7 +1,7 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param([ValidateSet('Both','Primary','Backup')][string] $Target = 'Both',
-      [ValidateSet('V8','License')][string] $Profile = 'V8')
+      [ValidateSet('V8','License','LicenseV4')][string] $Profile = 'V8')
 $ErrorActionPreference = 'Stop'
 $base = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $source = Join-Path $base 'xrea-source'
@@ -11,7 +11,7 @@ Add-Type -Path (Join-Path $install 'netstandard2.0\WinSCPnet.dll')
 Add-Type -AssemblyName System.Security.Cryptography.ProtectedData
 $credentials = Import-Clixml -LiteralPath (Join-Path $env:LOCALAPPDATA 'XreaDeploy\credentials.xml')
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$series = if ($Profile -eq 'License') { 'license-auth' } else { 'v8-cutover' }
+$series = if ($Profile -eq 'LicenseV4') { 'license-v4-auth' } elseif ($Profile -eq 'License') { 'license-auth' } else { 'v8-cutover' }
 $backupRoot = Join-Path $base "deploy-backups\$series-$stamp"
 $privateRoot = Join-Path $env:LOCALAPPDATA "XreaDeploy\private-backups\$series-$stamp"
 # Dependencies precede dispatchers and browser assets. Only these known paths are queried.
@@ -21,6 +21,11 @@ $files = @('retired_auth.py','product_key_v8_storage.py','ha_migrate.py','ha_exp
     'api-catalog/openapi.json','tenant-portal/bulk-jobs.js','tenant-portal/app.js','tenant-portal/index.html')
 if ($Profile -eq 'License') {
     $files = @('http_utils.py','v3_handlers.py','native_v3.py','v2_handlers.py','openapi-catalog.json','api-catalog/openapi.json')
+}
+if ($Profile -eq 'LicenseV4') {
+    $files = @('v4_crypto.py','license_v4_storage.py','v3_handlers.py','native_v4.py','asgi.py',
+        'native_routes.py','routes.json','ha_migrate.py','ha_export.py','ha_snapshot.py',
+        'openapi-catalog.json','api-catalog/openapi.json','api/v4/activate.html')
 }
 foreach ($file in $files) {
     if (-not (Test-Path -LiteralPath (Join-Path $source $file))) { throw "Missing source: $file" }
@@ -94,9 +99,18 @@ foreach ($destination in $targets) {
                 if ([int]$migration.StatusCode -ne 200 -or -not $result.ok -or -not $result.product_key_issuance_v8.ok) { throw 'V8-only schema installation failed.' }
                 Write-Host "$($destination.Name): additive schema installation completed before handler activation."
             }
+            if ($Profile -eq 'LicenseV4' -and $file -eq 'ha_migrate.py') {
+                $migration = Invoke-WebRequest -Uri "https://$domain/license/ha/migrate.php" -Method Post -Headers $headers -ContentType 'application/json' -Body '{"scope":"license_v4"}' -TimeoutSec 90 -SkipHttpErrorCheck
+                $result = $migration.Content | ConvertFrom-Json
+                if ([int]$migration.StatusCode -ne 200 -or -not $result.ok -or -not $result.license_v4.ok) { throw 'V4 additive schema installation failed.' }
+                foreach ($table in @('license_v4_challenges','license_v4_devices','license_v4_sessions','license_v4_proofs','license_v4_refresh_history')) {
+                    if ($table -notin $result.license_v4.tables) { throw "V4 migration omitted table: $table" }
+                }
+                Write-Host "$($destination.Name): additive V4 schema installation completed."
+            }
         }
         $after = Save-PrivateSnapshot $exportUrl $headers (Join-Path $privateRoot ($destination.Name + '-after.dpapi'))
-        if ($Profile -eq 'License') {
+        if ($Profile -eq 'License' -or $Profile -eq 'LicenseV4') {
             $v3 = Invoke-WebRequest -Uri "https://$domain/license/api/v3/refresh.php" -Method Post -ContentType 'application/json' -Body '{}' -TimeoutSec 30 -SkipHttpErrorCheck
             if ([int]$v3.StatusCode -ne 401 -or ($v3.Content|ConvertFrom-Json).error_code -ne 'REFRESH_TOKEN_REQUIRED' -or -not $v3.Headers['X-Request-ID']) { throw 'V3 authentication error contract failed.' }
             $method = Invoke-WebRequest -Uri "https://$domain/license/api/v3/refresh.php" -TimeoutSec 30 -SkipHttpErrorCheck
@@ -105,8 +119,16 @@ foreach ($destination in $targets) {
             $v2Body = $v2.Content|ConvertFrom-Json
             if (-not $v2.Headers['X-Request-ID'] -or ([int]$v2.StatusCode -ne 400 -and -not ([int]$v2.StatusCode -eq 503 -and $v2Body.error -eq 'server_not_writable'))) { throw 'V2 authentication protection failed.' }
             $catalog = Invoke-RestMethod -Uri "https://$domain/license/api-catalog/index.php?document=openapi.json" -TimeoutSec 30
-            if ($catalog.info.version -ne '1.16.0') { throw 'License API specification not updated.' }
-            Write-Host "$($destination.Name): $($uploaded.Count) changed files hash-verified; V2/V3 authentication and request-ID contracts verified."
+            $expectedCatalogVersion = if ($Profile -eq 'LicenseV4') { '1.17.0' } else { '1.16.0' }
+            if ($catalog.info.version -ne $expectedCatalogVersion) { throw 'License API specification not updated.' }
+            if ($Profile -eq 'LicenseV4') {
+                $guide = Invoke-WebRequest -Uri "https://$domain/license/api/v4/activate.php" -TimeoutSec 30 -SkipHttpErrorCheck
+                if ([int]$guide.StatusCode -ne 200 -or -not ([string]$guide.Content).Contains('License API v4')) { throw 'V4 developer guide is unavailable.' }
+                $challenge = Invoke-WebRequest -Uri "https://$domain/license/api/v4/challenge.php" -Method Post -ContentType 'application/json' -Body '{}' -TimeoutSec 30 -SkipHttpErrorCheck
+                $challengeBody = $challenge.Content | ConvertFrom-Json
+                if ([int]$challenge.StatusCode -ne 400 -or $challengeBody.error_code -ne 'DEVICE_PUBLIC_KEY_INVALID' -or -not $challenge.Headers['X-Request-ID']) { throw 'V4 safe challenge validation failed.' }
+            }
+            Write-Host "$($destination.Name): $($uploaded.Count) changed files hash-verified; license API contracts verified."
         } else {
         foreach ($table in @('product_key_v8_jobs','product_key_v8_items')) {
             if ($table -notin $after.Tables) { throw "V8 table missing from HA snapshot: $table" }

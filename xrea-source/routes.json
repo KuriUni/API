@@ -521,6 +521,61 @@
       "access": "endpoint_or_include"
     },
     {
+      "path": "/api/sunabar/v1/activate.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/sunabar/v1/health.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/sunabar/v1/key.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/sunabar/v1/license-list.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/sunabar/v1/license-revoke.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/sunabar/v1/licenses.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/sunabar/v1/products.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/sunabar/v1/session-check.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/sunabar/v1/session-deactivate.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/sunabar/v1/session-refresh.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/sunabar/v1/verify.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
       "path": "/api/v2/activate.php",
       "source": "api/v2/activate.php",
       "source_sha256": "2efd5a75f77c137ea673d6d9c8a5ce2c6d04696e29c98ba22d073a6097170e51",
@@ -609,6 +664,43 @@
       "source": "api/v3/verify.php",
       "source_sha256": "958f3849daa1bc00676d89e8ce1eeb0008a7f09849db7ee3e411a060815fd14d",
       "access": "endpoint_or_include"
+    },
+    {
+      "path": "/api/v4/activate.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/v4/challenge.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/v4/index.php",
+      "handler": "native_v4",
+      "methods": [
+        "GET"
+      ]
+    },
+    {
+      "path": "/api/v4/reauth.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/v4/refresh.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/v4/revoke.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/v4/verify.php",
+      "access": "endpoint_or_include",
+      "native_only": true
     },
     {
       "path": "/common-id-sso-demo/callback.php",
@@ -946,6 +1038,43 @@
       "access": "endpoint_or_include"
     },
     {
+      "path": "/license/api/v4/activate.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/license/api/v4/challenge.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/license/api/v4/index.php",
+      "handler": "native_v4",
+      "methods": [
+        "GET"
+      ]
+    },
+    {
+      "path": "/license/api/v4/reauth.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/license/api/v4/refresh.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/license/api/v4/revoke.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/license/api/v4/verify.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
       "path": "/maintenance.php",
       "source": "maintenance.php",
       "source_sha256": "52c3e57bbd9061f2f79692c71a62875631b55397bca50c9db495cf09eacb9844",
@@ -962,61 +1091,6 @@
       "source": "phone_activate.php",
       "source_sha256": "7939f04db2d10b2a175a26cf28322f5dbeb066075055ee36934500af3a056c54",
       "access": "endpoint_or_include"
-    },
-    {
-      "path": "/api/sunabar/v1/key.php",
-      "access": "endpoint_or_include",
-      "native_only": true
-    },
-    {
-      "path": "/api/sunabar/v1/products.php",
-      "access": "endpoint_or_include",
-      "native_only": true
-    },
-    {
-      "path": "/api/sunabar/v1/licenses.php",
-      "access": "endpoint_or_include",
-      "native_only": true
-    },
-    {
-      "path": "/api/sunabar/v1/verify.php",
-      "access": "endpoint_or_include",
-      "native_only": true
-    },
-    {
-      "path": "/api/sunabar/v1/health.php",
-      "access": "endpoint_or_include",
-      "native_only": true
-    },
-    {
-      "path": "/api/sunabar/v1/license-list.php",
-      "access": "endpoint_or_include",
-      "native_only": true
-    },
-    {
-      "path": "/api/sunabar/v1/license-revoke.php",
-      "access": "endpoint_or_include",
-      "native_only": true
-    },
-    {
-      "path": "/api/sunabar/v1/activate.php",
-      "access": "endpoint_or_include",
-      "native_only": true
-    },
-    {
-      "path": "/api/sunabar/v1/session-check.php",
-      "access": "endpoint_or_include",
-      "native_only": true
-    },
-    {
-      "path": "/api/sunabar/v1/session-refresh.php",
-      "access": "endpoint_or_include",
-      "native_only": true
-    },
-    {
-      "path": "/api/sunabar/v1/session-deactivate.php",
-      "access": "endpoint_or_include",
-      "native_only": true
     }
   ]
 }

@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "2415.jp API (V8 independent product-key issuance)",
-    "description": "製品・ライセンス管理、プロダクトキー発行V1/V8、端末認証、MNSL、HA管理の公開API仕様です。V2〜V7の新規発行は終了しました。既存のV4〜V6ジョブは照会・結果取得・取消のみ利用できます。",
-    "version": "1.16.0"
+    "description": "ライセンス認証API v4を追加。署名付き端末セッション、短期アクセストークン、ローテーション式更新トークンに対応。",
+    "version": "1.17.0"
   },
   "servers": [
     {
@@ -4906,6 +4906,1044 @@
           }
         }
       }
+    },
+    "/api/v4/challenge.php": {
+      "post": {
+        "summary": "V4端末認証チャレンジを発行",
+        "tags": [
+          "ライセンス認証v4"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "処理成功。"
+          },
+          "400": {
+            "description": "要求形式または署名が正しくありません。"
+          },
+          "401": {
+            "description": "認証または署名が無効です。"
+          },
+          "403": {
+            "description": "ライセンスが無効または期限切れです。"
+          },
+          "409": {
+            "description": "端末上限または再利用を検知しました。"
+          },
+          "429": {
+            "description": "試行回数上限です。"
+          },
+          "503": {
+            "description": "サービスまたはHA書込みノードを利用できません。Retry-After: 2"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "device_public_key"
+                ],
+                "properties": {
+                  "device_public_key": {
+                    "type": "string"
+                  },
+                  "purpose": {
+                    "type": "string",
+                    "enum": [
+                      "activate"
+                    ],
+                    "default": "activate"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "チャレンジ有効期間120秒。同一IPあたり15分に60回まで。"
+      }
+    },
+    "/api/v4/activate.php": {
+      "post": {
+        "summary": "本文署名を検証してV4セッションを発行",
+        "tags": [
+          "ライセンス認証v4"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "処理成功。"
+          },
+          "400": {
+            "description": "要求形式または署名が正しくありません。"
+          },
+          "401": {
+            "description": "認証または署名が無効です。"
+          },
+          "403": {
+            "description": "ライセンスが無効または期限切れです。"
+          },
+          "409": {
+            "description": "端末上限または再利用を検知しました。"
+          },
+          "429": {
+            "description": "試行回数上限です。"
+          },
+          "503": {
+            "description": "サービスまたはHA書込みノードを利用できません。Retry-After: 2"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "license_key",
+                  "device_fingerprint",
+                  "device_public_key",
+                  "challenge_id",
+                  "nonce",
+                  "signature"
+                ],
+                "properties": {
+                  "license_key": {
+                    "type": "string"
+                  },
+                  "product_code": {
+                    "type": "string"
+                  },
+                  "device_fingerprint": {
+                    "type": "string",
+                    "pattern": "^[a-fA-F0-9]{64}$"
+                  },
+                  "device_public_key": {
+                    "type": "string"
+                  },
+                  "challenge_id": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{32}$"
+                  },
+                  "nonce": {
+                    "type": "string"
+                  },
+                  "signature": {
+                    "type": "string"
+                  },
+                  "device_label": {
+                    "type": "string"
+                  },
+                  "app_version": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "signatureは署名欄を除く正規化本文SHA-256を、HTTPメソッド、固定パス、challenge_id、nonce、鍵thumbprintと共に署名します。"
+      }
+    },
+    "/api/v4/verify.php": {
+      "post": {
+        "summary": "V4セッションとライセンスを検証",
+        "tags": [
+          "ライセンス認証v4"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "処理成功。"
+          },
+          "400": {
+            "description": "要求形式または署名が正しくありません。"
+          },
+          "401": {
+            "description": "認証または署名が無効です。"
+          },
+          "403": {
+            "description": "ライセンスが無効または期限切れです。"
+          },
+          "409": {
+            "description": "端末上限または再利用を検知しました。"
+          },
+          "429": {
+            "description": "試行回数上限です。"
+          },
+          "503": {
+            "description": "サービスまたはHA書込みノードを利用できません。Retry-After: 2"
+          }
+        },
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": true,
+            "description": "Bearer access token",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-License-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-License-Timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-License-Nonce",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 180
+            }
+          },
+          {
+            "name": "X-License-Proof",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [],
+                "properties": {}
+              }
+            }
+          }
+        },
+        "description": "全要求は本文hash、POST、固定APIパス、session_id、時刻、一度限りnonce、Bearer tokenのSHA-256 hexを端末署名します。"
+      }
+    },
+    "/api/v4/refresh.php": {
+      "post": {
+        "summary": "V4トークンをローテーション",
+        "tags": [
+          "ライセンス認証v4"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "処理成功。"
+          },
+          "400": {
+            "description": "要求形式または署名が正しくありません。"
+          },
+          "401": {
+            "description": "認証または署名が無効です。"
+          },
+          "403": {
+            "description": "ライセンスが無効または期限切れです。"
+          },
+          "409": {
+            "description": "端末上限または再利用を検知しました。"
+          },
+          "429": {
+            "description": "試行回数上限です。"
+          },
+          "503": {
+            "description": "サービスまたはHA書込みノードを利用できません。Retry-After: 2"
+          }
+        },
+        "parameters": [
+          {
+            "name": "X-License-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-License-Timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-License-Nonce",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 180
+            }
+          },
+          {
+            "name": "X-License-Proof",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "refresh_token"
+                ],
+                "properties": {
+                  "refresh_token": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "refresh token再利用時は対象familyを失効します。署名にはrefresh_tokenのSHA-256 hexも含みます。"
+      }
+    },
+    "/api/v4/reauth.php": {
+      "post": {
+        "summary": "端末署名を再確認しトークンを更新",
+        "tags": [
+          "ライセンス認証v4"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "処理成功。"
+          },
+          "400": {
+            "description": "要求形式または署名が正しくありません。"
+          },
+          "401": {
+            "description": "認証または署名が無効です。"
+          },
+          "403": {
+            "description": "ライセンスが無効または期限切れです。"
+          },
+          "409": {
+            "description": "端末上限または再利用を検知しました。"
+          },
+          "429": {
+            "description": "試行回数上限です。"
+          },
+          "503": {
+            "description": "サービスまたはHA書込みノードを利用できません。Retry-After: 2"
+          }
+        },
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": true,
+            "description": "Bearer access token",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-License-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-License-Timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-License-Nonce",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 180
+            }
+          },
+          {
+            "name": "X-License-Proof",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [],
+                "properties": {}
+              }
+            }
+          }
+        },
+        "description": "全要求は本文hash、POST、固定APIパス、session_id、時刻、一度限りnonce、Bearer tokenのSHA-256 hexを端末署名します。"
+      }
+    },
+    "/api/v4/revoke.php": {
+      "post": {
+        "summary": "V4セッションまたはfamilyを失効",
+        "tags": [
+          "ライセンス認証v4"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "処理成功。"
+          },
+          "400": {
+            "description": "要求形式または署名が正しくありません。"
+          },
+          "401": {
+            "description": "認証または署名が無効です。"
+          },
+          "403": {
+            "description": "ライセンスが無効または期限切れです。"
+          },
+          "409": {
+            "description": "端末上限または再利用を検知しました。"
+          },
+          "429": {
+            "description": "試行回数上限です。"
+          },
+          "503": {
+            "description": "サービスまたはHA書込みノードを利用できません。Retry-After: 2"
+          }
+        },
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": true,
+            "description": "Bearer access token",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-License-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-License-Timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-License-Nonce",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 180
+            }
+          },
+          {
+            "name": "X-License-Proof",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [],
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "session",
+                      "family"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "全要求は本文hash、POST、固定APIパス、session_id、時刻、一度限りnonce、Bearer tokenのSHA-256 hexを端末署名します。"
+      }
+    },
+    "/api/v4/index.php": {
+      "get": {
+        "summary": "ライセンスAPI v4開発者ガイド",
+        "tags": [
+          "ライセンス認証v4"
+        ],
+        "responses": {
+          "200": {
+            "description": "端末認証ガイドHTML"
+          }
+        }
+      }
+    },
+    "/license/api/v4/index.php": {
+      "get": {
+        "summary": "ライセンスAPI v4開発者ガイド",
+        "tags": [
+          "ライセンス認証v4"
+        ],
+        "responses": {
+          "200": {
+            "description": "端末認証ガイドHTML"
+          }
+        }
+      }
+    },
+    "/license/api/v4/challenge.php": {
+      "post": {
+        "summary": "V4端末認証チャレンジを発行",
+        "tags": [
+          "ライセンス認証v4"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "処理成功。"
+          },
+          "400": {
+            "description": "要求形式または署名が正しくありません。"
+          },
+          "401": {
+            "description": "認証または署名が無効です。"
+          },
+          "403": {
+            "description": "ライセンスが無効または期限切れです。"
+          },
+          "409": {
+            "description": "端末上限または再利用を検知しました。"
+          },
+          "429": {
+            "description": "試行回数上限です。"
+          },
+          "503": {
+            "description": "サービスまたはHA書込みノードを利用できません。Retry-After: 2"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "device_public_key"
+                ],
+                "properties": {
+                  "device_public_key": {
+                    "type": "string"
+                  },
+                  "purpose": {
+                    "type": "string",
+                    "enum": [
+                      "activate"
+                    ],
+                    "default": "activate"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "チャレンジ有効期間120秒。同一IPあたり15分に60回まで。"
+      }
+    },
+    "/license/api/v4/activate.php": {
+      "post": {
+        "summary": "本文署名を検証してV4セッションを発行",
+        "tags": [
+          "ライセンス認証v4"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "処理成功。"
+          },
+          "400": {
+            "description": "要求形式または署名が正しくありません。"
+          },
+          "401": {
+            "description": "認証または署名が無効です。"
+          },
+          "403": {
+            "description": "ライセンスが無効または期限切れです。"
+          },
+          "409": {
+            "description": "端末上限または再利用を検知しました。"
+          },
+          "429": {
+            "description": "試行回数上限です。"
+          },
+          "503": {
+            "description": "サービスまたはHA書込みノードを利用できません。Retry-After: 2"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "license_key",
+                  "device_fingerprint",
+                  "device_public_key",
+                  "challenge_id",
+                  "nonce",
+                  "signature"
+                ],
+                "properties": {
+                  "license_key": {
+                    "type": "string"
+                  },
+                  "product_code": {
+                    "type": "string"
+                  },
+                  "device_fingerprint": {
+                    "type": "string",
+                    "pattern": "^[a-fA-F0-9]{64}$"
+                  },
+                  "device_public_key": {
+                    "type": "string"
+                  },
+                  "challenge_id": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{32}$"
+                  },
+                  "nonce": {
+                    "type": "string"
+                  },
+                  "signature": {
+                    "type": "string"
+                  },
+                  "device_label": {
+                    "type": "string"
+                  },
+                  "app_version": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "signatureは署名欄を除く正規化本文SHA-256を、HTTPメソッド、固定パス、challenge_id、nonce、鍵thumbprintと共に署名します。"
+      }
+    },
+    "/license/api/v4/verify.php": {
+      "summary": "V4セッションとライセンスを検証",
+      "tags": [
+        "ライセンス認証v4"
+      ],
+      "security": [],
+      "responses": {
+        "200": {
+          "description": "処理成功。"
+        },
+        "400": {
+          "description": "要求形式または署名が正しくありません。"
+        },
+        "401": {
+          "description": "認証または署名が無効です。"
+        },
+        "403": {
+          "description": "ライセンスが無効または期限切れです。"
+        },
+        "409": {
+          "description": "端末上限または再利用を検知しました。"
+        },
+        "429": {
+          "description": "試行回数上限です。"
+        },
+        "503": {
+          "description": "サービスまたはHA書込みノードを利用できません。Retry-After: 2"
+        }
+      },
+      "parameters": [
+        {
+          "name": "Authorization",
+          "in": "header",
+          "required": true,
+          "description": "Bearer access token",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "X-License-Session",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "X-License-Timestamp",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "X-License-Nonce",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 180
+          }
+        },
+        {
+          "name": "X-License-Proof",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [],
+              "properties": {}
+            }
+          }
+        }
+      },
+      "description": "全要求は本文hash、POST、固定APIパス、session_id、時刻、一度限りnonce、Bearer tokenのSHA-256 hexを端末署名します。"
+    },
+    "/license/api/v4/refresh.php": {
+      "post": {
+        "summary": "V4トークンをローテーション",
+        "tags": [
+          "ライセンス認証v4"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "処理成功。"
+          },
+          "400": {
+            "description": "要求形式または署名が正しくありません。"
+          },
+          "401": {
+            "description": "認証または署名が無効です。"
+          },
+          "403": {
+            "description": "ライセンスが無効または期限切れです。"
+          },
+          "409": {
+            "description": "端末上限または再利用を検知しました。"
+          },
+          "429": {
+            "description": "試行回数上限です。"
+          },
+          "503": {
+            "description": "サービスまたはHA書込みノードを利用できません。Retry-After: 2"
+          }
+        },
+        "parameters": [
+          {
+            "name": "X-License-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-License-Timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-License-Nonce",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 180
+            }
+          },
+          {
+            "name": "X-License-Proof",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "refresh_token"
+                ],
+                "properties": {
+                  "refresh_token": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "refresh token再利用時は対象familyを失効します。署名にはrefresh_tokenのSHA-256 hexも含みます。"
+      }
+    },
+    "/license/api/v4/reauth.php": {
+      "summary": "端末署名を再確認しトークンを更新",
+      "tags": [
+        "ライセンス認証v4"
+      ],
+      "security": [],
+      "responses": {
+        "200": {
+          "description": "処理成功。"
+        },
+        "400": {
+          "description": "要求形式または署名が正しくありません。"
+        },
+        "401": {
+          "description": "認証または署名が無効です。"
+        },
+        "403": {
+          "description": "ライセンスが無効または期限切れです。"
+        },
+        "409": {
+          "description": "端末上限または再利用を検知しました。"
+        },
+        "429": {
+          "description": "試行回数上限です。"
+        },
+        "503": {
+          "description": "サービスまたはHA書込みノードを利用できません。Retry-After: 2"
+        }
+      },
+      "parameters": [
+        {
+          "name": "Authorization",
+          "in": "header",
+          "required": true,
+          "description": "Bearer access token",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "X-License-Session",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "X-License-Timestamp",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "X-License-Nonce",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 180
+          }
+        },
+        {
+          "name": "X-License-Proof",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [],
+              "properties": {}
+            }
+          }
+        }
+      },
+      "description": "全要求は本文hash、POST、固定APIパス、session_id、時刻、一度限りnonce、Bearer tokenのSHA-256 hexを端末署名します。"
+    },
+    "/license/api/v4/revoke.php": {
+      "summary": "V4セッションまたはfamilyを失効",
+      "tags": [
+        "ライセンス認証v4"
+      ],
+      "security": [],
+      "responses": {
+        "200": {
+          "description": "処理成功。"
+        },
+        "400": {
+          "description": "要求形式または署名が正しくありません。"
+        },
+        "401": {
+          "description": "認証または署名が無効です。"
+        },
+        "403": {
+          "description": "ライセンスが無効または期限切れです。"
+        },
+        "409": {
+          "description": "端末上限または再利用を検知しました。"
+        },
+        "429": {
+          "description": "試行回数上限です。"
+        },
+        "503": {
+          "description": "サービスまたはHA書込みノードを利用できません。Retry-After: 2"
+        }
+      },
+      "parameters": [
+        {
+          "name": "Authorization",
+          "in": "header",
+          "required": true,
+          "description": "Bearer access token",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "X-License-Session",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "X-License-Timestamp",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "X-License-Nonce",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 180
+          }
+        },
+        {
+          "name": "X-License-Proof",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [],
+              "properties": {
+                "scope": {
+                  "type": "string",
+                  "enum": [
+                    "session",
+                    "family"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "description": "全要求は本文hash、POST、固定APIパス、session_id、時刻、一度限りnonce、Bearer tokenのSHA-256 hexを端末署名します。"
     }
   },
   "components": {

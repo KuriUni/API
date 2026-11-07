@@ -118,6 +118,9 @@ def create_app() -> FastAPI:
     from native_v3 import install_routes
     install_routes(api, maintenance_if_needed)
 
+    from native_v4 import install_routes as install_license_v4_routes
+    install_license_v4_routes(api, maintenance_if_needed)
+
     from native_routes import install_routes as install_all_routes
     install_all_routes(api)
     from api_catalog import install_catalog
