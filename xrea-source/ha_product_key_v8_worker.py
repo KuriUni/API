@@ -4,6 +4,7 @@ import json
 import hashlib
 import secrets
 import time
+import sys
 import database
 from core import php_int_cast
 from http_utils import json_response
@@ -91,15 +92,25 @@ def product_key_v8_worker(request_context):
     from ha_handlers import _ha_authorized_scope
     if not _ha_authorized_scope(request_context, "ha:operate"):
         return _reply(404, {"ok": False, "error": "not_found"})
-    if str(request_context.get("method", "")).upper() != "POST":
+    method = str(request_context.get('method', '')).upper()
+    if method not in {'GET', 'POST'}:
         return _reply(405, {"ok": False, "error": "method_not_allowed"},)
     connection = None
     try:
+        if method == 'GET':
+            connection = database.connect()
+            from baas_v8_handlers import _schema_ready, queue_status
+            if not _schema_ready(connection):
+                return _reply(503, {'ok': False, 'error': 'v8_migration_required'})
+            return _reply(200, {'ok': True, 'mode': 'status', 'queue': queue_status(connection)})
         stream = request_context.get("body_stream")
         raw = stream.read(16385) if stream is not None else b""
         if len(raw) > 16384:
             return _reply(400, {"ok": False, "error": "invalid_worker_request"})
-        data = json.loads(raw.decode("utf-8") or "{}")
+        try:
+            data = json.loads(raw.decode('utf-8') or '{}', parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+        except (UnicodeDecodeError, ValueError):
+            return _reply(400, {'ok': False, 'error': 'invalid_worker_request'})
         if not isinstance(data, dict):
             return _reply(400, {"ok": False, "error": "invalid_worker_request"})
         if "benchmark_count" in data:
@@ -133,7 +144,7 @@ def product_key_v8_worker(request_context):
         from baas_v8_handlers import _schema_ready, pump_due_jobs
         if not _schema_ready(connection):
             return _reply(503, {"ok": False, "error": "v8_migration_required",
-                                "required_migration": "029_product_key_issuance_v8_standalone"})
+                                "required_migration": "040_product_key_v8_reliability"})
         started = time.monotonic()
         processed = pump_due_jobs(connection, budget, max_jobs, only_job_id or None)
         elapsed = max(1, round((time.monotonic() - started) * 1000))
@@ -145,11 +156,16 @@ def product_key_v8_worker(request_context):
     except database.DatabaseConfigurationError:
         return _reply(503, {"ok": False, "error": "v8_worker_failed",
                             "request_id": secrets.token_hex(8)})
-    except Exception:
+    except Exception as error:
         if connection:
-            connection.rollback()
+            try:
+                connection.rollback()
+            except Exception:
+                pass
+        request_id = secrets.token_hex(8)
+        print('v8_worker_failed request_id=%s error_type=%s' % (request_id, type(error).__name__), file=sys.stderr)
         return _reply(503, {"ok": False, "error": "v8_worker_failed",
-                            "request_id": secrets.token_hex(8)})
+                            "request_id": request_id})
     finally:
         if connection:
             connection.close()

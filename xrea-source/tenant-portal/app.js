@@ -334,18 +334,39 @@
       finally{taskBusy(false);submit.disabled=false;submit.textContent='ライセンスを発行';}
     });$('task-content').replaceChildren(form);product.focus();
   }
+  function createBulkRecovery(connection, taskVersion) {
+    const recovery = element('div', 'form-grid');
+    const jobInput = element('input'); jobInput.placeholder = '発行ジョブID（32文字）'; jobInput.maxLength = 32;
+    const errorBox = element('p', 'form-error span-all'); errorBox.setAttribute('role', 'alert');
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(`tuti-license-bulk-issue:${state.tenant}:${state.environment}:last-job`) ||
+        sessionStorage.getItem(`tuti-license-bulk-issue:${state.tenant}:${state.environment}`) || 'null');
+      if (/^[a-f0-9]{32}$/.test(saved?.jobId || '')) jobInput.value = saved.jobId;
+    } catch {}
+    const resume = button('発行済み・処理中ジョブを確認', () => {
+      const jobId = jobInput.value.trim().toLowerCase();
+      if (!/^[a-f0-9]{32}$/.test(jobId)) { errorBox.textContent = '32文字の発行ジョブIDを入力してください。'; return; }
+      const view = element('div', 'form-grid');
+      view.append(element('p', 'form-foot span-all', `発行ジョブ ${jobId}`));
+      $('task-content').replaceChildren(view); renderBulkJobActions(view, jobId, connection, taskVersion);
+    });
+    recovery.append(field('前回のジョブを再確認', jobInput), resume, errorBox);
+    return recovery;
+  }
   async function openBulkLicenseForm() {
     if (state.taskBusy) return;
     const connection = state.connectionVersion;
     const loading = element('p', 'loading-label', '製品を読み込んでいます…');
     openTask('ライセンスを一括発行', '件数を指定して、複数のライセンスキーをまとめて発行します。', loading, 'BULK LICENSE');
     const taskVersion = state.taskVersion;
+    const recovery = createBulkRecovery(connection, taskVersion);
+    $('task-content').replaceChildren(loading, recovery);
     let products;
     try {
       products = (await api(`/api/baas/v1/products.php?limit=${PAGE_SIZE}`)).products || [];
     } catch (error) {
       if (connection === state.connectionVersion && taskVersion === state.taskVersion && $('task-dialog').open) {
-        $('task-content').replaceChildren(element('p', 'form-error', error.message));
+        $('task-content').replaceChildren(element('p', 'form-error', error.message), recovery);
       }
       return;
     }
@@ -353,7 +374,7 @@
 
     const active = products.filter((product) => product.status === 'active');
     if (!active.length) {
-      $('task-content').replaceChildren(emptyState('先に製品を登録してください', '有効な製品を登録すると、一括発行できます。', 'box'));
+      $('task-content').replaceChildren(emptyState('先に製品を登録してください', '有効な製品を登録すると、一括発行できます。', 'box'), recovery);
       return;
     }
 
@@ -401,10 +422,10 @@
       } catch (error) {
         errorBox.textContent = error.message; submit.disabled = false; submit.textContent = '内容を確認して一括発行'; return;
       }
-      if (connection !== state.connectionVersion) { submit.disabled = false; submit.textContent = '内容を確認して一括発行'; return; }
+      if (connection !== state.connectionVersion || taskVersion !== state.taskVersion || !$('task-dialog').open) { submit.disabled = false; submit.textContent = '内容を確認して一括発行'; return; }
       const pricing = quote.pricing || {};
       const confirmation = await confirmAction(`${product.selectedOptions[0].textContent}を${body.count.toLocaleString('ja-JP')}件、一括発行します。料金目安は${pricing.charge_credit || '—'} Cr（${pricing.mode || '料金設定'}）です。発行後のキーはCSVで一度に取得してください。続けますか？`);
-      if (!confirmation || connection !== state.connectionVersion) { submit.disabled = false; submit.textContent = '内容を確認して一括発行'; return; }
+      if (!confirmation || connection !== state.connectionVersion || taskVersion !== state.taskVersion || !$('task-dialog').open) { submit.disabled = false; submit.textContent = '内容を確認して一括発行'; return; }
 
       const signature = JSON.stringify(body);
       const storageKey = `tuti-license-bulk-issue:${state.tenant}:${state.environment}`;
@@ -415,6 +436,7 @@
         sessionStorage.setItem(storageKey, JSON.stringify(pending));
       } catch {
         errorBox.textContent = '安全な再試行情報を保存できません。ブラウザーの設定を確認してください。';
+        submit.disabled = false; submit.textContent = '内容を確認して一括発行';
         return;
       }
       taskBusy(true); submit.disabled = true; submit.textContent = '発行を受け付けています…'; errorBox.textContent = '';
@@ -432,6 +454,7 @@
         if (jobId) {
           pending.jobId = jobId;
           try { sessionStorage.setItem(storageKey, JSON.stringify(pending)); } catch {}
+          try { sessionStorage.setItem(storageKey + ':last-job', JSON.stringify({ jobId })); } catch {}
           renderBulkJobActions(resultView, jobId, connection, taskVersion);
         }
         if (result.execution === 'completed_inline' && Array.isArray(result.items)) {
@@ -447,64 +470,85 @@
         taskBusy(false); submit.disabled = false; submit.textContent = '内容を確認して一括発行';
       }
     });
-    $('task-content').replaceChildren(form);
+    $('task-content').replaceChildren(form, recovery);
     product.focus();
   }
 
   function renderBulkJobActions(container, jobId, connection, taskVersion) {
     const statusLine = element('p', 'form-foot span-all', '発行状況を確認しています…');
     const controls = element('div', 'inline-actions span-all');
-    const refreshStatus = button('進捗を更新', async (event) => {
-      event.currentTarget.disabled = true;
+    let updating = false; let timer = 0; let autoRefresh = false;
+    const isCurrent = () => connection === state.connectionVersion && taskVersion === state.taskVersion && $('task-dialog').open && container.isConnected;
+    async function refreshJob() {
+      if (updating || !isCurrent()) return;
+      window.clearTimeout(timer);
+      if (document.hidden) { if (autoRefresh) timer = window.setTimeout(refreshJob, 30000); return; }
+      updating = true; refreshStatus.disabled = true;
+      let terminal = false; let nextDelay = 10000;
       try {
         const result = await api(`/api/baas/v8/issuance.php?job_id=${encodeURIComponent(jobId)}`);
-        if (connection !== state.connectionVersion || taskVersion !== state.taskVersion) return;
+        if (!isCurrent()) return;
         const job = result.job;
-        statusLine.textContent = `状態: ${job.status} · ${job.progress_percent}% · 成功 ${job.succeeded_count}件 · 失敗 ${job.failed_count}件`;
+        terminal = Boolean(job.terminal);
+        nextDelay = Math.max(10000, Math.min(30000, Number(job.retry_after_ms) || 10000));
+        const retry = Number(job.retry_count) ? ` · 再試行 ${job.retry_count}回${job.retry_after_ms > 0 ? '（待機中）' : ''}` : '';
+        statusLine.textContent = `状態: ${job.status} · ${job.progress_percent}% · 成功 ${job.succeeded_count}件 · 失敗 ${job.failed_count}件${retry}`;
+        cancelJob.disabled = job.status === 'cancel_requested';
         if (job.terminal) {
+          autoRefresh = false; autoStatus.disabled = true; autoStatus.textContent = '自動更新（完了）';
           cancelJob.classList.add('hidden');
           const storageKey = `tuti-license-bulk-issue:${state.tenant}:${state.environment}`;
           try { const saved = JSON.parse(sessionStorage.getItem(storageKey) || 'null'); if (saved?.jobId === jobId) sessionStorage.removeItem(storageKey); } catch {}
         }
-        if (job.status === 'completed') {
-          statusLine.classList.add('success');
+        if (job.terminal && Number(job.succeeded_count) > 0) {
+          statusLine.classList.toggle('success', job.status === 'completed');
           if (!controls.querySelector('[data-download-results]')) {
             const reveal = actionButton('発行キーをCSVで保存', 'key', async () => {
               reveal.disabled = true; reveal.textContent = 'キーを取得しています…';
               try {
-                const all = []; let cursor = 0; let hasMore = true;
-                while (hasMore) {
+                const csv = await TutiBulkJobs.collectCsvPages(async (cursor) => {
                   const query = new URLSearchParams({ job_id: jobId, cursor: String(cursor), limit: '500', reveal: 'true' });
-                  const page = await api(`/api/baas/v8/issuance-results.php?${query}`);
-                  all.push(...(page.items || [])); cursor = Number(page.next_cursor || 0); hasMore = Boolean(page.has_more);
-                  if (all.length > 100000) throw new Error('一度に保存できる上限100,000件を超えました。管理者へお問い合わせください。');
-                }
-                downloadCsv(`license-keys-${jobId.slice(0, 8)}.csv`, [['ライセンスID', '指紋', 'ライセンスキー'], ...all.map((item) => [item.license_id, item.key_fingerprint, item.product_key])]);
-                statusLine.textContent = `${all.length.toLocaleString('ja-JP')}件のキーをCSVに保存しました。安全な場所で管理してください。`;
+                  return api(`/api/baas/v8/issuance-results.php?${query}`);
+                }, jobId, Number(job.succeeded_count), isCurrent, (count, total) => {
+                  reveal.textContent = `キーを取得中 ${count.toLocaleString('ja-JP')} / ${total.toLocaleString('ja-JP')}件`;
+                });
+                if (!isCurrent()) return;
+                downloadCsvParts(`license-keys-${jobId.slice(0, 8)}.csv`, csv.parts);
+                statusLine.textContent = `${csv.count.toLocaleString('ja-JP')}件のキーをCSVに保存しました。安全な場所で管理してください。`;
               } catch (error) { notice(error.message, true); }
               finally { reveal.disabled = false; reveal.textContent = '発行キーをCSVで保存'; }
             }, 'button-primary');
             reveal.dataset.downloadResults = 'true'; controls.append(reveal);
           }
         }
-      } catch (error) { statusLine.textContent = error.message; }
-      finally { event.currentTarget.disabled = false; }
+      } catch (error) { if (isCurrent()) statusLine.textContent = error.message; nextDelay = 30000; }
+      finally {
+        updating = false; refreshStatus.disabled = false;
+        if (isCurrent() && !terminal && autoRefresh) timer = window.setTimeout(refreshJob, nextDelay);
+      }
+    }
+    const refreshStatus = button('進捗を更新', refreshJob);
+    const autoStatus = button('自動更新を開始（API利用料あり）', async () => {
+      autoRefresh = !autoRefresh;
+      autoStatus.textContent = autoRefresh ? '自動更新を停止' : '自動更新を開始（API利用料あり）';
+      if (autoRefresh) await refreshJob(); else window.clearTimeout(timer);
     });
     const cancelJob = button('ジョブを停止', async () => {
       if (!await confirmAction('処理中のジョブを停止します。停止前に発行済みのキーは取り消されません。続けますか？')) return;
       cancelJob.disabled = true;
-      try { await api('/api/baas/v8/issuance-cancel.php', { method: 'POST', body: { job_id: jobId } }); await refreshStatus.click(); }
+      try { await api('/api/baas/v8/issuance-cancel.php', { method: 'POST', body: { job_id: jobId } }); await refreshJob(); }
       catch (error) { statusLine.textContent = error.message; cancelJob.disabled = false; }
     }, 'button-danger');
-    controls.append(refreshStatus, cancelJob); container.append(statusLine, controls);
-    refreshStatus.click();
+    controls.append(refreshStatus, cancelJob, autoStatus); container.append(statusLine, controls);
+    timer = window.setTimeout(refreshJob, 0);
   }
 
   function renderLicenseTable(rows) { const values = rows.map((row) => { const actions = element('div', 'inline-actions'); const detail = button('端末', async () => showDevices(row.id)); const toggle = button(Number(row.active) ? '停止' : '再開', async () => { const action = Number(row.active) ? 'deactivate' : 'activate'; if (!await confirmAction(`ライセンス #${row.id} を${action === 'deactivate' ? '停止' : '再開'}します。続けますか？`)) return; try { await api('/api/baas/v1/licenses.php', { method: 'POST', body: { action, license_id: Number(row.id) } }); notice('ライセンス状態を更新しました。'); await licensesPage(); } catch (error) { notice(error.message, true); } }); actions.append(detail, toggle); return [row.id, row.product_code, row.label, statusBadge(Number(row.active) ? 'active' : 'inactive'), row.max_devices, row.expires_at ? dateText(row.expires_at) : '無期限', actions]; }); return table(['ID', '製品', 'ラベル', '状態', '上限', '期限', '操作'], values); }
   async function showDevices(id) { if(state.taskBusy)return;openTask(`ライセンス #${id} の端末`,'このライセンスに接続した端末を確認できます。',element('p','loading-label','端末を読み込んでいます…'),'DEVICES');const connection=state.connectionVersion;const taskVersion=state.taskVersion;try{const data=await api(`/api/baas/v1/licenses.php?license_id=${encodeURIComponent(id)}`);if(connection!==state.connectionVersion||taskVersion!==state.taskVersion||!$('task-dialog').open)return;const rows=(data.devices||[]).map(d=>[d.id,d.device_label||'端末名なし',dateText(d.first_activated_at),dateText(d.last_seen_at),statusBadge(d.revoked_at?'revoked':'active')]);$('task-content').replaceChildren(rows.length?table(['ID','端末名','初回認証','最終利用','状態'],rows):emptyState('接続した端末はまだありません','このライセンスで認証すると、端末がここへ表示されます。','key'));}catch(e){if(connection===state.connectionVersion&&taskVersion===state.taskVersion&&$('task-dialog').open)$('task-content').replaceChildren(element('p','form-error',e.message));} }
   function showIssued(data) { const view=element('div');const mark=element('div','success-mark');mark.append(icon('check'));view.append(mark,element('h3','success-title','ライセンスを発行しました'),element('p','success-subtitle',`ライセンス #${data.license_id} · キーを保存してから閉じてください。`));const key=element('div','key-result mono',data.product_key||'');key.tabIndex=0;key.setAttribute('aria-label','発行されたライセンスキー');const actions=element('div','key-actions');actions.append(actionButton('キーをコピー','key',async event=>{try{await navigator.clipboard.writeText(key.textContent);event.currentTarget.textContent='コピーしました';}catch{const range=document.createRange();range.selectNodeContents(key);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);notice('キーを選択しました。手動でコピーしてください。',true);}},'button-primary'));view.append(key,actions,element('p','form-foot','この画面を閉じるとキーの表示を消去します。'));$('task-title').textContent='発行完了';$('task-subtitle').textContent='';$('task-content').replaceChildren(view);key.focus(); }
   const billingLabels = { requests: 'APIリクエスト数', request_count: 'APIリクエスト数', total_requests: 'APIリクエスト数', billable_requests: '課金対象リクエスト', non_billable_requests: '非課金リクエスト', total_charge_units: '請求対象ユニット', total_charge_credit: '請求クレジット', total_charge_yen_equivalent: '円換算参考額', credits: '利用クレジット', total_credits: '利用クレジット', amount: '請求額', total_amount: '請求額', licenses_issued: '発行ライセンス数', products: '製品数', active_licenses: '有効ライセンス数' };
-  function downloadCsv(filename, rows) { const csv = rows.map((row) => row.map((value) => `"${String(value ?? '').replaceAll('"', '""')}"`).join(',')).join('\r\n'); const blob = new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = filename; link.click(); window.setTimeout(() => URL.revokeObjectURL(link.href), 1000); }
+  function downloadCsvParts(filename, parts) { const blob = new Blob(parts, { type: 'text/csv;charset=utf-8' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = filename; link.click(); window.setTimeout(() => URL.revokeObjectURL(link.href), 1000); }
+  function downloadCsv(filename, rows) { downloadCsvParts(filename, ['\uFEFF', ...rows.map(TutiBulkJobs.csvLine)]); }
   async function billingPage(period = state.billingPeriod, invoiceFilter = null) {
     if(state.page!=='billing')return;state.billingPeriod=period;const version=++state.viewVersion;
     const [data, invoiceData] = await Promise.all([api(`/api/baas/v1/billing.php?period=${encodeURIComponent(period)}`), api('/api/baas/v1/invoices.php')]);

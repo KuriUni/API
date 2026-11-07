@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "2415.jp API (V8 independent product-key issuance)",
-    "version": "1.14.0",
+    "version": "1.15.0",
     "description": "製品・ライセンス管理、プロダクトキー発行V1/V8、端末認証、MNSL、HA管理の公開API仕様です。V2〜V7の新規発行は終了しました。既存のV4〜V6ジョブは照会・結果取得・取消のみ利用できます。"
   },
   "paths": {
@@ -4497,7 +4497,7 @@
             "description": "書き込みノードが利用できません。"
           }
         },
-        "description": "Independent V8 bulk issuance API. New jobs are asynchronous and return a job ID. Uses V8-only job/result tables and the canonical licenses table.",
+        "description": "Independent V8 bulk issuance API. New jobs are asynchronous and return a job ID. Uses V8-only job/result tables and the canonical licenses table.\n一時的なDBエラーは確定済み件数を保ったまま最大5回再試行します。ヘッダーと本文の冪等キーが異なる要求は拒否します。",
         "parameters": [
           {
             "name": "Idempotency-Key",
@@ -4574,6 +4574,15 @@
                   "expires_at": {
                     "type": "string",
                     "format": "date-time"
+                  },
+                  "execution_mode": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "async"
+                    ],
+                    "default": "auto",
+                    "description": "asyncはインライン実行をせず受付だけを行います。"
                   }
                 }
               },
@@ -4620,7 +4629,7 @@
             "description": "サービスまたは書き込み担当ノードが利用できません。"
           }
         },
-        "description": "Independent V8 bulk issuance API. New jobs are asynchronous and return a job ID. Uses V8-only job/result tables and the canonical licenses table.",
+        "description": "Independent V8 bulk issuance API. New jobs are asynchronous and return a job ID. Uses V8-only job/result tables and the canonical licenses table.\njob.retry_count、next_attempt_at_utc、retry_after_msに再試行状況を返します。",
         "parameters": [
           {
             "name": "job_id",
@@ -4845,6 +4854,29 @@
           }
         },
         "operationId": "post_ha_product_key_v8_worker_php"
+      },
+      "get": {
+        "summary": "Read V8 queue diagnostics without processing jobs",
+        "description": "HA運用認証が必要です。待機件数、遅延再試行、5分以上更新されていない処理を集計し、キーや利用者IDは返しません。待機系でも参照できます。",
+        "security": [
+          {
+            "haToken": []
+          },
+          {
+            "haSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read-only queue totals"
+          },
+          "404": {
+            "description": "HA authorization required"
+          },
+          "503": {
+            "description": "Queue schema or database unavailable"
+          }
+        }
       }
     }
   },

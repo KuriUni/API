@@ -14,7 +14,8 @@ import re
 import secrets
 import time
 import uuid
-from datetime import timezone
+from datetime import datetime, timezone
+import pymysql
 
 import database
 from core import key_pepper, php_int_cast, token_secret
@@ -36,6 +37,8 @@ INSERT_BATCH_SIZE = 2000
 # trips for jobs that take only a few hundred milliseconds to generate.
 INLINE_COMPLETION_MAX_COUNT = 1000
 INLINE_COMPLETION_BUDGET_MS = 2000
+MAX_TRANSIENT_RETRIES = 5
+TRANSIENT_DB_ERRORS = frozenset((1040, 1205, 1213, 2006, 2013))
 _KEY_ALPHABET = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 _B32_SOURCE = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 _B32_TRANSLATION = bytes.maketrans(_B32_SOURCE, _KEY_ALPHABET)
@@ -56,10 +59,12 @@ def _read_json(request_context, max_bytes=MAX_BODY):
     try:
         declared = int(request_context.get("content_length") or 0)
     except (TypeError, ValueError):
-        declared = 0
+        raise ValueError('invalid_content_length') from None
+    if declared < 0:
+        raise ValueError('invalid_content_length')
     if declared > max_bytes:
         raise ValueError("request_too_large")
-    if "application/json" not in str(request_context.get("content_type", "")).lower():
+    if str(request_context.get('content_type', '')).split(';', 1)[0].strip().lower() != 'application/json':
         raise TypeError("application_json_required")
     stream = request_context.get("body_stream")
     raw = stream.read(max_bytes + 1) if stream is not None else b""
@@ -94,12 +99,55 @@ def _job_public(row):
         "engine_profile": ENGINE_PROFILE,
         "progress_percent": round(min(100, int(row.get("processed_count") or 0) * 100 / requested), 2),
         "error_code": row.get("error_code"),
+        "retry_count": int(row.get("retry_count") or 0),
+        "next_attempt_at_utc": str(row.get("next_attempt_at") or '') or None,
+        "retry_after_ms": _retry_after_ms(row),
         "created_at_utc": str(row.get("created_at") or ""),
         "started_at_utc": row.get("started_at"),
         "heartbeat_at_utc": row.get("heartbeat_at"),
         "completed_at_utc": row.get("completed_at"),
         "poll_after_ms": 0 if terminal else 1500,
     }
+
+
+def _retry_after_ms(row, now=None):
+    value = row.get('next_attempt_at')
+    if not value:
+        return 0
+    if isinstance(value, str):
+        from py36_compat import parse_iso_datetime
+        value = parse_iso_datetime(value)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return max(0, int((value - (now or datetime.now(timezone.utc))).total_seconds() * 1000))
+
+
+def _transient_error(error):
+    return isinstance(error, pymysql.err.OperationalError) and bool(error.args) and error.args[0] in TRANSIENT_DB_ERRORS
+
+
+def _rollback(connection):
+    try:
+        connection.rollback()
+        return True
+    except pymysql.err.Error:
+        # A lost connection cannot record retry state. Preserve the committed
+        # job counters so the next connection can resume instead.
+        return False
+
+
+def _submission_identity(data, request_context):
+    body = str(data.get('idempotency_key') or '').strip()
+    header = str(request_context.get('header:idempotency-key') or '').strip()
+    if body and header and body != header:
+        raise ValueError('idempotency_key_mismatch')
+    value = body or header
+    if not _IDEMPOTENCY.fullmatch(value):
+        raise ValueError('invalid_idempotency_key')
+    mode = str(data.get('execution_mode') or 'auto').strip().lower()
+    if mode not in {'auto', 'async'}:
+        raise ValueError('invalid_execution_mode')
+    return value, mode
 
 
 def _get_job(connection, tenant_id, job_id):
@@ -122,7 +170,7 @@ def _get_pricing(count, environment):
 
 def _schema_ready(connection):
     expected = {
-        "product_key_v8_jobs": {"job_id", "tenant_id", "client_id", "idempotency_key", "status"},
+        "product_key_v8_jobs": {"job_id", "tenant_id", "client_id", "idempotency_key", "status", "retry_count", "next_attempt_at", "last_error_at"},
         "product_key_v8_items": {"job_row_id", "item_no", "license_id", "product_key_enc"},
     }
     with connection.cursor() as cursor:
@@ -217,11 +265,11 @@ def _process_chunk(connection, job, count):
                            "WHERE id=%s FOR UPDATE", (int(job["id"]),))
             current = cursor.fetchone()
             if not current or str(current["status"]) != "processing":
-                connection.rollback()
+                _rollback(connection)
                 return
             count = min(int(count), int(current["requested_count"]) - int(current["processed_count"]))
             if count <= 0:
-                connection.rollback()
+                _rollback(connection)
                 return
             first_item = int(current["processed_count"]) + 1
             cursor.execute("SELECT 1 FROM tenants WHERE id=%s AND status='active' LIMIT 1",
@@ -245,11 +293,11 @@ def _process_chunk(connection, job, count):
                 _insert_records(cursor, int(job["id"]), records)
                 item_no += size
                 remaining -= size
-            processed = int(job["processed_count"]) + count
-            complete = processed >= int(job["requested_count"])
+            processed = int(current["processed_count"]) + count
+            complete = processed >= int(current["requested_count"])
             cursor.execute(
                 "UPDATE product_key_v8_jobs SET processed_count=%s,succeeded_count=succeeded_count+%s,"
-                "heartbeat_at=UTC_TIMESTAMP(),status=%s,completed_at=CASE WHEN %s THEN UTC_TIMESTAMP() "
+                "heartbeat_at=UTC_TIMESTAMP(),next_attempt_at=NULL,error_code=NULL,status=%s,completed_at=CASE WHEN %s THEN UTC_TIMESTAMP() "
                 "ELSE completed_at END WHERE id=%s AND status='processing'",
                 (processed, count, "completed" if complete else "processing", 1 if complete else 0,
                  int(job["id"])),
@@ -262,7 +310,7 @@ def _process_chunk(connection, job, count):
             })
         connection.commit()
     except Exception:
-        connection.rollback()
+        _rollback(connection)
         raise
 
 
@@ -276,9 +324,12 @@ def process_job(connection, job_id, budget_ms=20000, max_chunks=8):
     with connection.cursor() as cursor:
         cursor.execute("SELECT GET_LOCK(%s,0)", (lock_name,))
         lock_row = cursor.fetchone()
-    lock_value = next(iter(lock_row.values())) if isinstance(lock_row, dict) else lock_row[0]
+    lock_value = (next(iter(lock_row.values())) if isinstance(lock_row, dict) else lock_row[0]) if lock_row else 0
     if int(lock_value or 0) != 1:
-        return _get_job_by_id(connection, job_id)
+        busy_job = _get_job_by_id(connection, job_id)
+        if busy_job:
+            busy_job['_worker_busy'] = True
+        return busy_job
     try:
         job = _get_job_by_id(connection, job_id)
         if not job or job["status"] in {"completed", "failed", "cancelled"}:
@@ -290,6 +341,8 @@ def process_job(connection, job_id, budget_ms=20000, max_chunks=8):
                                (int(job["id"]),))
             connection.commit()
             return _get_job_by_id(connection, job_id)
+        if _retry_after_ms(job) > 0:
+            return job
         with connection.cursor() as cursor:
             cursor.execute("UPDATE product_key_v8_jobs SET status='processing',"
                            "started_at=COALESCE(started_at,UTC_TIMESTAMP()),heartbeat_at=UTC_TIMESTAMP() "
@@ -307,19 +360,34 @@ def process_job(connection, job_id, budget_ms=20000, max_chunks=8):
                                    "heartbeat_at=UTC_TIMESTAMP() WHERE id=%s", (int(job["id"]),))
                 connection.commit()
                 break
+            if _retry_after_ms(job) > 0:
+                break
             remaining = int(job["requested_count"]) - int(job["processed_count"])
             if remaining <= 0:
                 break
             try:
                 _process_chunk(connection, job, min(int(job["chunk_size"]), remaining))
             except Exception as exc:
-                connection.rollback()
+                if not _rollback(connection):
+                    raise
+                retries = int(job.get('retry_count') or 0)
+                if _transient_error(exc) and retries < MAX_TRANSIENT_RETRIES:
+                    delay = min(300, 5 * 2 ** retries)
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "UPDATE product_key_v8_jobs SET status='queued',retry_count=retry_count+1,"
+                            "next_attempt_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL %s SECOND),"
+                            "last_error_at=UTC_TIMESTAMP(),error_code='transient_database_error',heartbeat_at=UTC_TIMESTAMP() "
+                            "WHERE id=%s AND status='processing'", (delay, int(job['id'])))
+                    connection.commit()
+                    break
                 code = str(exc) if re.fullmatch(r"[a-z0-9_]{1,64}", str(exc)) else "v8_chunk_failed"
                 with connection.cursor() as cursor:
                     cursor.execute(
                         "UPDATE product_key_v8_jobs SET status='failed',failed_count=GREATEST("
                         "requested_count-processed_count,0),error_code=%s,heartbeat_at=UTC_TIMESTAMP(),"
-                        "completed_at=UTC_TIMESTAMP() WHERE id=%s AND status NOT IN ('completed','cancelled')",
+                        "completed_at=UTC_TIMESTAMP(),last_error_at=UTC_TIMESTAMP(),next_attempt_at=NULL "
+                        "WHERE id=%s AND status NOT IN ('completed','cancelled','cancel_requested')",
                         (code, int(job["id"])),
                     )
                 connection.commit()
@@ -347,26 +415,48 @@ def pump_due_jobs(connection, budget_ms=50000, max_jobs=8, only_job_id=None):
         if only_job_id:
             cursor.execute(
                 "SELECT job_id FROM product_key_v8_jobs WHERE job_id=%s AND status IN "
-                "('queued','processing','cancel_requested') LIMIT 1",
+                "('queued','processing','cancel_requested') AND (status='cancel_requested' OR next_attempt_at IS NULL OR next_attempt_at<=UTC_TIMESTAMP()) LIMIT 1",
                 (str(only_job_id),),
             )
         else:
             cursor.execute(
                 "SELECT job_id FROM product_key_v8_jobs WHERE status IN "
-                "('queued','processing','cancel_requested') ORDER BY created_at,id LIMIT %s",
-                (max_jobs,),
+                "('queued','processing','cancel_requested') AND (status='cancel_requested' OR next_attempt_at IS NULL OR next_attempt_at<=UTC_TIMESTAMP()) "
+                "ORDER BY CASE WHEN status='cancel_requested' THEN 0 ELSE 1 END,created_at,id LIMIT %s",
+                (max_jobs * 4,),
             )
         candidates = [str(row["job_id"]) for row in cursor.fetchall()]
     started = time.monotonic()
     processed = []
     for job_id in candidates:
         remaining = budget_ms - int((time.monotonic() - started) * 1000)
-        if remaining < 1000:
+        if remaining < 1000 or len(processed) >= max_jobs:
             break
         job = process_job(connection, job_id, remaining, 8)
-        if job:
+        if job and not job.get('_worker_busy'):
             processed.append(_job_public(job))
     return processed
+
+
+def queue_status(connection):
+    """Read-only operational totals; never returns keys or client identifiers."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT status,COUNT(*) AS jobs,"
+                       "SUM(CASE WHEN next_attempt_at>UTC_TIMESTAMP() THEN 1 ELSE 0 END) AS delayed_jobs,"
+                       "MAX(GREATEST(TIMESTAMPDIFF(SECOND,created_at,UTC_TIMESTAMP()),0)) AS oldest_age_seconds,"
+                       "SUM(CASE WHEN status='processing' AND heartbeat_at<DATE_SUB(UTC_TIMESTAMP(),INTERVAL 5 MINUTE) THEN 1 ELSE 0 END) AS stale_jobs "
+                       "FROM product_key_v8_jobs WHERE status IN ('queued','processing','cancel_requested') GROUP BY status")
+        rows = cursor.fetchall()
+    counts = {name: 0 for name in ('queued', 'processing', 'cancel_requested')}
+    delayed = stale = oldest = 0
+    for row in rows:
+        counts[str(row['status'])] = int(row['jobs'])
+        delayed += int(row.get('delayed_jobs') or 0)
+        stale += int(row.get('stale_jobs') or 0)
+        oldest = max(oldest, int(row.get('oldest_age_seconds') or 0))
+    return {'counts': counts, 'active_jobs': sum(counts.values()), 'delayed_jobs': delayed,
+            'stale_processing_jobs': stale, 'oldest_age_seconds': oldest,
+            'max_transient_retries': MAX_TRANSIENT_RETRIES}
 
 
 def _status_error(connection, status, error, request_id, headers=()):
@@ -380,7 +470,7 @@ def _preflight(connection, request_id):
         return _reply(503, {"ok": False, "api_version": API_VERSION,
                             "issuance_platform": PLATFORM_VERSION,
                             "error": "v8_migration_required",
-                            "required_migration": "029_product_key_issuance_v8_standalone",
+                            "required_migration": "040_product_key_v8_reliability",
                             "request_id": request_id})
     return None
 
@@ -451,9 +541,7 @@ def issuance(request_context):
             raise ValueError("count_must_be_1_to_100000")
         if product_id < 1:
             raise ValueError("product_id_required")
-        idem = str(data.get("idempotency_key") or request_context.get("header:idempotency-key", "")).strip()
-        if not _IDEMPOTENCY.fullmatch(idem):
-            raise ValueError("invalid_idempotency_key")
+        idem, execution_mode = _submission_identity(data, request_context)
         mode = str(data.get("license_mode") or "single").strip().lower()
         if mode not in {"single", "volume", "evaluation"}:
             raise ValueError("invalid_license_mode")
@@ -532,7 +620,7 @@ def issuance(request_context):
         from billing_policy import issue_submit_operation
         _usage(connection, client, issue_submit_operation(8, count), 202, rid, ip_hash)
         job = _get_job(connection, tenant_id, job_id)
-        if count <= INLINE_COMPLETION_MAX_COUNT:
+        if count <= INLINE_COMPLETION_MAX_COUNT and execution_mode == 'auto':
             # Run only this newly-created job, with a strict budget. A worker
             # that already owns the per-job lock can continue asynchronously.
             process_job(connection, job_id, INLINE_COMPLETION_BUDGET_MS, 1)
@@ -548,27 +636,27 @@ def issuance(request_context):
                             "cancel_endpoint": "/api/baas/v8/issuance-cancel.php"}, headers)
     except BaaSError as exc:
         if connection:
-            connection.rollback()
+            _rollback(connection)
         return _reply(exc.status, {"ok": False, "api_version": API_VERSION,
                                   "issuance_platform": PLATFORM_VERSION, "error": exc.error,
                                   **exc.extra, "request_id": rid})
     except TypeError as exc:
         if connection:
-            connection.rollback()
+            _rollback(connection)
         return _status_error(connection, 415, str(exc), rid)
     except (ValueError, OverflowError) as exc:
         if connection:
-            connection.rollback()
+            _rollback(connection)
         error = str(exc) or "invalid_request"
         status = 409 if error in {"license_quota_exceeded", "tenant_not_found_or_inactive"} else 400
         return _status_error(connection, status, error, rid)
     except database.DatabaseConfigurationError:
         if connection:
-            connection.rollback()
+            _rollback(connection)
         return _status_error(connection, 503, "service_unavailable", rid)
     except Exception:
         if connection:
-            connection.rollback()
+            _rollback(connection)
         return _status_error(connection, 503, "v8_submission_failed", rid)
     finally:
         if connection:
@@ -605,8 +693,10 @@ def issuance_results(request_context):
         with connection.cursor() as db_cursor:
             db_cursor.execute("SELECT item_no,license_id,key_fingerprint,product_key_enc,created_at "
                               "FROM product_key_v8_items WHERE job_row_id=%s AND item_no>%s "
-                              "ORDER BY item_no ASC LIMIT %s", (int(job["id"]), cursor_no, limit))
+                              "ORDER BY item_no ASC LIMIT %s", (int(job["id"]), cursor_no, limit + 1))
             rows = db_cursor.fetchall()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
         items = []
         config = None
         if reveal:
@@ -628,7 +718,6 @@ def issuance_results(request_context):
                 item["product_key"] = plaintext.decode("ascii")
             items.append(item)
             last = item_no
-        has_more = last < int(job.get("succeeded_count") or 0)
         _usage(connection, client, "licenses.issue.v8.results", 200, rid, ip_hash)
         return _reply(200, {"ok": True, "api_version": API_VERSION,
                             "issuance_platform": PLATFORM_VERSION, "request_id": rid,
@@ -680,20 +769,20 @@ def issuance_cancel(request_context):
                             "job": _job_public(updated)}, headers)
     except BaaSError as exc:
         if connection:
-            connection.rollback()
+            _rollback(connection)
         return _reply(exc.status, {"ok": False, "api_version": API_VERSION,
                                   "error": exc.error, **exc.extra, "request_id": rid})
     except (TypeError, ValueError) as exc:
         if connection:
-            connection.rollback()
+            _rollback(connection)
         return _status_error(connection, 400, str(exc) or "invalid_request", rid)
     except database.DatabaseConfigurationError:
         if connection:
-            connection.rollback()
+            _rollback(connection)
         return _status_error(connection, 503, "service_unavailable", rid)
     except Exception:
         if connection:
-            connection.rollback()
+            _rollback(connection)
         return _status_error(connection, 503, "v8_cancel_unavailable", rid)
     finally:
         if connection:

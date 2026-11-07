@@ -15,8 +15,8 @@ $privateRoot = Join-Path $env:LOCALAPPDATA "XreaDeploy\private-backups\v8-cutove
 # Dependencies precede dispatchers and browser assets. Only these known paths are queried.
 $files = @('retired_auth.py','product_key_v8_storage.py','ha_migrate.py','ha_export.py',
     'ha_snapshot.py','ha_handlers.py','baas_handlers.py','baas_v8_handlers.py',
-    'service_handlers.py','app.py','native_routes.py','openapi-catalog.json',
-    'api-catalog/openapi.json','tenant-portal/app.js','tenant-portal/index.html')
+    'ha_product_key_v8_worker.py','service_handlers.py','app.py','native_routes.py','openapi-catalog.json',
+    'api-catalog/openapi.json','tenant-portal/bulk-jobs.js','tenant-portal/app.js','tenant-portal/index.html')
 foreach ($file in $files) {
     if (-not (Test-Path -LiteralPath (Join-Path $source $file))) { throw "Missing source: $file" }
 }
@@ -30,7 +30,7 @@ function Save-PrivateSnapshot($Url, $Headers, $Path) {
         $encrypted = [Security.Cryptography.ProtectedData]::Protect($plain, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser)
         [IO.File]::WriteAllBytes($Path, $encrypted)
     } finally { [Array]::Clear($plain,0,$plain.Length) }
-    return @($snapshot.tables.PSObject.Properties.Name)
+    return [pscustomobject]@{ Tables=@($snapshot.tables.PSObject.Properties.Name); JobColumns=@($snapshot.schemas.product_key_v8_jobs.Field) }
 }
 $targets = @(Get-XreaDeployTargets | Where-Object { $Target -eq 'Both' -or $_.Name -eq $Target } | Sort-Object Name)
 foreach ($destination in $targets) {
@@ -43,6 +43,7 @@ foreach ($destination in $targets) {
     $session.ExecutablePath = Join-Path $install 'WinSCP.exe'
     $uploaded = [Collections.Generic.List[string]]::new()
     $hashes = @{}
+    $missing = @{}
     try {
         $session.Open([WinSCP.SessionOptions]@{
             Protocol=[WinSCP.Protocol]::Ftp; FtpSecure=[WinSCP.FtpSecure]::Explicit
@@ -59,33 +60,47 @@ foreach ($destination in $targets) {
             $remote = $destination.Remote + '/' + $file
             $saved = Join-Path $backup $file
             New-Item -ItemType Directory -Path (Split-Path $saved -Parent) -Force | Out-Null
-            $session.GetFiles($remote,$saved,$false).Check()
+            if ($session.FileExists($remote)) { $session.GetFiles($remote,$saved,$false).Check() }
+            else { $missing[$file]=$true }
             $hashes[$file] = (Get-FileHash -LiteralPath (Join-Path $source $file) -Algorithm SHA256).Hash
         }
-        foreach ($file in $files) {
-            $saved = Join-Path $backup $file
-            if ((Get-FileHash -LiteralPath $saved -Algorithm SHA256).Hash -eq $hashes[$file]) { continue }
-            $remote = $destination.Remote + '/' + $file
-            $uploaded.Add($file)
-            $session.PutFiles((Join-Path $source $file),$remote,$false).Check()
-            $verify = $saved + '.verify'
-            $session.GetFiles($remote,$verify,$false).Check()
-            if ((Get-FileHash -LiteralPath $verify -Algorithm SHA256).Hash -ne $hashes[$file]) { throw "SHA-256 mismatch: $file" }
+        $manifest = foreach ($file in $files) {
+            [pscustomobject]@{ path=$file; existed=(-not $missing.ContainsKey($file)); deployed_sha256=$hashes[$file];
+                previous_sha256=$(if (-not $missing.ContainsKey($file)) { (Get-FileHash -LiteralPath (Join-Path $backup $file)).Hash } else { $null }) }
         }
+        $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $backup 'deployment.json') -Encoding utf8
         $exportUrl = "https://$domain/license/ha/export.php"
         if ($destination.Name -eq 'Backup') { $exportUrl += '?standby_backup=1' }
-        $tables = Save-PrivateSnapshot $exportUrl $headers (Join-Path $privateRoot ($destination.Name + '-before.dpapi'))
-        $health = Invoke-WebRequest -Uri "https://$domain/license/api/baas/v8/issuance.php" -TimeoutSec 30 -SkipHttpErrorCheck
-        if ([int]$health.StatusCode -eq 503 -and ($health.Content | ConvertFrom-Json).error -eq 'v8_migration_required') {
-            $migration = Invoke-WebRequest -Uri "https://$domain/license/ha/migrate.php" -Method Post -Headers $headers -ContentType 'application/json' -Body '{"scope":"v8"}' -TimeoutSec 60 -SkipHttpErrorCheck
-            $result = $migration.Content | ConvertFrom-Json
-            if ([int]$migration.StatusCode -ne 200 -or -not $result.ok -or -not $result.product_key_issuance_v8.ok) { throw 'V8-only schema installation failed.' }
-            $tables = Save-PrivateSnapshot $exportUrl $headers (Join-Path $privateRoot ($destination.Name + '-after.dpapi'))
-            Write-Host "$($destination.Name): V8-only additive schema installation completed."
+        $before = Save-PrivateSnapshot $exportUrl $headers (Join-Path $privateRoot ($destination.Name + '-before.dpapi'))
+        foreach ($file in $files) {
+            $saved = Join-Path $backup $file
+            if ($missing.ContainsKey($file) -or (Get-FileHash -LiteralPath $saved -Algorithm SHA256).Hash -ne $hashes[$file]) {
+                $remote = $destination.Remote + '/' + $file
+                $uploaded.Add($file)
+                $session.PutFiles((Join-Path $source $file),$remote,$false).Check()
+                $verify = $saved + '.verify'
+                $session.GetFiles($remote,$verify,$false).Check()
+                if ((Get-FileHash -LiteralPath $verify -Algorithm SHA256).Hash -ne $hashes[$file]) { throw "SHA-256 mismatch: $file" }
+            }
+            # Expand schema before activating handlers that require the new columns.
+            if ($file -eq 'ha_migrate.py') {
+                $migration = Invoke-WebRequest -Uri "https://$domain/license/ha/migrate.php" -Method Post -Headers $headers -ContentType 'application/json' -Body '{"scope":"v8"}' -TimeoutSec 90 -SkipHttpErrorCheck
+                $result = $migration.Content | ConvertFrom-Json
+                if ([int]$migration.StatusCode -ne 200 -or -not $result.ok -or -not $result.product_key_issuance_v8.ok) { throw 'V8-only schema installation failed.' }
+                Write-Host "$($destination.Name): additive schema installation completed before handler activation."
+            }
         }
+        $after = Save-PrivateSnapshot $exportUrl $headers (Join-Path $privateRoot ($destination.Name + '-after.dpapi'))
         foreach ($table in @('product_key_v8_jobs','product_key_v8_items')) {
-            if ($table -notin $tables) { throw "V8 table missing from HA snapshot: $table" }
+            if ($table -notin $after.Tables) { throw "V8 table missing from HA snapshot: $table" }
         }
+        foreach ($column in @('retry_count','next_attempt_at','last_error_at')) {
+            if ($column -notin $after.JobColumns) { throw "Required reliability column missing: $column" }
+        }
+        $queue = Invoke-WebRequest -Uri "https://$domain/license/ha/product-key-v8-worker.php" -Headers $headers -TimeoutSec 30 -SkipHttpErrorCheck
+        $queueState = $queue.Content | ConvertFrom-Json
+        if ([int]$queue.StatusCode -ne 200 -or $queueState.mode -ne 'status') { throw 'Read-only queue diagnostics failed.' }
+        Write-Host "$($destination.Name): queue diagnostics ready; active jobs=$($queueState.queue.active_jobs)."
         foreach ($path in @('v8/issuance.php','v6/issuance.php')) {
             $response = Invoke-WebRequest -Uri "https://$domain/license/api/baas/$path" -TimeoutSec 30 -SkipHttpErrorCheck
             if ([int]$response.StatusCode -ne 401) { throw "Expected protected/readable endpoint: $path HTTP $($response.StatusCode)" }
@@ -95,7 +110,9 @@ foreach ($destination in $targets) {
             if ([int]$response.StatusCode -ne 410) { throw "Retired submission not closed: $path" }
         }
         $page = Invoke-WebRequest -Uri "https://$domain/license/tenant-portal/" -TimeoutSec 30
-        if (-not ([string]$page.Content).Contains('20261107-v8-cutover-1')) { throw 'Portal script version not updated.' }
+        if (-not ([string]$page.Content).Contains('20261108-reliability-1')) { throw 'Portal script version not updated.' }
+        $asset = Invoke-WebRequest -Uri "https://$domain/license/tenant-portal/bulk-jobs.js?v=20261108-reliability-1" -TimeoutSec 30
+        if (-not ([string]$asset.Content).Contains('collectCsvPages')) { throw 'Bulk download helper not publicly available.' }
         Write-Host "$($destination.Name): $($uploaded.Count) changed files hash-verified; V8 ready, legacy submissions closed, HA snapshot includes both V8 tables."
     } catch {
         $reason = $_.Exception.Message
@@ -103,6 +120,10 @@ foreach ($destination in $targets) {
         for ($index=$uploaded.Count-1; $index -ge 0; $index--) {
             $file=$uploaded[$index]
             try {
+                if ($missing.ContainsKey($file)) {
+                    $session.RemoveFiles(($destination.Remote+'/'+$file)).Check()
+                    continue
+                }
                 $session.PutFiles((Join-Path $backup $file),($destination.Remote+'/'+$file),$false).Check()
                 $check=(Join-Path $backup $file)+'.rollback'
                 $session.GetFiles(($destination.Remote+'/'+$file),$check,$false).Check()
