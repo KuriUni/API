@@ -111,7 +111,18 @@ foreach ($destination in $targets) {
                 Write-Host "$($destination.Name): additive schema installation completed before handler activation."
             }
             if ($Profile -eq 'LicenseV4' -and $file -eq 'ha_migrate.py') {
-                $migration = Invoke-WebRequest -Uri "https://$domain/license/ha/migrate.php" -Method Post -Headers $headers -ContentType 'application/json' -Body '{"scope":"license_v4"}' -TimeoutSec 90 -SkipHttpErrorCheck
+                Write-Host "$($destination.Name): installing additive License V4 tables."
+                $migration = $null
+                for ($attempt=1; $attempt -le 3; $attempt++) {
+                    try {
+                        $migration = Invoke-WebRequest -Uri "https://$domain/license/ha/migrate.php" -Method Post -Headers $headers -ContentType 'application/json' -Body '{"scope":"license_v4"}' -TimeoutSec 240 -SkipHttpErrorCheck
+                        break
+                    } catch {
+                        if ($attempt -eq 3) { throw }
+                        Write-Host "$($destination.Name): migration response ended; retrying the idempotent additive migration ($attempt/3)."
+                        Start-Sleep -Seconds 3
+                    }
+                }
                 $result = $migration.Content | ConvertFrom-Json
                 if ([int]$migration.StatusCode -ne 200 -or -not $result.ok -or -not $result.license_v4.ok) { throw 'V4 additive schema installation failed.' }
                 foreach ($table in @('license_v4_challenges','license_v4_devices','license_v4_sessions','license_v4_proofs','license_v4_refresh_history')) {

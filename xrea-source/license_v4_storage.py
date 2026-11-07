@@ -87,7 +87,9 @@ def ensure_schema(connection):
     with connection.cursor() as cursor:
         for statement in TABLES.values():
             cursor.execute(statement)
-        cursor.execute('SELECT TABLE_NAME,COLUMN_NAME FROM information_schema.columns WHERE table_schema=DATABASE()')
+        names = tuple(TABLES)
+        placeholders = ','.join(['%s'] * len(names))
+        cursor.execute('SELECT TABLE_NAME,COLUMN_NAME FROM information_schema.columns WHERE table_schema=DATABASE() AND TABLE_NAME IN (' + placeholders + ')', names)
         found = {}
         for row in cursor.fetchall():
             found.setdefault(str(row['TABLE_NAME']), set()).add(str(row['COLUMN_NAME']))
