@@ -1,3 +1,15 @@
+function Get-XreaSha256([string] $Path) {
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            return [System.BitConverter]::ToString($hasher.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+        }
+        finally { $stream.Dispose() }
+    }
+    finally { $hasher.Dispose() }
+}
+
 function Invoke-XreaDifferentialUpload {
     [CmdletBinding()]
     param(
@@ -47,7 +59,7 @@ function Invoke-XreaDifferentialUpload {
     $changed = @()
     foreach ($file in $files) {
         $relative = $file.FullName.Substring($rootPrefix.Length).Replace('\', '/')
-        $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        $hash = Get-XreaSha256 -Path $file.FullName
         if (-not $state.Contains($relative) -or $state[$relative] -ne $hash) {
             $changed += [pscustomobject]@{ File = $file; Relative = $relative; Hash = $hash }
         }
