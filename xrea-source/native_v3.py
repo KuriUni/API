@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 import uuid
+import sys
 from contextlib import contextmanager
 from urllib.parse import parse_qsl
 
@@ -30,56 +31,16 @@ def reply(payload, rid, status=200, headers=None):
                                default=_json_default).encode('utf-8'), status_code=status,
                     headers={'Content-Type': 'application/json; charset=utf-8',
                              'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+                             'X-Request-ID': rid, **({'Retry-After': '2'} if status == 503 else {}),
                              **(headers or {})})
 
 
 def error_response(exc, rid):
-    if isinstance(exc, RequestError):
-        exc = domain.V3Error(400, 'INVALID_REQUEST', 'リクエスト形式が正しくありません。')
-    elif isinstance(exc, database.DatabaseConfigurationError):
-        exc = domain.V3Error(503, 'SERVICE_UNAVAILABLE', 'テストDBを利用できません。')
-    if isinstance(exc, domain.V3Error):
-        headers = {'Allow': 'POST'} if exc.status == 405 else None
-        return reply({'success': False, 'error_code': exc.code, 'error': str(exc), **exc.extra},
-                     rid, exc.status, headers)
-    codes = {
-        'challenge_invalid': (400, 'CHALLENGE_INVALID'),
-        'challenge_already_used': (409, 'CHALLENGE_ALREADY_USED'),
-        'challenge_expired': (401, 'CHALLENGE_EXPIRED'),
-        'challenge_nonce_invalid': (401, 'CHALLENGE_INVALID'),
-        'challenge_key_mismatch': (401, 'CHALLENGE_KEY_MISMATCH'),
-        'device_signature_invalid': (401, 'DEVICE_SIGNATURE_INVALID'),
-        'license_device_limit_reached': (409, 'DEVICE_LIMIT_REACHED'),
-        'session_revoked': (401, 'SESSION_REVOKED'),
-        'license_inactive': (403, 'LICENSE_INACTIVE'),
-        'license_expired': (403, 'LICENSE_EXPIRED'),
-        'access_token_expired': (401, 'ACCESS_TOKEN_EXPIRED'),
-        'refresh_token_expired': (401, 'REFRESH_TOKEN_EXPIRED'),
-        'proof_required': (400, 'PROOF_REQUIRED'),
-        'proof_timestamp_invalid': (401, 'PROOF_TIMESTAMP_INVALID'),
-        'proof_signature_invalid': (401, 'PROOF_SIGNATURE_INVALID'),
-        'proof_replayed': (409, 'PROOF_REPLAYED'),
-        'offline_signing_unavailable': (503, 'OFFLINE_SIGNING_UNAVAILABLE'),
-        'license_not_found': (400, 'LICENSE_NOT_FOUND'),
-        'schema_missing': (503, 'V3_MIGRATION_REQUIRED'),
-        'node_not_writable': (503, 'SERVICE_UNAVAILABLE'),
-        'ha_write_fence_rejected': (503, 'SERVICE_UNAVAILABLE'),
-        'device_public_key_invalid': (400, 'DEVICE_PUBLIC_KEY_INVALID'),
-        'device_public_key_too_weak': (400, 'DEVICE_PUBLIC_KEY_TOO_WEAK'),
-        'device_public_key_curve_unsupported': (400, 'DEVICE_KEY_CURVE_UNSUPPORTED'),
-        'device_public_key_type_unsupported': (400, 'DEVICE_KEY_TYPE_UNSUPPORTED'),
-        'challenge_purpose_invalid': (400, 'CHALLENGE_PURPOSE_INVALID'),
-    }
-    code = str(exc)
-    status, public_code = codes.get(code, (400, 'V3_REQUEST_FAILED'))
-    # Do not expose unknown driver errors or configuration values to clients.
-    message = code if code in codes else 'リクエストを処理できません。'
-    if code == 'license_not_found':
-        message = 'ライセンスキーが正しくありません。'
-    payload = {'success': False, 'error_code': public_code, 'error': message}
-    if code == 'schema_missing':
-        payload['required_migration'] = '027_license_api_v3_beta'
-    return reply(payload, rid, status)
+    public = domain._public_error(exc)
+    if public.status == 503:
+        print('license_request_failed request_id=%s error_type=%s' % (rid, type(exc).__name__), file=sys.stderr)
+    headers = {'Allow': 'POST'} if public.status == 405 else None
+    return reply({'success': False, 'error_code': public.code, 'error': str(public), **public.extra}, rid, public.status, headers)
 
 
 def _parse_pairs(value):
@@ -149,10 +110,10 @@ def connection_for_write(begin=False):
             connection.begin()
         yield connection
     except Exception:
-        connection.rollback()
+        domain._rollback_connection(connection)
         raise
     finally:
-        connection.close()
+        domain._close_connection(connection)
 
 
 def bearer(authorization, data):
@@ -171,7 +132,7 @@ def record_usage(connection, license_row, action, rid, remote_addr):
                             hashlib.sha256(remote_addr.encode('utf-8')).hexdigest()))
         connection.commit()
     except Exception:
-        connection.rollback()
+        domain._rollback_connection(connection)
 
 
 def activate(data, authorization, remote_addr, rid):
@@ -193,7 +154,9 @@ def activate(data, authorization, remote_addr, rid):
         license_row = domain._license_by_key(connection, license_key_hash(config, key))
         if license_row is None:
             raise RuntimeError('license_not_found')
-        license_row = domain._lock_license(connection, int(license_row['id'])) or license_row
+        license_row = domain._lock_license(connection, int(license_row['id']))
+        if license_row is None:
+            raise RuntimeError('license_not_found')
         product = domain._resolve_product(connection, license_row, data.get('product_code', ''))
         license_row = domain._start_evaluation(connection, license_row)
         domain._active_license(license_row)
@@ -247,9 +210,7 @@ def session_action(action, data, authorization, remote_addr, rid):
                     history = cursor.fetchone()
                     if history:
                         family_id = str(history['family_id'])
-                        cursor.execute("UPDATE license_v3_sessions SET revoked_at=UTC_TIMESTAMP(),"
-                                       "revoke_reason='refresh_reuse_detected' WHERE family_id=%s AND revoked_at IS NULL",
-                                       (family_id,))
+                        domain._revoke_session_family(connection, family_id, 'refresh_reuse_detected')
                 # Reuse revocation must remain committed even though the HTTP result is 401.
                 connection.commit()
                 if history:
@@ -263,7 +224,7 @@ def session_action(action, data, authorization, remote_addr, rid):
         if action == 'refresh':
             new_session = domain._rotate_session(connection, session)
             connection.commit()
-            record_usage(connection, domain._license_row(connection, int(session['license_id'])), action, rid, remote_addr)
+            record_usage(connection, session, action, rid, remote_addr)
             return {'message': 'Tokens rotated.', 'session': new_session}
         if action == 'verify':
             with connection.cursor() as cursor:
@@ -290,16 +251,15 @@ def session_action(action, data, authorization, remote_addr, rid):
                                'key_thumbprint': session['key_thumbprint'], 'key_algorithm': session['key_algorithm']}}
         if action == 'revoke':
             scope = 'family' if str(data.get('scope', 'session')).strip().lower() == 'family' else 'session'
-            with connection.cursor() as cursor:
-                if scope == 'family':
-                    cursor.execute("UPDATE license_v3_sessions SET revoked_at=UTC_TIMESTAMP(),revoke_reason='client_family_revoke' "
-                                   'WHERE family_id=%s AND revoked_at IS NULL', (str(session['family_id']),))
-                else:
+            if scope == 'family':
+                affected = domain._revoke_session_family(connection, str(session['family_id']), 'client_family_revoke')
+            else:
+                with connection.cursor() as cursor:
                     cursor.execute("UPDATE license_v3_sessions SET revoked_at=UTC_TIMESTAMP(),revoke_reason='client_revoke' "
                                    'WHERE id=%s AND revoked_at IS NULL', (int(session['id']),))
-                affected = cursor.rowcount
-                cursor.execute('UPDATE license_v3_offline_tickets SET revoked_at=UTC_TIMESTAMP() '
-                               'WHERE session_id=%s AND revoked_at IS NULL', (str(session['session_id']),))
+                    affected = cursor.rowcount
+                    cursor.execute('UPDATE license_v3_offline_tickets SET revoked_at=UTC_TIMESTAMP() '
+                                   'WHERE session_id=%s AND revoked_at IS NULL', (str(session['session_id']),))
             connection.commit()
             return {'revoked': True, 'scope': scope, 'affected_sessions': affected}
         ticket = domain._offline_ticket(connection, session, data.get('hours', 24))
@@ -315,7 +275,7 @@ def challenge(data, authorization, remote_addr, rid):
     with connection_for_write() as connection:
         ip_hash = hashlib.sha256(remote_addr.encode('utf-8')).hexdigest()
         with connection.cursor() as cursor:
-            cursor.execute('SELECT COUNT(*) AS n FROM auth_attempts WHERE success=0 AND action=%s AND subject_type=%s '
+            cursor.execute('SELECT COUNT(*) AS n FROM auth_attempts WHERE action=%s AND subject_type=%s '
                            'AND subject_hash=%s AND attempted_at >= (UTC_TIMESTAMP() - INTERVAL 900 SECOND)',
                            ('v3_challenge', 'ip', ip_hash))
             if int(cursor.fetchone()['n']) >= 60:

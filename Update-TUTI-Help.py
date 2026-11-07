@@ -18,6 +18,7 @@ ARTICLES = [
     ("docs/SSO-HEALTH-READINESS.md", "SSO-INITIAL-SETUP", "operations"),
     ("docs/SSO-DATABASE-OPERATIONS.md", "sso-service", "database"),
     ("docs/PRODUCT-KEY-ISSUANCE-V8.md", "BaaS-Contractor", "api"),
+    ("docs/LICENSE-AUTHENTICATION-OPERATIONS.md", "BaaS-Contractor", "authentication"),
     ("docs/MNSL-SSO-ISSUE-HELP.md", "MyNumberSmartLogin", "operations"),
 ]
 

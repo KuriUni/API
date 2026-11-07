@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "2415.jp API (V8 independent product-key issuance)",
-    "version": "1.15.0",
+    "version": "1.16.0",
     "description": "製品・ライセンス管理、プロダクトキー発行V1/V8、端末認証、MNSL、HA管理の公開API仕様です。V2〜V7の新規発行は終了しました。既存のV4〜V6ジョブは照会・結果取得・取消のみ利用できます。"
   },
   "paths": {
@@ -1251,7 +1251,7 @@
     "/api/v2/activate.php": {
       "post": {
         "summary": "Activate or refresh a license session",
-        "description": "External tenants must provide product_code for activate and key-based status operations.",
+        "description": "External tenants must provide product_code for activate and key-based status operations.\nセッション応答にserver_time_utc、access_expires_in、refresh_expires_in、refresh_after_secondsを追加します。ライセンス期限による上限は維持します。X-Request-IDは調査用IDです。DB等の障害は503とRetry-After: 2を返します。 更新トークンが有効ならアクセストークン期限切れ後も更新でき、同じ更新トークンの同時更新は1回だけ成功します。",
         "responses": {
           "200": {
             "description": "Activation result"
@@ -3759,7 +3759,8 @@
             }
           }
         },
-        "operationId": "post_api_v3_challenge_php"
+        "operationId": "post_api_v3_challenge_php",
+        "description": "\n同一IPからの成功した発行も含め、15分間60件に制限します。"
       }
     },
     "/api/v3/activate.php": {
@@ -3783,7 +3784,7 @@
             "description": "サービスまたは書き込み担当ノードが利用できません。"
           }
         },
-        "description": "取得したチャレンジへ端末秘密鍵で署名し、製品キー・端末指紋と送信します。",
+        "description": "取得したチャレンジへ端末秘密鍵で署名し、製品キー・端末指紋と送信します。\nセッション応答にserver_time_utc、access_expires_in、refresh_expires_in、refresh_after_secondsを追加します。ライセンス期限による上限は維持します。X-Request-IDは調査用IDです。DB等の障害は503とRetry-After: 2を返します。",
         "requestBody": {
           "required": true,
           "content": {
@@ -3992,7 +3993,7 @@
             "description": "サービスまたは書き込み担当ノードが利用できません。"
           }
         },
-        "description": "端末鍵の所持証明が必要です。timestampは現在のUnix秒（許容差±120秒）、request_nonceは毎回一意にします。Bearerだけでは実行できません。",
+        "description": "端末鍵の所持証明が必要です。timestampは現在のUnix秒（許容差±120秒）、request_nonceは毎回一意にします。Bearerだけでは実行できません。\nセッション応答にserver_time_utc、access_expires_in、refresh_expires_in、refresh_after_secondsを追加します。ライセンス期限による上限は維持します。X-Request-IDは調査用IDです。DB等の障害は503とRetry-After: 2を返します。",
         "requestBody": {
           "required": true,
           "content": {
@@ -4061,7 +4062,7 @@
             "description": "サービスまたは書き込み担当ノードが利用できません。"
           }
         },
-        "description": "端末鍵の所持証明が必要です。timestampは現在のUnix秒（許容差±120秒）、request_nonceは毎回一意にします。Bearerだけでは実行できません。",
+        "description": "端末鍵の所持証明が必要です。timestampは現在のUnix秒（許容差±120秒）、request_nonceは毎回一意にします。Bearerだけでは実行できません。\nscope=familyは同じfamilyの全セッションとオフラインチケットのDBレコードを失効します。",
         "requestBody": {
           "required": true,
           "content": {

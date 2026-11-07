@@ -10,9 +10,10 @@ import uuid
 from datetime import datetime, timedelta, timezone
 import audit
 import database
+import sys
 from core import ConfigurationError, device_hash, device_reference, hash_secret, key_pepper, license_id_from_product_id, license_key_hash, offline_lookup, offline_secret, offline_secret_encrypt, product_id, token_secret, _php_trim, _ASCII_UPPER, normalize_device_fingerprint, normalize_license_key, normalize_text, normalize_app_version, is_valid_license_key_format, is_valid_device_fingerprint, first_non_empty, token_hash, device_display_label, parse_utc_datetime, random_token
 from http_utils import RequestError, v2_response, request_data
-from v3_handlers import _assert_write_fence
+from v3_handlers import _assert_write_fence, _guard_capacity, _session_timing, _rollback_connection, _close_connection
 from migration_config import secret_value
 KEY_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 ACCESS_TTL = 43200
@@ -32,6 +33,40 @@ def _record_auth_attempt(connection, ip_hash, action, subject_type, subject_hash
 def _clear_auth_attempts(connection, action, subject_type, subject_hash):
     with connection.cursor() as cursor:
         cursor.execute('DELETE FROM auth_attempts WHERE action=%s AND subject_type=%s AND subject_hash=%s', (action, subject_type, subject_hash))
+
+
+def _require_session_expiry(device_row, fields, now):
+    for field in fields:
+        expiry = parse_utc_datetime(str(device_row.get(field) or ''))
+        if expiry is None or expiry <= now:
+            raise V2Error(400, {'success': False, 'error': 'セッションの有効期限が切れています。', 'error_code': 'SESSION_EXPIRED'})
+
+
+def _parse_license_expiry(license_row):
+    value = license_row.get('expires_at')
+    if value is None or value == '':
+        return None
+    expiry = parse_utc_datetime(str(value))
+    if expiry is None:
+        raise V2Error(503, {'success': False, 'error': 'license_state_unavailable', 'error_code': 'SERVICE_UNAVAILABLE'})
+    return expiry
+
+
+def _lock_refresh_session(connection, token_digest):
+    """Use license -> device lock order, matching activation transactions."""
+    with connection.cursor() as cursor:
+        cursor.execute('SELECT license_id FROM license_devices WHERE refresh_token_hash=%s LIMIT 1', (token_digest,))
+        hint = cursor.fetchone()
+    if not hint:
+        return None, None
+    connection.begin()
+    with connection.cursor() as cursor:
+        cursor.execute('SELECT * FROM licenses WHERE id=%s AND deleted_at IS NULL LIMIT 1 FOR UPDATE', (int(hint['license_id']),))
+        license_row = cursor.fetchone()
+        if not license_row:
+            return None, None
+        cursor.execute('SELECT * FROM license_devices WHERE license_id=%s AND refresh_token_hash=%s LIMIT 1 FOR UPDATE', (int(hint['license_id']), token_digest))
+        return cursor.fetchone(), license_row
 
 def _license_payload(config, license_row, device_row=None):
     evaluation_days = license_row.get('evaluation_days')
@@ -166,13 +201,17 @@ def _v2_activate(request_context, rid):
         with connection.cursor() as cursor:
             cursor.execute('SELECT * FROM license_devices WHERE license_id=%s AND device_hash=%s LIMIT 1', (int(license_row['id']), fingerprint_hash))
             device_row = cursor.fetchone()
-            cursor.execute('SELECT COUNT(*) AS cnt FROM license_devices WHERE license_id=%s AND revoked_at IS NULL AND refresh_expires_at>UTC_TIMESTAMP()', (int(license_row['id']),))
-            active_count = int(cursor.fetchone()['cnt'])
-        if not (device_row and (not device_row.get('revoked_at'))) and active_count >= max(1, int(license_row.get('max_devices') or 1)):
-            raise V2Error(409, {'success': False, 'error': 'このライセンスの利用台数上限に達しています。', 'error_code': 'DEVICE_LIMIT_REACHED'})
+            cursor.execute("SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='license_v3_devices'")
+            include_v3 = int(cursor.fetchone()['n']) > 0
+        try:
+            _guard_capacity(connection, license_row, fingerprint_hash, include_v3=include_v3)
+        except RuntimeError as error:
+            if str(error) != 'license_device_limit_reached':
+                raise
+            raise V2Error(409, {'success': False, 'error': 'このライセンスの利用台数上限に達しています。', 'error_code': 'DEVICE_LIMIT_REACHED'}) from None
         now = datetime.now(timezone.utc).replace(microsecond=0)
         access_expiry, refresh_expiry = (now + timedelta(seconds=ACCESS_TTL), now + timedelta(seconds=REFRESH_TTL))
-        license_expiry = parse_utc_datetime(str(license_row.get('expires_at') or ''))
+        license_expiry = _parse_license_expiry(license_row)
         if license_expiry:
             access_expiry = min(access_expiry, license_expiry)
             refresh_expiry = min(refresh_expiry, license_expiry)
@@ -189,47 +228,53 @@ def _v2_activate(request_context, rid):
             device_row = cursor.fetchone() or {'device_hash': fingerprint_hash, 'device_label': final_label, 'access_expires_at': session[5], 'refresh_expires_at': session[6]}
         connection.commit()
         transaction_open = False
-        _clear_auth_attempts(connection, 'activate', 'license_key', license_subject)
-        _clear_auth_attempts(connection, 'activate', 'device_fingerprint', device_subject)
-        _record_auth_attempt(connection, ip_hash, 'activate', 'license_key', license_subject, True, 'ok')
-        _record_auth_attempt(connection, ip_hash, 'activate', 'device_fingerprint', device_subject, True, 'ok')
-        connection.commit()
+        try:
+            _clear_auth_attempts(connection, 'activate', 'license_key', license_subject)
+            _clear_auth_attempts(connection, 'activate', 'device_fingerprint', device_subject)
+            _record_auth_attempt(connection, ip_hash, 'activate', 'license_key', license_subject, True, 'ok')
+            _record_auth_attempt(connection, ip_hash, 'activate', 'device_fingerprint', device_subject, True, 'ok')
+            connection.commit()
+        except Exception:
+            _rollback_connection(connection)
+            print('license_audit_failed request_id=' + rid, file=sys.stderr)
         try:
             tenant = int(license_row.get('tenant_id') or 0)
             if tenant > 0:
                 with connection.cursor() as cursor:
                     cursor.execute('INSERT INTO tenant_api_usage(tenant_id,client_id,operation,status_code,request_id,ip_hash) VALUES(%s,0,%s,200,%s,%s)', (tenant, 'product_key.activate', rid, hashlib.sha256(str(request_context.get('client_address', '0.0.0.0')).encode()).hexdigest()))
         except Exception:
-            connection.rollback()
+            _rollback_connection(connection)
         else:
             connection.commit()
         payload = {'success': True, 'api_version': '2.0', 'message': 'セッションを発行しました。', 'license': _license_payload(config, license_row, device_row), 'session': {'access_token': access_token, 'refresh_token': refresh_token, 'access_expires_at': session[5], 'refresh_expires_at': session[6], 'device_ref': device_reference(fingerprint_hash), 'device_label': final_label, 'app_version': app_version or None}}
+        payload['session'].update(_session_timing(access_expiry, refresh_expiry, now))
+        payload['session']['token_version'] = int(device_row.get('token_version') or 1)
         if tenant != 1 and (not product_code):
             return v2_response(200, payload, rid)
         payload['license']['product_code'] = resolved_product
         return v2_response(200, payload, rid)
     except V2Error as exc:
         if connection and transaction_open:
-            connection.rollback()
+            _rollback_connection(connection)
             if license_subject and device_subject and (exc.status not in (429,)):
                 try:
                     _record_auth_attempt(connection, ip_hash, 'activate', 'license_key', license_subject, False, 'activation_failed')
                     _record_auth_attempt(connection, ip_hash, 'activate', 'device_fingerprint', device_subject, False, 'activation_failed')
                     connection.commit()
                 except Exception:
-                    connection.rollback()
+                    _rollback_connection(connection)
         return v2_response(exc.status, exc.payload, rid)
     except RequestError:
         if connection and transaction_open:
-            connection.rollback()
+            _rollback_connection(connection)
         return v2_response(400, {'success': False, 'error': '不正なリクエスト形式です。'}, rid)
     except database.DatabaseConfigurationError:
         if connection and transaction_open:
-            connection.rollback()
+            _rollback_connection(connection)
         return v2_response(503, {'success': False, 'error': 'service_unavailable'}, rid)
     except Exception:
         if connection and transaction_open:
-            connection.rollback()
+            _rollback_connection(connection)
         if connection and ip_hash:
             try:
                 for subject_type, subject_hash in (('license_key', license_subject), ('device_fingerprint', device_subject)):
@@ -237,11 +282,11 @@ def _v2_activate(request_context, rid):
                         _record_auth_attempt(connection, ip_hash, 'activate', subject_type, subject_hash, False, 'activation_failed')
                 connection.commit()
             except Exception:
-                connection.rollback()
+                _rollback_connection(connection)
         return v2_response(503, {'success': False, 'error': 'activation_failed'}, rid)
     finally:
         if connection:
-            connection.close()
+            _close_connection(connection)
 
 @legacy_compatible(callback_index=1, request_index=0)
 def _v2_verify(request_context, rid, data):
@@ -271,16 +316,13 @@ def _v2_verify(request_context, rid, data):
             raise V2Error(400, {'success': False, 'error': '端末情報が一致しません。'})
         if device_row.get('revoked_at'):
             raise V2Error(400, {'success': False, 'error': 'セッションの有効期限が切れています。'})
-        for field in ('access_expires_at', 'refresh_expires_at'):
-            expiry = parse_utc_datetime(str(device_row.get(field) or ''))
-            if expiry and expiry < datetime.now(timezone.utc):
-                raise V2Error(400, {'success': False, 'error': 'セッションの有効期限が切れています。'})
+        _require_session_expiry(device_row, ('access_expires_at', 'refresh_expires_at'), datetime.now(timezone.utc))
         with connection.cursor() as cursor:
             cursor.execute('SELECT * FROM licenses WHERE id=%s AND deleted_at IS NULL LIMIT 1', (int(device_row.get('license_id') or 0),))
             license_row = cursor.fetchone()
         if not license_row:
             raise V2Error(400, {'success': False, 'error': 'ライセンスが見つかりません。'})
-        expires = parse_utc_datetime(str(license_row.get('expires_at') or ''))
+        expires = _parse_license_expiry(license_row)
         if int(license_row.get('active') or 0) != 1 or license_row.get('revoked_at') or (expires and expires <= datetime.now(timezone.utc)):
             if license_row.get('revoked_at'):
                 message = 'このライセンスは失効しています。'
@@ -303,7 +345,7 @@ def _v2_verify(request_context, rid, data):
         return v2_response(503, {'success': False, 'error': 'verification_failed'}, rid)
     finally:
         if 'connection' in locals() and connection:
-            connection.close()
+            _close_connection(connection)
 
 @legacy_compatible(callback_index=1, request_index=0)
 def _v2_refresh(request_context, rid, data):
@@ -323,9 +365,8 @@ def _v2_refresh(request_context, rid, data):
         ip_hash = hash_secret(_php_trim(request_context.get('client_address', '0.0.0.0')))
         connection = database.connect()
         _assert_write_fence(connection)
-        with connection.cursor() as cursor:
-            cursor.execute('SELECT * FROM license_devices WHERE refresh_token_hash=%s LIMIT 1', (token_hash(config, refresh_token),))
-            device_row = cursor.fetchone()
+        token_digest = token_hash(config, refresh_token)
+        device_row, license_row = _lock_refresh_session(connection, token_digest)
         if not device_row:
             raise V2Error(400, {'success': False, 'error': '更新トークンが見つかりません。'})
         expected_hash = device_hash(config, fingerprint)
@@ -334,16 +375,10 @@ def _v2_refresh(request_context, rid, data):
         if device_row.get('revoked_at'):
             raise V2Error(400, {'success': False, 'error': 'セッションの有効期限が切れています。'})
         now = datetime.now(timezone.utc)
-        for field in ('access_expires_at', 'refresh_expires_at'):
-            expiry = parse_utc_datetime(str(device_row.get(field) or ''))
-            if expiry and expiry < now:
-                raise V2Error(400, {'success': False, 'error': 'セッションの有効期限が切れています。'})
-        with connection.cursor() as cursor:
-            cursor.execute('SELECT * FROM licenses WHERE id=%s AND deleted_at IS NULL LIMIT 1', (int(device_row.get('license_id') or 0),))
-            license_row = cursor.fetchone()
+        _require_session_expiry(device_row, ('refresh_expires_at',), now)
         if not license_row:
             raise V2Error(400, {'success': False, 'error': 'ライセンスが見つかりません。'})
-        license_expiry = parse_utc_datetime(str(license_row.get('expires_at') or ''))
+        license_expiry = _parse_license_expiry(license_row)
         if int(license_row.get('active') or 0) != 1 or license_row.get('revoked_at') or (license_expiry and license_expiry <= now):
             if license_row.get('revoked_at'):
                 message = 'このライセンスは失効しています。'
@@ -361,22 +396,31 @@ def _v2_refresh(request_context, rid, data):
         access_expiry_text = access_expiry.strftime('%Y-%m-%d %H:%M:%S')
         refresh_expiry_text = refresh_expiry.strftime('%Y-%m-%d %H:%M:%S')
         with connection.cursor() as cursor:
-            cursor.execute('UPDATE license_devices SET access_token_hash=%s,refresh_token_hash=%s,access_expires_at=%s,refresh_expires_at=%s,last_seen_at=UTC_TIMESTAMP(),last_ip_hash=%s,token_version=token_version+1 WHERE id=%s', (token_hash(config, access_token), token_hash(config, next_refresh_token), access_expiry_text, refresh_expiry_text, ip_hash, int(device_row['id'])))
+            cursor.execute('UPDATE license_devices SET access_token_hash=%s,refresh_token_hash=%s,access_expires_at=%s,refresh_expires_at=%s,last_seen_at=UTC_TIMESTAMP(),last_ip_hash=%s,token_version=token_version+1 WHERE id=%s AND refresh_token_hash=%s AND revoked_at IS NULL', (token_hash(config, access_token), token_hash(config, next_refresh_token), access_expiry_text, refresh_expiry_text, ip_hash, int(device_row['id']), token_digest))
+            if cursor.rowcount != 1:
+                raise V2Error(409, {'success': False, 'error': 'セッションが更新されたため、保存済みトークンを確認してください。', 'error_code': 'SESSION_CHANGED'})
             cursor.execute('UPDATE licenses SET last_seen_at=UTC_TIMESTAMP() WHERE id=%s', (int(license_row['id']),))
         connection.commit()
         device_payload = dict(device_row)
+        device_payload['token_version'] = int(device_row.get('token_version') or 1) + 1
         device_payload.update({'access_expires_at': access_expiry_text, 'refresh_expires_at': refresh_expiry_text, 'last_seen_at': now.strftime('%Y-%m-%d %H:%M:%S'), 'revoked_at': None})
         _record_usage(connection, license_row, 'product_key.refresh', 200, rid, request_context)
-        return v2_response(200, {'success': True, 'api_version': '2.0', 'message': 'セッションを更新しました。', 'license': _license_payload(config, license_row, device_payload), 'session': {'access_token': access_token, 'refresh_token': next_refresh_token, 'access_expires_at': access_expiry_text, 'refresh_expires_at': refresh_expiry_text, 'device_label': device_row.get('device_label'), 'app_version': device_row.get('app_version')}}, rid)
+        return v2_response(200, {'success': True, 'api_version': '2.0', 'message': 'セッションを更新しました。', 'license': _license_payload(config, license_row, device_payload), 'session': {'access_token': access_token, 'refresh_token': next_refresh_token, 'access_expires_at': access_expiry_text, 'refresh_expires_at': refresh_expiry_text, 'device_label': device_row.get('device_label'), 'app_version': device_row.get('app_version'), 'token_version': device_payload['token_version'], **_session_timing(access_expiry, refresh_expiry, now)}}, rid)
     except V2Error as exc:
+        if connection:
+            _rollback_connection(connection)
         return v2_response(exc.status, exc.payload, rid)
     except database.DatabaseConfigurationError:
+        if connection:
+            _rollback_connection(connection)
         return v2_response(503, {'success': False, 'error': 'service_unavailable'}, rid)
     except Exception:
+        if connection:
+            _rollback_connection(connection)
         return v2_response(503, {'success': False, 'error': 'refresh_failed'}, rid)
     finally:
         if connection:
-            connection.close()
+            _close_connection(connection)
 
 @legacy_compatible(callback_index=1, request_index=0)
 def _v2_deactivate(request_context, rid, data):
@@ -419,37 +463,35 @@ def _v2_deactivate(request_context, rid, data):
                 raise V2Error(400, {'success': False, 'error': 'refresh_token か device_id / license_key が必要です。'})
             if not fingerprint:
                 raise V2Error(400, {'success': False, 'error': 'device_fingerprint が必要です。'})
-            with connection.cursor() as cursor:
-                cursor.execute('SELECT * FROM license_devices WHERE refresh_token_hash=%s LIMIT 1', (token_hash(config, refresh_token),))
-                device_row = cursor.fetchone()
+            transaction_open = True
+            device_row, license_row = _lock_refresh_session(connection, token_hash(config, refresh_token))
             if not device_row:
                 raise V2Error(404, {'success': False, 'error': 'セッションが見つかりません。'})
             expected_hash = device_hash(config, fingerprint)
             if not hmac.compare_digest(str(device_row.get('device_hash') or ''), expected_hash):
                 raise V2Error(400, {'success': False, 'error': '端末情報が一致しません。'})
             with connection.cursor() as cursor:
-                cursor.execute('SELECT * FROM licenses WHERE id=%s AND deleted_at IS NULL LIMIT 1', (int(device_row.get('license_id') or 0),))
-                license_row = cursor.fetchone()
                 cursor.execute('UPDATE license_devices SET revoked_at=UTC_TIMESTAMP(),token_version=token_version+1 WHERE id=%s', (int(device_row['id']),))
             connection.commit()
+            transaction_open = False
         if license_row:
             _record_usage(connection, license_row, 'product_key.deactivate', 200, rid, request_context)
         return v2_response(200, {'success': True, 'api_version': '2.0', 'message': 'セッションを失効しました。'}, rid)
     except V2Error as exc:
         if connection and transaction_open:
-            connection.rollback()
+            _rollback_connection(connection)
         return v2_response(exc.status, exc.payload, rid)
     except database.DatabaseConfigurationError:
         if connection and transaction_open:
-            connection.rollback()
+            _rollback_connection(connection)
         return v2_response(503, {'success': False, 'error': 'service_unavailable'}, rid)
     except Exception:
         if connection and transaction_open:
-            connection.rollback()
+            _rollback_connection(connection)
         return v2_response(503, {'success': False, 'error': 'deactivation_failed'}, rid)
     finally:
         if connection:
-            connection.close()
+            _close_connection(connection)
 
 @legacy_compatible(callback_index=1, request_index=0)
 def _v2_status(request_context, rid, data):
@@ -514,11 +556,11 @@ def _v2_status(request_context, rid, data):
                 _record_auth_attempt(connection, ip_hash, 'status', 'license_key', subject, False, 'status_failed')
                 connection.commit()
             except Exception:
-                connection.rollback()
+                _rollback_connection(connection)
         return v2_response(503, {'success': False, 'error': 'status_failed'}, rid)
     finally:
         if connection:
-            connection.close()
+            _close_connection(connection)
 
 def _php_bool(value):
     if isinstance(value, bool):
@@ -576,7 +618,7 @@ def _v2_record_usage(request_context, rid, data):
             license_row = cursor.fetchone()
         if not license_row:
             raise V2Error(400, {'success': False, 'error': 'ライセンスが見つかりません。'})
-        expiry = parse_utc_datetime(str(license_row.get('expires_at') or ''))
+        expiry = _parse_license_expiry(license_row)
         if int(license_row.get('active') or 0) != 1 or license_row.get('revoked_at') or (expiry and expiry <= now):
             raise V2Error(400, {'success': False, 'error': 'ライセンスが有効ではありません。'})
         tenant_id = int(license_row.get('tenant_id') or 1)
@@ -604,7 +646,7 @@ def _v2_record_usage(request_context, rid, data):
                 cursor.execute('INSERT INTO idempotency_keys(tenant_id,operation,request_key,response_json) VALUES(%s,%s,%s,%s)', (tenant_id, 'license_usage_v1', idem_key, saved_response))
             connection.commit()
         except Exception as exc:
-            connection.rollback()
+            _rollback_connection(connection)
             if getattr(exc, 'args', [None])[0] != 1062:
                 raise
             with connection.cursor() as cursor:
@@ -625,7 +667,7 @@ def _v2_record_usage(request_context, rid, data):
         return v2_response(503, {'success': False, 'error': 'usage_recording_failed'}, rid)
     finally:
         if connection:
-            connection.close()
+            _close_connection(connection)
 
 def _runtime_config():
     return {'key_pepper': secret_value('key_pepper'), 'token_secret': secret_value('token_secret')}
@@ -660,7 +702,7 @@ def _record_usage(connection, license_row, operation, status_code, request_id, r
             cursor.execute('INSERT INTO tenant_api_usage(tenant_id,client_id,operation,status_code,request_id,ip_hash) VALUES(%s,0,%s,%s,%s,%s)', (tenant_id, operation[:64], status_code, request_id, ip_hash))
         connection.commit()
     except Exception:
-        connection.rollback()
+        _rollback_connection(connection)
 
 @legacy_compatible(callback_index=1, request_index=0)
 def activate(request_context):
@@ -754,15 +796,15 @@ def reissue(request_context):
         return v2_response(200, {'success': True, 'message': 'プロダクトキーを1回に限り再発行しました。旧キーと旧セッションは無効です。', 'product_id': product_id_value, 'product_key': new_key, 'reissue_remaining': 0}, rid)
     except RequestError:
         if connection:
-            connection.rollback()
+            _rollback_connection(connection)
         return v2_response(409, {'success': False, 'error': 'reissue_not_available'}, rid)
     except database.DatabaseConfigurationError:
         if connection:
-            connection.rollback()
+            _rollback_connection(connection)
         return v2_response(503, {'success': False, 'error': 'reissue_failed'}, rid)
     except Exception as exc:
         if connection:
-            connection.rollback()
+            _rollback_connection(connection)
         message = str(exc)
         reason = message if message in {'invalid_product_id', 'invalid_device_fingerprint', 'reissue_not_available', 'reissue_already_used', 'registered_device_required'} else 'reissue_failed'
         if connection and ip_hash and product_subject:
@@ -771,7 +813,7 @@ def reissue(request_context):
                 _record_attempt(connection, ip_hash, 'ip', ip_hash, False, reason)
                 connection.commit()
             except Exception:
-                connection.rollback()
+                _rollback_connection(connection)
         _audit('license_key_reissue_failed', {'product_id_hash': hashlib.sha256(product_id_value.encode('utf-8')).hexdigest(), 'ip_hash': ip_hash, 'reason': reason}, request_context)
         status_code = 400 if reason in ('invalid_product_id', 'invalid_device_fingerprint') else 409
         if isinstance(exc, ConfigurationError) or not isinstance(exc, (RuntimeError, ValueError)):
@@ -779,4 +821,4 @@ def reissue(request_context):
         return v2_response(status_code, {'success': False, 'error': 'reissue_not_available'}, rid)
     finally:
         if connection:
-            connection.close()
+            _close_connection(connection)

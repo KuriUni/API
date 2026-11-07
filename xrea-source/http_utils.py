@@ -125,4 +125,7 @@ def v2_response(status_code, payload, rid=None):
     if result.get('success') is False:
         result.setdefault('error_code', {400: 'INVALID_REQUEST', 401: 'UNAUTHORIZED', 403: 'FORBIDDEN', 404: 'NOT_FOUND', 409: 'CONFLICT', 413: 'REQUEST_TOO_LARGE', 429: 'RATE_LIMITED', 503: 'SERVICE_UNAVAILABLE'}.get(status_code, 'ERROR'))
     result.setdefault('api_version', '2.0')
-    return json_response(status_name, result)
+    headers = [('X-Request-ID', str(result['request_id']))]
+    if status_code == 503:
+        headers.append(('Retry-After', '2'))
+    return json_response(status_name, result, headers)

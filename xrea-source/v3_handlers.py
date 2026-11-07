@@ -3,13 +3,15 @@ from native_http import make_response, add_headers, legacy_compatible
 import hashlib
 import hmac
 import json
+import pymysql
 import os
 import re
 import time
 import uuid
+import sys
 from datetime import datetime, timedelta, timezone
 import database
-from core import device_reference, random_token, token_hash, product_id, parse_utc_datetime, normalize_license_key, normalize_device_fingerprint, is_valid_device_fingerprint, is_valid_license_key_format, license_key_hash, device_hash
+from core import ConfigurationError, device_reference, random_token, token_hash, product_id, parse_utc_datetime, normalize_license_key, normalize_device_fingerprint, is_valid_device_fingerprint, is_valid_license_key_format, license_key_hash, device_hash
 from http_utils import RequestError, json_response, request_data
 import v3_crypto
 from migration_config import secret_value
@@ -22,7 +24,10 @@ def _reply(status_code, payload, rid, headers=()):
     body.setdefault('success', 200 <= status_code < 300)
     body.setdefault('api_version', API_VERSION)
     body.setdefault('request_id', rid)
-    return json_response(status, body, headers)
+    response_headers = list(headers) + [('X-Request-ID', rid)]
+    if status_code == 503:
+        response_headers.append(('Retry-After', '2'))
+    return json_response(status, body, response_headers)
 
 @legacy_compatible(callback_index=0, request_index=None)
 def _error(status_code, code, message, rid, extra=None):
@@ -51,19 +56,33 @@ def _require_post(request_context, rid):
     if request_context.get('method', '') != 'POST':
         raise V3Error(405, 'METHOD_NOT_ALLOWED', 'POST を使用してください。')
 
-@legacy_compatible(callback_index=0, request_index=None)
-def _error_response(exc, rid):
+def _public_error(exc):
+    if isinstance(exc, RequestError):
+        return V3Error(400, 'INVALID_REQUEST', 'リクエスト形式が正しくありません。')
+    if isinstance(exc, (database.DatabaseConfigurationError, ConfigurationError, pymysql.err.Error)):
+        return V3Error(503, 'SERVICE_UNAVAILABLE', '一時的に認証サービスを利用できません。')
     if isinstance(exc, V3Error):
-        headers = [('Allow', 'POST')] if exc.status == 405 else ()
-        payload = {'success': False, 'error_code': exc.code, 'error': str(exc)}
-        payload.update(exc.extra)
-        return _reply(exc.status, payload, rid, headers)
+        return exc
     code = str(exc)
     mapping = {'challenge_invalid': (400, 'CHALLENGE_INVALID'), 'challenge_already_used': (409, 'CHALLENGE_ALREADY_USED'), 'challenge_expired': (401, 'CHALLENGE_EXPIRED'), 'challenge_nonce_invalid': (401, 'CHALLENGE_INVALID'), 'challenge_key_mismatch': (401, 'CHALLENGE_KEY_MISMATCH'), 'device_signature_invalid': (401, 'DEVICE_SIGNATURE_INVALID'), 'license_device_limit_reached': (409, 'DEVICE_LIMIT_REACHED'), 'session_revoked': (401, 'SESSION_REVOKED'), 'license_inactive': (403, 'LICENSE_INACTIVE'), 'license_expired': (403, 'LICENSE_EXPIRED'), 'access_token_expired': (401, 'ACCESS_TOKEN_EXPIRED'), 'refresh_token_expired': (401, 'REFRESH_TOKEN_EXPIRED'), 'proof_required': (400, 'PROOF_REQUIRED'), 'proof_timestamp_invalid': (401, 'PROOF_TIMESTAMP_INVALID'), 'proof_signature_invalid': (401, 'PROOF_SIGNATURE_INVALID'), 'proof_replayed': (409, 'PROOF_REPLAYED'), 'offline_signing_unavailable': (503, 'OFFLINE_SIGNING_UNAVAILABLE'), 'license_not_found': (400, 'LICENSE_NOT_FOUND'), 'schema_missing': (503, 'V3_MIGRATION_REQUIRED'), 'node_not_writable': (503, 'SERVICE_UNAVAILABLE'), 'ha_write_fence_rejected': (503, 'SERVICE_UNAVAILABLE'), 'device_public_key_invalid': (400, 'DEVICE_PUBLIC_KEY_INVALID'), 'device_public_key_too_weak': (400, 'DEVICE_PUBLIC_KEY_TOO_WEAK'), 'device_public_key_curve_unsupported': (400, 'DEVICE_KEY_CURVE_UNSUPPORTED'), 'device_public_key_type_unsupported': (400, 'DEVICE_KEY_TYPE_UNSUPPORTED')}
-    status, public_code = mapping.get(code, (400, 'V3_REQUEST_FAILED'))
+    mapping['challenge_purpose_invalid'] = (400, 'CHALLENGE_PURPOSE_INVALID')
+    if code not in mapping:
+        if isinstance(exc, ValueError):
+            return V3Error(400, 'V3_REQUEST_FAILED', 'リクエスト形式が正しくありません。')
+        return V3Error(503, 'SERVICE_UNAVAILABLE', '一時的に認証サービスを利用できません。')
+    status, public_code = mapping[code]
     extra = {'required_migration': '027_license_api_v3_beta'} if code == 'schema_missing' else None
     message = 'ライセンスキーが正しくありません。' if code == 'license_not_found' else code
-    return _error(status, public_code, message, rid, extra)
+    return V3Error(status, public_code, message, extra)
+
+
+@legacy_compatible(callback_index=0, request_index=None)
+def _error_response(exc, rid):
+    public = _public_error(exc)
+    if public.status == 503:
+        print('license_request_failed request_id=%s error_type=%s' % (rid, type(exc).__name__), file=sys.stderr)
+    headers = [('Allow', 'POST')] if public.status == 405 else ()
+    return _reply(public.status, {'success': False, 'error_code': public.code, 'error': str(public), **public.extra}, rid, headers)
 
 def _require_v3_schema(connection):
     required = ('license_v3_challenges', 'license_v3_devices', 'license_v3_sessions', 'license_v3_refresh_history', 'license_v3_proofs', 'license_v3_offline_tickets')
@@ -126,6 +145,36 @@ def _as_utc(value):
     if parsed is None:
         return datetime.min.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _rollback_connection(connection):
+    try:
+        connection.rollback()
+    except pymysql.err.Error:
+        pass
+
+
+def _close_connection(connection):
+    try:
+        connection.close()
+    except pymysql.err.Error:
+        pass
+
+
+def _session_timing(access_expiry, refresh_expiry, now):
+    access_remaining = max(0, int((_as_utc(access_expiry).replace(microsecond=0) - now).total_seconds()))
+    refresh_remaining = max(0, int((_as_utc(refresh_expiry).replace(microsecond=0) - now).total_seconds()))
+    return {'server_time_utc': now.isoformat(timespec='seconds'),
+            'access_expires_in': access_remaining, 'refresh_expires_in': refresh_remaining,
+            'refresh_after_seconds': access_remaining * 4 // 5}
+
+
+def _revoke_session_family(connection, family_id, reason):
+    with connection.cursor() as cursor:
+        cursor.execute('UPDATE license_v3_sessions SET revoked_at=UTC_TIMESTAMP(),revoke_reason=%s WHERE family_id=%s AND revoked_at IS NULL', (reason, family_id))
+        affected = cursor.rowcount
+        cursor.execute('UPDATE license_v3_offline_tickets SET revoked_at=UTC_TIMESTAMP() WHERE session_id IN (SELECT session_id FROM license_v3_sessions WHERE family_id=%s) AND revoked_at IS NULL', (family_id,))
+    return affected
 
 def _verify_pop(connection, session, action, data):
     nonce = str(data.get('request_nonce', '')).strip()
@@ -222,14 +271,19 @@ def _active_license(license_row):
     if license_row.get('expires_at') and _as_utc(license_row['expires_at']) <= datetime.now(timezone.utc):
         raise RuntimeError('このライセンスは期限切れです。')
 
-def _guard_capacity(connection, license_row, device_hash_value):
+def _guard_capacity(connection, license_row, device_hash_value, include_v3=True):
     license_id = int(license_row['id'])
     with connection.cursor() as cursor:
-        cursor.execute('SELECT 1 AS found FROM (SELECT device_hash FROM license_devices WHERE license_id=%s AND revoked_at IS NULL AND refresh_expires_at>UTC_TIMESTAMP() UNION ALL SELECT device_hash FROM license_v3_devices WHERE license_id=%s AND revoked_at IS NULL) d WHERE device_hash=%s LIMIT 1', (license_id, license_id, device_hash_value))
+        sources = 'SELECT device_hash FROM license_devices WHERE license_id=%s AND revoked_at IS NULL AND refresh_expires_at>UTC_TIMESTAMP()'
+        args = (license_id,)
+        if include_v3:
+            sources += ' UNION ALL SELECT device_hash FROM license_v3_devices WHERE license_id=%s AND revoked_at IS NULL'
+            args += (license_id,)
+        cursor.execute('SELECT 1 AS found FROM (' + sources + ') d WHERE device_hash=%s LIMIT 1', args + (device_hash_value,))
         existing = cursor.fetchone()
         if existing:
             return
-        cursor.execute('SELECT COUNT(DISTINCT device_hash) AS n FROM (SELECT device_hash FROM license_devices WHERE license_id=%s AND revoked_at IS NULL AND refresh_expires_at>UTC_TIMESTAMP() UNION ALL SELECT device_hash FROM license_v3_devices WHERE license_id=%s AND revoked_at IS NULL) d', (license_id, license_id))
+        cursor.execute('SELECT COUNT(DISTINCT device_hash) AS n FROM (' + sources + ') d', args)
         count = int(cursor.fetchone()['n'])
     if count >= max(1, int(license_row.get('max_devices') or 1)):
         raise RuntimeError('license_device_limit_reached')
@@ -265,7 +319,7 @@ def _issue_session(connection, license_row, device_row):
     with connection.cursor() as cursor:
         cursor.execute("UPDATE license_v3_sessions SET revoked_at=UTC_TIMESTAMP(),revoke_reason='reactivated' WHERE device_id=%s AND revoked_at IS NULL", (int(device_row['id']),))
         cursor.execute('INSERT INTO license_v3_sessions(session_id,family_id,license_id,device_id,access_token_hash,refresh_token_hash,scopes_json,access_expires_at,refresh_expires_at,token_version,created_at,last_seen_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,1,UTC_TIMESTAMP(),UTC_TIMESTAMP())', (session_id, family_id, int(license_row['id']), int(device_row['id']), token_hash(config, access), token_hash(config, refresh), json.dumps(scopes_value, separators=(',', ':')), access_exp.strftime('%Y-%m-%d %H:%M:%S'), refresh_exp.strftime('%Y-%m-%d %H:%M:%S')))
-    return {'session_id': session_id, 'family_id': family_id, 'access_token': access, 'refresh_token': refresh, 'access_expires_at': access_exp.strftime('%Y-%m-%d %H:%M:%S'), 'refresh_expires_at': refresh_exp.strftime('%Y-%m-%d %H:%M:%S'), 'token_version': 1, 'scopes': scopes_value}
+    return {'session_id': session_id, 'family_id': family_id, 'access_token': access, 'refresh_token': refresh, 'access_expires_at': access_exp.strftime('%Y-%m-%d %H:%M:%S'), 'refresh_expires_at': refresh_exp.strftime('%Y-%m-%d %H:%M:%S'), 'token_version': 1, 'scopes': scopes_value, **_session_timing(access_exp, refresh_exp, now)}
 
 @legacy_compatible(callback_index=1, request_index=0)
 def activate(request_context):
@@ -300,7 +354,9 @@ def activate(request_context):
         license_row = _license_by_key(connection, license_key_hash(config, license_key))
         if license_row is None:
             raise RuntimeError('license_not_found')
-        license_row = _lock_license(connection, int(license_row['id'])) or license_row
+        license_row = _lock_license(connection, int(license_row['id']))
+        if license_row is None:
+            raise RuntimeError('license_not_found')
         resolved_product = _resolve_product(connection, license_row, data.get('product_code', ''))
         license_row = _start_evaluation(connection, license_row)
         _active_license(license_row)
@@ -315,19 +371,19 @@ def activate(request_context):
         return _reply(200, {'message': 'License API v3 Beta device-bound session issued.', 'license': _license_payload(license_row), 'product_code': resolved_product, 'device': {'device_id': int(device['id']), 'device_ref': device_reference(fingerprint_hash), 'key_thumbprint': public_key['thumbprint'], 'key_algorithm': public_key['algorithm']}, 'session': session}, rid)
     except RequestError:
         if connection:
-            connection.rollback()
+            _rollback_connection(connection)
         return _error(400, 'INVALID_REQUEST', 'リクエスト形式が正しくありません。', rid)
     except database.DatabaseConfigurationError:
         if connection:
-            connection.rollback()
+            _rollback_connection(connection)
         return _error(503, 'SERVICE_UNAVAILABLE', 'テストDBを利用できません。', rid)
     except Exception as exc:
         if connection:
-            connection.rollback()
+            _rollback_connection(connection)
         return _error_response(exc, rid)
     finally:
         if connection:
-            connection.close()
+            _close_connection(connection)
 
 @legacy_compatible(callback_index=None, request_index=5)
 def _record_product_usage(connection, license_row, operation, status_code, rid, request_context):
@@ -340,7 +396,7 @@ def _record_product_usage(connection, license_row, operation, status_code, rid, 
             cursor.execute('INSERT INTO tenant_api_usage(tenant_id,client_id,operation,status_code,request_id,ip_hash) VALUES(%s,0,%s,%s,%s,%s)', (tenant_id, operation[:64], status_code, rid, ip_hash))
         connection.commit()
     except Exception:
-        connection.rollback()
+        _rollback_connection(connection)
 
 @legacy_compatible(callback_index=1, request_index=0)
 def reauth(request_context):
@@ -367,17 +423,17 @@ def reauth(request_context):
         return _reply(200, {'message': 'Fresh device-key reauthentication succeeded.', 'session': new_session}, rid)
     except RequestError:
         if connection:
-            connection.rollback()
+            _rollback_connection(connection)
         return _error(400, 'INVALID_REQUEST', 'リクエスト形式が正しくありません。', rid)
     except database.DatabaseConfigurationError:
         return _error(503, 'SERVICE_UNAVAILABLE', 'テストDBを利用できません。', rid)
     except Exception as exc:
         if connection:
-            connection.rollback()
+            _rollback_connection(connection)
         return _error_response(exc, rid)
     finally:
         if connection:
-            connection.close()
+            _close_connection(connection)
 
 def _rotate_session(connection, session):
     config = _config()
@@ -399,7 +455,7 @@ def _rotate_session(connection, session):
         scopes_value = json.loads(session.get('scopes_json') or '[]')
     except (TypeError, ValueError):
         scopes_value = []
-    return {'session_id': str(session['session_id']), 'family_id': str(session['family_id']), 'access_token': access, 'refresh_token': refresh, 'access_expires_at': access_exp.strftime('%Y-%m-%d %H:%M:%S'), 'refresh_expires_at': refresh_exp.strftime('%Y-%m-%d %H:%M:%S'), 'token_version': int(session['token_version']) + 1, 'scopes': scopes_value}
+    return {'session_id': str(session['session_id']), 'family_id': str(session['family_id']), 'access_token': access, 'refresh_token': refresh, 'access_expires_at': access_exp.strftime('%Y-%m-%d %H:%M:%S'), 'refresh_expires_at': refresh_exp.strftime('%Y-%m-%d %H:%M:%S'), 'token_version': int(session['token_version']) + 1, 'scopes': scopes_value, **_session_timing(access_exp, refresh_exp, now)}
 
 @legacy_compatible(callback_index=None, request_index=0)
 def _bearer(request_context, data):
@@ -436,8 +492,7 @@ def session_endpoint(request_context, action):
                         history = cursor.fetchone()
                     if history:
                         family_id = str(history['family_id'])
-                        with connection.cursor() as cursor:
-                            cursor.execute("UPDATE license_v3_sessions SET revoked_at=UTC_TIMESTAMP(),revoke_reason='refresh_reuse_detected' WHERE family_id=%s AND revoked_at IS NULL", (family_id,))
+                        _revoke_session_family(connection, family_id, 'refresh_reuse_detected')
                         connection.commit()
                         raise V3Error(401, 'REFRESH_REUSE_DETECTED', '使用済みrefresh tokenが再利用されたためsession familyを失効しました。', {'family_id': family_id})
                 raise V3Error(401, 'SESSION_NOT_FOUND', 'セッションが見つかりません。')
@@ -462,13 +517,13 @@ def session_endpoint(request_context, action):
                 return _reply(200, {'active': True, 'session': session_payload, 'device': {'device_ref': device_reference(session['device_hash']), 'key_thumbprint': session['key_thumbprint'], 'key_algorithm': session['key_algorithm']}}, rid)
             if action == 'revoke':
                 scope = 'family' if str(data.get('scope', 'session')).strip().lower() == 'family' else 'session'
-                with connection.cursor() as cursor:
-                    if scope == 'family':
-                        cursor.execute("UPDATE license_v3_sessions SET revoked_at=UTC_TIMESTAMP(),revoke_reason='client_family_revoke' WHERE family_id=%s AND revoked_at IS NULL", (str(session['family_id']),))
-                    else:
+                if scope == 'family':
+                    affected = _revoke_session_family(connection, str(session['family_id']), 'client_family_revoke')
+                else:
+                    with connection.cursor() as cursor:
                         cursor.execute("UPDATE license_v3_sessions SET revoked_at=UTC_TIMESTAMP(),revoke_reason='client_revoke' WHERE id=%s AND revoked_at IS NULL", (int(session['id']),))
-                    affected = cursor.rowcount
-                    cursor.execute('UPDATE license_v3_offline_tickets SET revoked_at=UTC_TIMESTAMP() WHERE session_id=%s AND revoked_at IS NULL', (str(session['session_id']),))
+                        affected = cursor.rowcount
+                        cursor.execute('UPDATE license_v3_offline_tickets SET revoked_at=UTC_TIMESTAMP() WHERE session_id=%s AND revoked_at IS NULL', (str(session['session_id']),))
                 connection.commit()
                 return _reply(200, {'revoked': True, 'scope': scope, 'affected_sessions': affected}, rid)
             if action == 'offline-ticket':
@@ -476,7 +531,7 @@ def session_endpoint(request_context, action):
                 connection.commit()
                 return _reply(200, {'offline_ticket': ticket}, rid)
         finally:
-            connection.close()
+            _close_connection(connection)
     except RequestError:
         return _error(400, 'INVALID_REQUEST', 'リクエスト形式が正しくありません。', rid)
     except database.DatabaseConfigurationError:
@@ -562,21 +617,21 @@ def challenge(request_context):
         ip = str(request_context.get('client_address', '0.0.0.0'))
         ip_hash = hashlib.sha256(ip.encode('utf-8')).hexdigest()
         with connection.cursor() as cursor:
-            cursor.execute('SELECT COUNT(*) AS n FROM auth_attempts WHERE success=0 AND action=%s AND subject_type=%s AND subject_hash=%s AND attempted_at >= (UTC_TIMESTAMP() - INTERVAL 900 SECOND)', ('v3_challenge', 'ip', ip_hash))
+            cursor.execute('SELECT COUNT(*) AS n FROM auth_attempts WHERE action=%s AND subject_type=%s AND subject_hash=%s AND attempted_at >= (UTC_TIMESTAMP() - INTERVAL 900 SECOND)', ('v3_challenge', 'ip', ip_hash))
             if int(cursor.fetchone()['n']) >= 60:
-                connection.rollback()
+                _rollback_connection(connection)
                 return _error(429, 'RATE_LIMITED', '試行回数が多すぎます。', rid)
             result = _issue_challenge(connection, purpose, public_key, ip_hash)
             cursor.execute('INSERT INTO auth_attempts(ip_hash,action,subject_type,subject_hash,success,error_code,attempted_at) VALUES(%s,%s,%s,%s,1,%s,UTC_TIMESTAMP())', (ip_hash, 'v3_challenge', 'ip', ip_hash, 'ok'))
         connection.commit()
         return _reply(200, {'challenge': result}, rid)
     except RuntimeError as exc:
-        connection.rollback()
+        _rollback_connection(connection)
         if str(exc) == 'schema_missing':
             return _error(503, 'V3_MIGRATION_REQUIRED', 'License API v3 Beta のDB migrationが未適用です。', rid, {'required_migration': '027_license_api_v3_beta'})
         return _error(503, 'SERVICE_UNAVAILABLE', 'サービスを利用できません。', rid)
     except Exception:
-        connection.rollback()
+        _rollback_connection(connection)
         return _error(503, 'SERVICE_UNAVAILABLE', 'サービスを利用できません。', rid)
     finally:
-        connection.close()
+        _close_connection(connection)
