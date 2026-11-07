@@ -18,6 +18,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 . (Join-Path $PSScriptRoot 'Invoke-XreaDifferentialUpload.ps1')
+. (Join-Path $PSScriptRoot 'Xrea-DeployTargets.ps1')
 
 if ([string]::IsNullOrWhiteSpace($LocalPath)) {
     $scriptDirectory = [System.IO.Path]::GetDirectoryName($MyInvocation.MyCommand.Path)
@@ -36,10 +37,7 @@ if (-not $assemblyCandidates) { throw 'WinSCP was not found. Install WinSCP, the
 Add-Type -Path ($assemblyCandidates | Select-Object -First 1)
 $assemblyPath = $assemblyCandidates | Select-Object -First 1
 $fingerprint = '9c:fb:c9:21:d2:6f:de:43:43:bc:cb:e2:65:b0:99:e4:20:11:e1:72:bb:26:16:48:d1:3e:30:89:68:6d:d4:c7'
-$targets = @(
-    [pscustomobject]@{ Name = 'Primary'; Host = 's1004.xrea.com'; User = 'backup1tkmpc'; Remote = '/public_html/2415.jp/license' },
-    [pscustomobject]@{ Name = 'Backup'; Host = 's1006.xrea.com'; User = 'tkm10pc4rds'; Remote = '/public_html/backup.2415.jp/license' }
-) | Where-Object { $Target -eq 'Both' -or $_.Name -eq $Target }
+$targets = @(Get-XreaDeployTargets | Where-Object { $Target -eq 'Both' -or $_.Name -eq $Target })
 
 if ($PreflightOnly) {
     Write-Host "Preflight OK. Source: $resolvedLocalPath"
@@ -209,7 +207,7 @@ try {
             $excludePatterns = @('(^|/)__pycache__(/|$)', '\.py[co]$', '(^|/)\.tuti-deploy-(backup|stage)-')
             if ($destination.Name -eq 'Backup') { $excludePatterns += '(^|/)fastapi-runtime\.json$' }
             $result = Invoke-XreaDifferentialUpload -Session $session -LocalRoot $resolvedLocalPath -RemoteRoot $destination.Remote -StateKey "$($destination.Host)|$($destination.Remote)" -TransferOptions $transferOptions -ExcludePatterns $excludePatterns
-            Write-Host "Completed $($destination.Name). Uploaded changed files: $($result.Uploaded); local files checked: $($result.CheckedLocal). Remote directory listings were not scanned."
+            Write-Host "Completed $($destination.Name). Uploaded changed files: $($result.Uploaded); local files checked: $($result.CheckedLocal); stale local state entries pruned: $($result.PrunedStateEntries). Remote directory listings were not scanned."
         }
         finally { if ($null -ne $session) { $session.Dispose() } }
     }

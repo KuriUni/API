@@ -10,23 +10,18 @@ function Get-XreaSha256([string] $Path) {
     finally { $hasher.Dispose() }
 }
 
-function Invoke-XreaDifferentialUpload {
+function Get-XreaDifferentialPlan {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)] $Session,
         [Parameter(Mandatory = $true)][string] $LocalRoot,
-        [Parameter(Mandatory = $true)][string] $RemoteRoot,
         [Parameter(Mandatory = $true)][string] $StateKey,
-        [Parameter(Mandatory = $true)] $TransferOptions,
         [string[]] $ExcludePatterns = @()
     )
 
     $root = [System.IO.Path]::GetFullPath($LocalRoot).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) { throw "Source folder not found: $root" }
     $rootPrefix = $root + [System.IO.Path]::DirectorySeparatorChar
     $stateRoot = Join-Path $env:LOCALAPPDATA 'XreaDeploy\sync-state'
-    if (-not (Test-Path -LiteralPath $stateRoot -PathType Container)) {
-        New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
-    }
     $keyBytes = [System.Text.Encoding]::UTF8.GetBytes($StateKey)
     $keyHasher = [System.Security.Cryptography.SHA256]::Create()
     try {
@@ -61,9 +56,33 @@ function Invoke-XreaDifferentialUpload {
         $relative = $file.FullName.Substring($rootPrefix.Length).Replace('\', '/')
         $hash = Get-XreaSha256 -Path $file.FullName
         if (-not $state.Contains($relative) -or $state[$relative] -ne $hash) {
-            $changed += [pscustomobject]@{ File = $file; Relative = $relative; Hash = $hash }
+            $changed += [pscustomobject]@{ File = $file; Relative = $relative; Hash = $hash; Length = $file.Length }
         }
     }
+    [pscustomobject]@{ Root = $root; Files = $files; Changed = $changed; State = $state; StateFile = $stateFile }
+}
+
+function Invoke-XreaDifferentialUpload {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)] $Session,
+        [Parameter(Mandatory = $true)][string] $LocalRoot,
+        [Parameter(Mandatory = $true)][string] $RemoteRoot,
+        [Parameter(Mandatory = $true)][string] $StateKey,
+        [Parameter(Mandatory = $true)] $TransferOptions,
+        [string[]] $ExcludePatterns = @()
+    )
+
+    $stateRoot = Join-Path $env:LOCALAPPDATA 'XreaDeploy\sync-state'
+    if (-not (Test-Path -LiteralPath $stateRoot -PathType Container)) {
+        New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
+    }
+    $plan = Get-XreaDifferentialPlan -LocalRoot $LocalRoot -StateKey $StateKey -ExcludePatterns $ExcludePatterns
+    $stateFile = $plan.StateFile
+    $state = $plan.State
+    $files = $plan.Files
+    $changed = $plan.Changed
+    $root = $plan.Root
 
     $base = $RemoteRoot.TrimEnd('/')
     $checkedDirectories = @{}
@@ -87,6 +106,26 @@ function Invoke-XreaDifferentialUpload {
         Move-Item -LiteralPath $tempFile -Destination $stateFile -Force
     }
 
-    [pscustomobject]@{ Uploaded = $changed.Count; CheckedLocal = $files.Count; StateFile = $stateFile }
+    # Prune only after all uploads succeeded. This cleans local bookkeeping for
+    # deleted/excluded files without deleting anything from the remote server.
+    $activeFiles = @{}
+    foreach ($file in $files) {
+        $relative = $file.FullName.Substring(($root + [System.IO.Path]::DirectorySeparatorChar).Length).Replace('\', '/')
+        $activeFiles[$relative] = $true
+    }
+    $removedStateEntries = 0
+    foreach ($key in @($state.Keys)) {
+        if (-not $activeFiles.ContainsKey([string]$key)) {
+            [void]$state.Remove([string]$key)
+            $removedStateEntries++
+        }
+    }
+    if ($removedStateEntries -gt 0) {
+        $tempFile = $stateFile + '.tmp'
+        $state | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $tempFile -Encoding utf8
+        Move-Item -LiteralPath $tempFile -Destination $stateFile -Force
+    }
+
+    [pscustomobject]@{ Uploaded = $changed.Count; CheckedLocal = $files.Count; PrunedStateEntries = $removedStateEntries; StateFile = $stateFile }
 }
 

@@ -16,6 +16,7 @@ $script:OperationsRoot = [System.IO.Path]::GetDirectoryName($MyInvocation.MyComm
 $script:ProjectRoot = [System.IO.Path]::GetFullPath((Join-Path $script:OperationsRoot '..'))
 $script:Tasks = @(
     [pscustomobject]@{ Group='サイト'; Name='XREAサイトを取得'; File='Xrea\Download-Xrea.ps1'; Description='s1004.xrea.comの公開ソースを取得します。危険なファイル名とリンク先への書き込みを拒否し、ダウンロードは一時保存後に反映します。'; Risk='読み取り・ダウンロード' },
+    [pscustomobject]@{ Group='サイト'; Name='差分アップロード内容を確認'; File='Xrea\Preview-XreaDeploy.ps1'; Description='Primary/Backupへ送る予定のファイル名とサイズをローカル台帳から表示します。FTP接続や資格情報入力は行いません。'; Risk='ローカル読み取り専用' },
     [pscustomobject]@{ Group='サイト'; Name='XREA本番・バックアップへデプロイ'; File='Xrea\Deploy-Xrea.ps1'; Description='WinSCPとFTPSを使い、xrea-sourceの新規・変更ファイルだけ差分アップロードします。FTP側の全体一覧は取得せず、リモート専用ファイルも削除しません。'; Risk='サーバー更新' },
     [pscustomobject]@{ Group='サイト'; Name='バックアップへ同期'; File='Xrea\Sync-XreaBackup.ps1'; Description='xrea-sourceの新規・変更分だけbackup.2415.jpへ差分アップロードします。FTP側の全体一覧を避け、キャッシュやノード固有設定を除外します。'; Risk='サーバー更新' },
     [pscustomobject]@{ Group='サイト'; Name='ヘルプページをデプロイ'; File='Xrea\Deploy-TUTI-Help.ps1'; Description='TUTI-Help.htmlを2415.jpへアップロードし、公開済みファイルのバックアップとサイズ確認を行います。'; Risk='サーバー更新' },

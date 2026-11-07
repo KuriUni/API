@@ -181,7 +181,7 @@ try {
     $transferOptions.FileMask = '| fastapi-runtime.json; __pycache__/; *.pyc; *.pyo; .tuti-deploy-backup-*/; .tuti-deploy-stage-*/'
     $result = Invoke-XreaDifferentialUpload -Session $session -LocalRoot $source -RemoteRoot $remotePath -StateKey "$hostName|$remotePath" -TransferOptions $transferOptions -ExcludePatterns @('(^|/)fastapi-runtime\.json$', '(^|/)__pycache__(/|$)', '\.py[co]$', '(^|/)\.tuti-deploy-(backup|stage)-')
     [void][System.Windows.Forms.MessageBox]::Show(
-        "main.2415.jpへの差分アップロードが完了しました。`r`nアップロード数: $($result.Uploaded)`r`nローカルファイル確認数: $($result.CheckedLocal)`r`nFTP側の全体スキャンは行っていません。`r`nローカル実行ファイルはサーバーへ配置していません。",
+        "main.2415.jpへの差分アップロードが完了しました。`r`nアップロード数: $($result.Uploaded)`r`nローカルファイル確認数: $($result.CheckedLocal)`r`n整理した古い台帳項目: $($result.PrunedStateEntries)`r`nFTP側の全体スキャンは行っていません。`r`nローカル実行ファイルはサーバーへ配置していません。",
         'Deployment completed',
         [System.Windows.Forms.MessageBoxButtons]::OK,
         [System.Windows.Forms.MessageBoxIcon]::Information)

@@ -90,7 +90,7 @@ try {
     $transferOptions.FileMask = '| fastapi-runtime.json; __pycache__/; *.pyc; *.pyo; .tuti-deploy-backup-*/; .tuti-deploy-stage-*/'
     Write-Host "Synchronizing new and changed files. Remote-only files will be kept."
     $result = Invoke-XreaDifferentialUpload -Session $session -LocalRoot $resolvedLocalPath -RemoteRoot $RemotePath -StateKey "$HostName|$RemotePath" -TransferOptions $transferOptions -ExcludePatterns @('(^|/)fastapi-runtime\.json$', '(^|/)__pycache__(/|$)', '\.py[co]$', '(^|/)\.tuti-deploy-(backup|stage)-')
-    Write-Host "Differential upload complete. Files uploaded: $($result.Uploaded); local files checked: $($result.CheckedLocal). Remote directory listings were not scanned."
+    Write-Host "Differential upload complete. Files uploaded: $($result.Uploaded); local files checked: $($result.CheckedLocal); stale local state entries pruned: $($result.PrunedStateEntries). Remote directory listings were not scanned."
 }
 finally {
     $session.Dispose()
