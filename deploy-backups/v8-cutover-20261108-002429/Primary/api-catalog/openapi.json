@@ -1,0 +1,5013 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "2415.jp API (V8 independent product-key issuance)",
+    "description": "製品・ライセンス管理、プロダクトキー発行V1/V8、端末認証、MNSL、HA管理の公開API仕様です。V2〜V7の新規発行は終了しました。既存のV4〜V6ジョブは照会・結果取得・取消のみ利用できます。",
+    "version": "1.14.0"
+  },
+  "servers": [
+    {
+      "url": "/license"
+    }
+  ],
+  "paths": {
+    "/_fastapi/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "APIカタログ配信の生存確認",
+        "description": "カタログ配信だけを確認します。DBやHAのreadinessではありません。",
+        "operationId": "health__fastapi_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/baas/v1/service.php": {
+      "get": {
+        "summary": "Run a tenant-scoped read operation through the unified service API",
+        "description": "Select a service with the service query parameter. Auth, scopes, billing, and response shape follow the existing endpoint.",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "service",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "service.status",
+                "products.list",
+                "licenses.list",
+                "licenses.batch_status",
+                "licenses.bulk_status",
+                "licenses.bulk_results",
+                "usage.summary",
+                "audit.list",
+                "billing.invoices",
+                "tenant.export",
+                "sandbox_keys.list",
+                "webhooks.list",
+                "identity.info"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "product_id",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "license_id",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}$"
+            }
+          },
+          {
+            "name": "operation",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "query",
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          {
+            "name": "reveal",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Native tenant-scoped service response"
+          },
+          "400": {
+            "description": "Unknown service or invalid input"
+          },
+          "401": {
+            "description": "Invalid or expired API key"
+          },
+          "403": {
+            "description": "Required scope is missing"
+          }
+        },
+        "tags": [
+          "統合サービスAPI"
+        ],
+        "operationId": "get_api_baas_v1_service_php"
+      },
+      "post": {
+        "summary": "Run a tenant-scoped write operation through the unified service API",
+        "description": "The selected operation is handled by its existing API implementation. Charges and idempotency rules are unchanged.",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "service"
+                ],
+                "properties": {
+                  "service": {
+                    "type": "string",
+                    "enum": [
+                      "products.create",
+                      "products.update",
+                      "products.archive",
+                      "products.restore",
+                      "licenses.issue",
+                      "licenses.update",
+                      "licenses.activate",
+                      "licenses.pause",
+                      "licenses.revoke_device",
+                      "licenses.restore_device",
+                      "licenses.revoke_all_devices",
+                      "licenses.sandbox_bulk_delete",
+                      "licenses.batch_issue",
+                      "licenses.bulk_issue",
+                      "licenses.bulk_cancel",
+                      "sandbox_keys.issue",
+                      "sandbox_keys.rotate",
+                      "sandbox_keys.revoke",
+                      "webhooks.create",
+                      "webhooks.create_line",
+                      "webhooks.update",
+                      "webhooks.delete",
+                      "identity.begin",
+                      "identity.status",
+                      "identity.fail",
+                      "identity.complete",
+                      "identity.record_verification",
+                      "identity.card_challenge",
+                      "identity.card_verify",
+                      "identity.android_create",
+                      "identity.android_status",
+                      "identity.android_app_status",
+                      "identity.android_complete",
+                      "identity.android_fail"
+                    ]
+                  },
+                  "action": {
+                    "type": "string",
+                    "description": "Action is selected by service and is not needed in the request."
+                  },
+                  "product_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100000
+                  },
+                  "execution_mode": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "direct",
+                      "vector",
+                      "async",
+                      "x20"
+                    ]
+                  },
+                  "atomicity": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "atomic",
+                      "chunk"
+                    ]
+                  },
+                  "max_devices": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "evaluation_days": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "expires_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "job_id": {
+                    "type": "string"
+                  },
+                  "items": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "product_id"
+                      ],
+                      "properties": {
+                        "product_id": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "label": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "license_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "device_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "license_mode": {
+                    "type": "string",
+                    "enum": [
+                      "single",
+                      "volume",
+                      "evaluation"
+                    ]
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 100
+                  }
+                }
+              },
+              "example": {
+                "service": "licenses.issue",
+                "product_id": 12,
+                "license_mode": "single",
+                "idempotency_key": "replace_with_unique_request_0001"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Native tenant-scoped service response"
+          },
+          "201": {
+            "description": "Resource or identity session created"
+          },
+          "400": {
+            "description": "Unknown service or invalid input"
+          },
+          "401": {
+            "description": "Invalid or expired API key"
+          },
+          "403": {
+            "description": "Required scope is missing"
+          },
+          "409": {
+            "description": "Quota, state, or idempotency conflict"
+          },
+          "503": {
+            "description": "Service unavailable or node is read-only"
+          }
+        },
+        "tags": [
+          "統合サービスAPI"
+        ],
+        "operationId": "post_api_baas_v1_service_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      },
+      "delete": {
+        "summary": "Delete a license through the unified service API",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "service",
+                  "license_id",
+                  "idempotency_key"
+                ],
+                "properties": {
+                  "service": {
+                    "type": "string",
+                    "const": "licenses.delete"
+                  },
+                  "license_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 100
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Native logical deletion response"
+          },
+          "404": {
+            "description": "License was not found in the authenticated tenant"
+          },
+          "409": {
+            "description": "Idempotency conflict"
+          }
+        },
+        "tags": [
+          "統合サービスAPI"
+        ],
+        "operationId": "delete_api_baas_v1_service_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      }
+    },
+    "/api/baas/v1/status.php": {
+      "get": {
+        "summary": "Get tenant-scoped usage and service status",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tenant status"
+          },
+          "401": {
+            "description": "Invalid or expired API key"
+          },
+          "403": {
+            "description": "Required scope is missing"
+          },
+          "429": {
+            "description": "Per-client rate limit reached"
+          }
+        },
+        "tags": [
+          "基本・状態確認"
+        ],
+        "operationId": "get_api_baas_v1_status_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      }
+    },
+    "/api/baas/v1/products.php": {
+      "get": {
+        "summary": "List products belonging to the authenticated tenant",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tenant-scoped product list"
+          }
+        },
+        "tags": [
+          "製品管理"
+        ],
+        "operationId": "get_api_baas_v1_products_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      },
+      "post": {
+        "summary": "Create a product in the authenticated tenant",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "code",
+                  "name"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  }
+                }
+              },
+              "example": {
+                "code": "sample-product",
+                "name": "サンプル製品"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Product created"
+          },
+          "409": {
+            "description": "Product code exists or quota exceeded"
+          }
+        },
+        "tags": [
+          "製品管理"
+        ],
+        "operationId": "post_api_baas_v1_products_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      }
+    },
+    "/api/baas/v1/licenses.php": {
+      "get": {
+        "summary": "List licenses belonging to the authenticated tenant",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "product_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tenant-scoped license list without plaintext keys"
+          }
+        },
+        "tags": [
+          "ライセンス管理"
+        ],
+        "operationId": "get_api_baas_v1_licenses_php"
+      },
+      "post": {
+        "summary": "Issue one license for a tenant product",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "product_id"
+                ],
+                "properties": {
+                  "product_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "license_mode": {
+                    "type": "string",
+                    "enum": [
+                      "single",
+                      "volume",
+                      "evaluation"
+                    ],
+                    "default": "single"
+                  },
+                  "max_devices": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10000
+                  },
+                  "evaluation_days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3650
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 100
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Plaintext product key returned once"
+          },
+          "409": {
+            "description": "Tenant license quota exceeded"
+          },
+          "503": {
+            "description": "Node is not writable"
+          }
+        },
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "operationId": "post_api_baas_v1_licenses_php"
+      },
+      "delete": {
+        "summary": "Logically delete and immediately revoke one tenant license",
+        "description": "The license is hidden from tenant lists, disabled, and associated device/phone/offline authorization state is revoked.",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "license_id"
+                ],
+                "properties": {
+                  "license_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "License logically deleted and related authorization state revoked"
+          },
+          "404": {
+            "description": "License not found in the authenticated tenant/environment"
+          },
+          "503": {
+            "description": "Node is not writable"
+          }
+        },
+        "tags": [
+          "ライセンス管理"
+        ],
+        "operationId": "delete_api_baas_v1_licenses_php"
+      }
+    },
+    "/api/baas/v1/audit.php": {
+      "get": {
+        "summary": "List tenant-scoped API audit events",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Audit event page"
+          },
+          "429": {
+            "description": "Rate limited; Retry-After is returned"
+          }
+        },
+        "tags": [
+          "監査・請求"
+        ],
+        "operationId": "get_api_baas_v1_audit_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      }
+    },
+    "/api/baas/v1/billing.php": {
+      "get": {
+        "summary": "Get tenant-scoped API access fee summary in TEST_ONLY mode",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}$"
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Billing summary by billable API"
+          },
+          "400": {
+            "description": "Invalid period"
+          },
+          "401": {
+            "description": "Invalid or expired API key"
+          },
+          "403": {
+            "description": "Required scope is missing"
+          },
+          "429": {
+            "description": "Rate limited"
+          }
+        },
+        "tags": [
+          "監査・請求"
+        ],
+        "operationId": "get_api_baas_v1_billing_php"
+      }
+    },
+    "/api/baas/v1/export.php": {
+      "get": {
+        "summary": "Export tenant products, licenses and device metadata without secrets",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tenant-scoped JSON export"
+          }
+        },
+        "tags": [
+          "監査・請求"
+        ],
+        "operationId": "get_api_baas_v1_export_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      }
+    },
+    "/api/baas/v1/batch.php": {
+      "get": {
+        "summary": "Get a tenant batch issuance result",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Batch result"
+          },
+          "404": {
+            "description": "Batch not found"
+          }
+        },
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "operationId": "get_api_baas_v1_batch_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      },
+      "post": {
+        "summary": "Issue up to 100 licenses idempotently",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "responses": {
+          "207": {
+            "description": "Per-item issuance result"
+          },
+          "503": {
+            "description": "Node is not writable"
+          }
+        },
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "operationId": "post_api_baas_v1_batch_php"
+      }
+    },
+    "/api/baas/v1/webhooks.php": {
+      "get": {
+        "summary": "List tenant webhook registrations without secrets",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Webhook list"
+          }
+        },
+        "tags": [
+          "APIキー・Webhook"
+        ],
+        "operationId": "get_api_baas_v1_webhooks_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      },
+      "post": {
+        "summary": "Create or delete an HTTPS or LINE Messaging API notification destination",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "create",
+                      "create_line",
+                      "update",
+                      "delete"
+                    ]
+                  },
+                  "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Required for action=create."
+                  },
+                  "channel_access_token": {
+                    "type": "string",
+                    "writeOnly": true,
+                    "description": "LINE Messaging API channel access token; required for action=create_line and stored encrypted."
+                  },
+                  "recipient_id": {
+                    "type": "string",
+                    "pattern": "^[UCR][0-9a-fA-F]{32}$",
+                    "description": "LINE user, group, or room ID."
+                  },
+                  "webhook_id": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Required for action=update or action=delete."
+                  },
+                  "events": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "license.issued",
+                        "license.updated",
+                        "license.activated",
+                        "license.revoked",
+                        "license.bulk_job_completed",
+                        "device.revoked",
+                        "device.restored"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Destination created; generic webhook signing secret is returned once, LINE token is never returned"
+          },
+          "400": {
+            "description": "Invalid destination, LINE recipient, or event"
+          }
+        },
+        "tags": [
+          "APIキー・Webhook"
+        ],
+        "operationId": "post_api_baas_v1_webhooks_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      }
+    },
+    "/api/v2/activate.php": {
+      "post": {
+        "summary": "Activate or refresh a license session",
+        "description": "External tenants must provide product_code for activate and key-based status operations.",
+        "responses": {
+          "200": {
+            "description": "Activation result"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Node is read-only or unavailable"
+          }
+        },
+        "tags": [
+          "端末認証v2"
+        ],
+        "operationId": "post_api_v2_activate_php"
+      }
+    },
+    "/api/v2/phone_activate.php": {
+      "post": {
+        "summary": "Request or complete phone activation",
+        "responses": {
+          "200": {
+            "description": "Phone activation result"
+          },
+          "400": {
+            "description": "Invalid request"
+          }
+        },
+        "tags": [
+          "端末認証v2"
+        ],
+        "operationId": "post_api_v2_phone_activate_php"
+      }
+    },
+    "/api/v2/reissue.php": {
+      "post": {
+        "summary": "Reissue a product key once using a verified product ID and registered device fingerprint",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "product_id",
+                  "device_fingerprint"
+                ],
+                "properties": {
+                  "product_id": {
+                    "type": "string",
+                    "pattern": "^PID-[0-9A-F]{8}-[0-9A-F]{16}$"
+                  },
+                  "device_fingerprint": {
+                    "type": "string",
+                    "minLength": 16,
+                    "maxLength": 512
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "New key returned once; old key and sessions revoked"
+          },
+          "400": {
+            "description": "Invalid product ID or device fingerprint"
+          },
+          "409": {
+            "description": "Reissue unavailable",
+            "already used": null,
+            "or device not registered": null
+          },
+          "429": {
+            "description": "Product ID or source IP is temporarily locked"
+          },
+          "503": {
+            "description": "Node is read-only or unavailable"
+          }
+        },
+        "tags": [
+          "端末認証v2"
+        ],
+        "operationId": "post_api_v2_reissue_php"
+      }
+    },
+    "/ha/health.php": {
+      "get": {
+        "summary": "Minimal public readiness and liveness probe; detailed node status requires HA authorization",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "probe",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ready",
+                "live"
+              ],
+              "default": "ready"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Only ok and probe are returned; role and infrastructure checks are not public"
+          },
+          "503": {
+            "description": "Database",
+            "schema": null,
+            "or private storage is not ready": null
+          }
+        },
+        "tags": [
+          "HA管理"
+        ],
+        "operationId": "get_ha_health_php"
+      }
+    },
+    "/ha/status.php": {
+      "get": {
+        "summary": "Detailed authenticated HA status",
+        "security": [
+          {
+            "haToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HA status"
+          },
+          "404": {
+            "description": "Authentication hidden"
+          }
+        },
+        "tags": [
+          "HA管理"
+        ],
+        "operationId": "get_ha_status_php"
+      }
+    },
+    "/ha/sync.php": {
+      "post": {
+        "summary": "Pull and apply the active-node snapshot",
+        "security": [
+          {
+            "haToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Synchronization result"
+          },
+          "409": {
+            "description": "Role or snapshot conflict"
+          }
+        },
+        "tags": [
+          "HA管理"
+        ],
+        "operationId": "post_ha_sync_php"
+      }
+    },
+    "/ha/mode.php": {
+      "post": {
+        "summary": "Change maintenance or failover mode",
+        "description": "Session requests require ha:promote or ha:operate. Automation is limited to normal promotion.",
+        "security": [
+          {
+            "haToken": []
+          },
+          {
+            "haSession": []
+          },
+          {
+            "haAutomation": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mode changed"
+          },
+          "409": {
+            "description": "Safety condition rejected the change"
+          }
+        },
+        "tags": [
+          "HA管理"
+        ],
+        "operationId": "post_ha_mode_php"
+      }
+    },
+    "/ha/offline-phone.php": {
+      "post": {
+        "summary": "Issue a device-bound offline phone confirmation ID",
+        "security": [
+          {
+            "haToken": []
+          },
+          {
+            "haSession": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "installation_id"
+                ],
+                "properties": {
+                  "installation_id": {
+                    "type": "string",
+                    "pattern": "^IID-[0-9A-F]{20}-[0-9A-F]{20}-[0-9A-F]{12}-[0-9A-F]{8}$"
+                  },
+                  "days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 30,
+                    "default": 30
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "issue",
+                      "list",
+                      "revoke"
+                    ],
+                    "default": "issue"
+                  },
+                  "request_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Idempotently returns the confirmation ID"
+          },
+          "400": {
+            "description": "Invalid installation ID"
+          },
+          "409": {
+            "description": "License unavailable or evaluation license"
+          },
+          "429": {
+            "description": "Operator/IP or per-license issuance limit reached"
+          },
+          "503": {
+            "description": "Node is read-only or unavailable"
+          }
+        },
+        "tags": [
+          "HA管理"
+        ],
+        "operationId": "post_ha_offline_phone_php"
+      }
+    },
+    "/api/baas/v2/licenses.php": {
+      "post": {
+        "summary": "V2：プロダクトキーを1〜100,000件発行",
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "同期発行が完了しました。"
+          },
+          "202": {
+            "description": "非同期ジョブを受け付けました。"
+          },
+          "200": {
+            "description": "冪等リプレイ結果。"
+          },
+          "400": {
+            "description": "入力不正。"
+          },
+          "401": {
+            "description": "認証エラー。"
+          },
+          "409": {
+            "description": "割当量または冪等キーの競合。"
+          },
+          "503": {
+            "description": "書き込みノードが利用できません。"
+          },
+          "410": {
+            "description": "This issuance version is retired. Use /api/baas/v8/issuance.php."
+          }
+        },
+        "description": "V6発行エンジンの互換URLです。旧速度レーン別の新規発行加算はありません。小さい要求は同期処理し、大きい要求はジョブで進行します。冪等キーはJSONまたはIdempotency-Keyヘッダーで指定します。",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "product_id"
+                ],
+                "properties": {
+                  "product_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100000,
+                    "default": 1
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 100,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  },
+                  "license_mode": {
+                    "type": "string",
+                    "enum": [
+                      "single",
+                      "volume",
+                      "evaluation"
+                    ]
+                  },
+                  "execution_mode": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "direct",
+                      "vector",
+                      "async",
+                      "x20"
+                    ]
+                  },
+                  "atomicity": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "atomic",
+                      "chunk"
+                    ]
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "max_devices": {
+                    "type": "integer",
+                    "minimum": 2,
+                    "maximum": 10000
+                  },
+                  "evaluation_days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3650
+                  },
+                  "expires_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              },
+              "example": {
+                "product_id": 12,
+                "count": 10,
+                "license_mode": "single",
+                "idempotency_key": "replace_with_unique_request_0001"
+              }
+            }
+          }
+        },
+        "operationId": "post_api_baas_v2_licenses_php",
+        "deprecated": true
+      }
+    },
+    "/api/baas/v3/licenses.php": {
+      "post": {
+        "summary": "V3：プロダクトキーを1〜100,000件発行",
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "同期発行が完了しました。"
+          },
+          "202": {
+            "description": "非同期ジョブを受け付けました。"
+          },
+          "200": {
+            "description": "冪等リプレイ結果。"
+          },
+          "400": {
+            "description": "入力不正。"
+          },
+          "401": {
+            "description": "認証エラー。"
+          },
+          "409": {
+            "description": "割当量または冪等キーの競合。"
+          },
+          "503": {
+            "description": "書き込みノードが利用できません。"
+          },
+          "410": {
+            "description": "This issuance version is retired. Use /api/baas/v8/issuance.php."
+          }
+        },
+        "description": "V6発行エンジンの互換URLです。旧速度レーン別の新規発行加算はありません。小さい要求は同期処理し、大きい要求はジョブで進行します。冪等キーはJSONまたはIdempotency-Keyヘッダーで指定します。",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "product_id"
+                ],
+                "properties": {
+                  "product_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100000,
+                    "default": 1
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 100,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  },
+                  "license_mode": {
+                    "type": "string",
+                    "enum": [
+                      "single",
+                      "volume",
+                      "evaluation"
+                    ]
+                  },
+                  "execution_mode": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "direct",
+                      "vector",
+                      "async",
+                      "x20"
+                    ]
+                  },
+                  "atomicity": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "atomic",
+                      "chunk"
+                    ]
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "max_devices": {
+                    "type": "integer",
+                    "minimum": 2,
+                    "maximum": 10000
+                  },
+                  "evaluation_days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3650
+                  },
+                  "expires_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              },
+              "example": {
+                "product_id": 12,
+                "count": 10,
+                "license_mode": "single",
+                "idempotency_key": "replace_with_unique_request_0001"
+              }
+            }
+          }
+        },
+        "operationId": "post_api_baas_v3_licenses_php",
+        "deprecated": true
+      }
+    },
+    "/api/baas/v4/issuance-jobs.php": {
+      "post": {
+        "summary": "V4：プロダクトキーを1〜100,000件発行",
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "同期発行が完了しました。"
+          },
+          "202": {
+            "description": "非同期ジョブを受け付けました。"
+          },
+          "200": {
+            "description": "冪等リプレイ結果。"
+          },
+          "400": {
+            "description": "入力不正。"
+          },
+          "401": {
+            "description": "認証エラー。"
+          },
+          "409": {
+            "description": "割当量または冪等キーの競合。"
+          },
+          "503": {
+            "description": "書き込みノードが利用できません。"
+          }
+        },
+        "description": "V6発行エンジンの互換URLです。旧速度レーン別の新規発行加算はありません。小さい要求は同期処理し、大きい要求はジョブで進行します。冪等キーはJSONまたはIdempotency-Keyヘッダーで指定します。",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "product_id"
+                ],
+                "properties": {
+                  "product_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100000,
+                    "default": 1
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 100,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  },
+                  "license_mode": {
+                    "type": "string",
+                    "enum": [
+                      "single",
+                      "volume",
+                      "evaluation"
+                    ]
+                  },
+                  "execution_mode": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "direct",
+                      "vector",
+                      "async",
+                      "x20"
+                    ]
+                  },
+                  "atomicity": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "atomic",
+                      "chunk"
+                    ]
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "max_devices": {
+                    "type": "integer",
+                    "minimum": 2,
+                    "maximum": 10000
+                  },
+                  "evaluation_days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3650
+                  },
+                  "expires_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              },
+              "example": {
+                "product_id": 12,
+                "count": 10,
+                "license_mode": "single",
+                "idempotency_key": "replace_with_unique_request_0001"
+              }
+            }
+          }
+        },
+        "operationId": "post_api_baas_v4_issuance_jobs_php"
+      },
+      "get": {
+        "summary": "V4：発行状態または料金見積もりを取得",
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "処理結果。項目は操作により異なります。"
+          },
+          "400": {
+            "description": "入力が正しくありません。"
+          },
+          "401": {
+            "description": "認証情報が無効または不足しています。"
+          },
+          "503": {
+            "description": "サービスまたは書き込み担当ノードが利用できません。"
+          }
+        },
+        "description": "状態照会ではjob_idが必要です。料金見積もりではaction=quoteとcountを指定します。状態照会で処理が進む場合があります。",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "example": "0123456789abcdef0123456789abcdef"
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "quote"
+              ]
+            }
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "operationId": "get_api_baas_v4_issuance_jobs_php"
+      }
+    },
+    "/api/baas/v4/issuance-results.php": {
+      "get": {
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "summary": "発行結果をページ単位で取得",
+        "description": "Product keys are encrypted at rest. Set reveal=true only when the application explicitly needs the plaintext keys.",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "example": "0123456789abcdef0123456789abcdef"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 200
+            }
+          },
+          {
+            "name": "reveal",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Result page"
+          },
+          "404": {
+            "description": "Job not found"
+          }
+        },
+        "operationId": "get_api_baas_v4_issuance_results_php"
+      }
+    },
+    "/api/baas/v4/issuance-cancel.php": {
+      "post": {
+        "summary": "発行ジョブを取り消す",
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "取消要求を受け付けました。"
+          },
+          "409": {
+            "description": "終了済みジョブなどの状態競合。"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "job_id"
+                ],
+                "properties": {
+                  "job_id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{32}$"
+                  }
+                }
+              },
+              "example": {
+                "job_id": "0123456789abcdef0123456789abcdef"
+              }
+            }
+          }
+        },
+        "operationId": "post_api_baas_v4_issuance_cancel_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      }
+    },
+    "/ha/product-key-v4-worker.php": {
+      "post": {
+        "tags": [
+          "HA管理"
+        ],
+        "summary": "Pump queued V4 jobs using the writable server node",
+        "description": "Operator/cron endpoint. Processes multiple jobs within a bounded time budget. Polling the public job endpoint can also make progress, so cron is an accelerator rather than a hard dependency.",
+        "security": [
+          {
+            "haSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Worker run summary"
+          },
+          "503": {
+            "description": "Node is not the active writer or worker failed"
+          }
+        },
+        "operationId": "post_ha_product_key_v4_worker_php"
+      }
+    },
+    "/ha/issue-license-v3.php": {
+      "post": {
+        "tags": [
+          "HA管理"
+        ],
+        "summary": "Issue up to 1000 product keys using Product Key Issuance Platform v3",
+        "security": [
+          {
+            "haSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Batch issued or replayed"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "409": {
+            "description": "Idempotency conflict"
+          },
+          "429": {
+            "description": "Tenant issuance busy"
+          },
+          "503": {
+            "description": "Node is read-only or unavailable"
+          }
+        },
+        "operationId": "post_ha_issue_license_v3_php"
+      }
+    },
+    "/api/baas/v1/sandbox-keys.php": {
+      "get": {
+        "tags": [
+          "APIキー・Webhook"
+        ],
+        "summary": "List Sandbox API clients",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sandbox API client list"
+          }
+        },
+        "operationId": "get_api_baas_v1_sandbox_keys_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "APIキー・Webhook"
+        ],
+        "summary": "Issue, rotate, or revoke a Sandbox API key",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key operation result"
+          },
+          "201": {
+            "description": "New API key returned once"
+          }
+        },
+        "operationId": "post_api_baas_v1_sandbox_keys_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      }
+    },
+    "/api/baas/v1/sample-sdk-activate.php": {
+      "post": {
+        "tags": [
+          "契約者SDK"
+        ],
+        "summary": "Exchange a one-time BaaS subscriber setup code for a Sample SDK key",
+        "description": "Subscriber-facing onboarding endpoint. No Tenant administrator API key or HA token is accepted or required. The baas_setup_ code is bound to one Production Tenant and exchanges once for a Sandbox-only baas_sdk_ key. Reuse the same Idempotency-Key after an unknown network result to replay the encrypted response.",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 100
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "setup_code"
+                ],
+                "properties": {
+                  "setup_code": {
+                    "type": "string",
+                    "pattern": "^baas_setup_"
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 100
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Sample SDK key issued and setup code consumed"
+          },
+          "200": {
+            "description": "Idempotent replay of the same encrypted activation response"
+          },
+          "400": {
+            "description": "Invalid request or Idempotency-Key"
+          },
+          "401": {
+            "description": "Invalid setup code"
+          },
+          "409": {
+            "description": "Setup code already used with a different request"
+          },
+          "410": {
+            "description": "Setup code expired or revoked"
+          },
+          "429": {
+            "description": "Subscriber setup rate limit"
+          },
+          "503": {
+            "description": "Migration 020 required or node not writable"
+          }
+        },
+        "operationId": "post_api_baas_v1_sample_sdk_activate_php"
+      }
+    },
+    "/api/baas/v1/sample-sdk-keys.php": {
+      "get": {
+        "tags": [
+          "APIキー・Webhook"
+        ],
+        "summary": "List Sample SDK restricted API keys",
+        "description": "Administrative key-management endpoint. Not used by the subscriber SDK first-run flow. Sample SDK keys themselves cannot manage keys.",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "haToken": []
+          },
+          {
+            "haSession": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sample SDK API client list"
+          },
+          "403": {
+            "description": "Sample SDK or non-standard key cannot manage keys"
+          }
+        },
+        "operationId": "get_api_baas_v1_sample_sdk_keys_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "APIキー・Webhook"
+        ],
+        "summary": "Issue, rotate, or revoke a Sample SDK restricted key",
+        "description": "Administrative direct-issuance endpoint. Subscriber onboarding should normally use a one-time baas_setup_ code and /sample-sdk-activate.php instead.",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "haToken": []
+          },
+          {
+            "haSession": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rotate or revoke result"
+          },
+          "201": {
+            "description": "New baas_sdk_ key returned once"
+          },
+          "503": {
+            "description": "Migration 019 required or node is not writable"
+          }
+        },
+        "operationId": "post_api_baas_v1_sample_sdk_keys_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      }
+    },
+    "/api/baas/v1/mnsl.php": {
+      "get": {
+        "tags": [
+          "MNSL"
+        ],
+        "summary": "Get MNSL secure identity capability and pricing metadata",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "MNSL capabilities"
+          }
+        },
+        "operationId": "get_api_baas_v1_mnsl_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "MNSL"
+        ],
+        "summary": "Run MNSL secure identity session or verification recording",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "MNSL operation result"
+          },
+          "201": {
+            "description": "MNSL session started"
+          }
+        },
+        "operationId": "post_api_baas_v1_mnsl_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      }
+    },
+    "/api/baas/v1/mnsl-card-auth.php": {
+      "post": {
+        "tags": [
+          "MNSL"
+        ],
+        "summary": "Issue a one-time card challenge or verify a local MNSL CSP signature",
+        "description": "Admin reception flow for a Windows localhost bridge using the MNSL JPKI authentication CSP. The server verifies an RSA signature over a fresh tenant-scoped challenge, stores only a tenant-specific HMAC public-key fingerprint, and does not receive a PIN, private key, or certificate. The API does not validate the certificate issuer, chain, or revocation state and does not assert legal identity verification.",
+        "security": [
+          {
+            "haSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Tenant-ID",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "production",
+                "sandbox"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "action"
+                ],
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "challenge",
+                      "verify"
+                    ]
+                  },
+                  "flow_id": {
+                    "type": "string",
+                    "description": "Required for verify; opaque one-time flow ID."
+                  },
+                  "nonce": {
+                    "type": "string",
+                    "description": "Required for verify; server-issued nonce."
+                  },
+                  "signature": {
+                    "type": "string",
+                    "description": "Base64url RSA PKCS#1 v1.5 SHA-256 signature."
+                  },
+                  "public_key_spki": {
+                    "type": "string",
+                    "description": "Base64url DER SubjectPublicKeyInfo, RSA 2048–4096 bits."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The one-time card-key signature was verified"
+          },
+          "201": {
+            "description": "A challenge was issued; expires in 180 seconds"
+          },
+          "403": {
+            "description": "Admin reception session or tenant:read authorization required"
+          },
+          "410": {
+            "description": "Challenge expired or already used"
+          },
+          "422": {
+            "description": "Card signature did not verify"
+          },
+          "503": {
+            "description": "HA node is not writable"
+          }
+        },
+        "operationId": "post_api_baas_v1_mnsl_card_auth_php"
+      }
+    },
+    "/api/baas/v1/mnsl-android-card-read.php": {
+      "post": {
+        "tags": [
+          "MNSL"
+        ],
+        "summary": "Create or report a short-lived Android NFC card-read session",
+        "description": "The admin reception page creates and polls a tenant-scoped, one-time QR session using X-HA-Session and tenant:read. The installed Android app opens the verified App Link and may report only read completion or failure using the one-time flow_id and nonce. The nonce is carried in the URL fragment and is not sent in the fallback HTTP request. No card attributes, photo, PIN, certificate, or cryptographic card proof are submitted. A completion report is not JPKI or legal identity verification.",
+        "parameters": [
+          {
+            "name": "X-HA-Session",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required with X-Tenant-ID and X-BaaS-Environment for create/status; app actions use the one-time flow_id and nonce."
+          },
+          {
+            "name": "X-Tenant-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "production",
+                "sandbox"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "action"
+                ],
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "create",
+                      "status",
+                      "app_status",
+                      "complete",
+                      "fail"
+                    ]
+                  },
+                  "flow_id": {
+                    "type": "string",
+                    "description": "Opaque one-time flow ID from the QR link."
+                  },
+                  "nonce": {
+                    "type": "string",
+                    "description": "Required for app_status/complete/fail; one-time nonce in the QR URL fragment."
+                  },
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "card_read_failed",
+                      "user_cancelled"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session state or app-reported read outcome"
+          },
+          "201": {
+            "description": "Tenant-scoped Android read QR session created; expires in 180 seconds"
+          },
+          "403": {
+            "description": "Admin reception session or tenant:read authorization required for create/status"
+          },
+          "409": {
+            "description": "QR session expired, already used, or terminal"
+          },
+          "503": {
+            "description": "HA node is not writable"
+          }
+        },
+        "operationId": "post_api_baas_v1_mnsl_android_card_read_php"
+      }
+    },
+    "/api/baas/v1/jpki.php": {
+      "get": {
+        "tags": [
+          "MNSL"
+        ],
+        "summary": "Retired external JPKI OIDC endpoint",
+        "responses": {
+          "410": {
+            "description": "Use the MNSL local card challenge endpoint"
+          }
+        },
+        "operationId": "get_api_baas_v1_jpki_php",
+        "deprecated": true,
+        "description": "外部JPKI OIDC連携は終了し410を返します。現行MNSL APIを参照してください。"
+      }
+    },
+    "/api/baas/v5/issuance.php": {
+      "post": {
+        "summary": "V5：プロダクトキーを1〜100,000件発行",
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "同期発行が完了しました。"
+          },
+          "202": {
+            "description": "非同期ジョブを受け付けました。"
+          },
+          "200": {
+            "description": "冪等リプレイ結果。"
+          },
+          "400": {
+            "description": "入力不正。"
+          },
+          "401": {
+            "description": "認証エラー。"
+          },
+          "409": {
+            "description": "割当量または冪等キーの競合。"
+          },
+          "503": {
+            "description": "書き込みノードが利用できません。"
+          }
+        },
+        "description": "V6発行エンジンの互換URLです。旧速度レーン別の新規発行加算はありません。小さい要求は同期処理し、大きい要求はジョブで進行します。冪等キーはJSONまたはIdempotency-Keyヘッダーで指定します。",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "product_id"
+                ],
+                "properties": {
+                  "product_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100000,
+                    "default": 1
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 100,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  },
+                  "license_mode": {
+                    "type": "string",
+                    "enum": [
+                      "single",
+                      "volume",
+                      "evaluation"
+                    ]
+                  },
+                  "execution_mode": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "direct",
+                      "vector",
+                      "async",
+                      "x20"
+                    ]
+                  },
+                  "atomicity": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "atomic",
+                      "chunk"
+                    ]
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "max_devices": {
+                    "type": "integer",
+                    "minimum": 2,
+                    "maximum": 10000
+                  },
+                  "evaluation_days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3650
+                  },
+                  "expires_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              },
+              "example": {
+                "product_id": 12,
+                "count": 10,
+                "license_mode": "single",
+                "idempotency_key": "replace_with_unique_request_0001"
+              }
+            }
+          }
+        },
+        "operationId": "post_api_baas_v5_issuance_php"
+      },
+      "get": {
+        "summary": "V5：発行状態または料金見積もりを取得",
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "処理結果。項目は操作により異なります。"
+          },
+          "400": {
+            "description": "入力が正しくありません。"
+          },
+          "401": {
+            "description": "認証情報が無効または不足しています。"
+          },
+          "503": {
+            "description": "サービスまたは書き込み担当ノードが利用できません。"
+          }
+        },
+        "description": "状態照会ではjob_idが必要です。料金見積もりではaction=quoteとcountを指定します。状態照会で処理が進む場合があります。",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "example": "0123456789abcdef0123456789abcdef"
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "quote"
+              ]
+            }
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "operationId": "get_api_baas_v5_issuance_php"
+      }
+    },
+    "/api/baas/v5/issuance-results.php": {
+      "get": {
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "summary": "発行結果をページ単位で取得",
+        "description": "Product keys are encrypted at rest. Set reveal=true only when the application explicitly needs the plaintext keys.",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "example": "0123456789abcdef0123456789abcdef"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 200
+            }
+          },
+          {
+            "name": "reveal",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Result page"
+          },
+          "404": {
+            "description": "Job not found"
+          }
+        },
+        "operationId": "get_api_baas_v5_issuance_results_php"
+      }
+    },
+    "/api/baas/v5/issuance-cancel.php": {
+      "post": {
+        "summary": "発行ジョブを取り消す",
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "取消要求を受け付けました。"
+          },
+          "409": {
+            "description": "終了済みジョブなどの状態競合。"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "job_id"
+                ],
+                "properties": {
+                  "job_id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{32}$"
+                  }
+                }
+              },
+              "example": {
+                "job_id": "0123456789abcdef0123456789abcdef"
+              }
+            }
+          }
+        },
+        "operationId": "post_api_baas_v5_issuance_cancel_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      }
+    },
+    "/api/baas/v6/issuance.php": {
+      "post": {
+        "summary": "V6：プロダクトキーを1〜100,000件発行",
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "同期発行が完了しました。"
+          },
+          "202": {
+            "description": "非同期ジョブを受け付けました。"
+          },
+          "200": {
+            "description": "冪等リプレイ結果。"
+          },
+          "400": {
+            "description": "入力不正。"
+          },
+          "401": {
+            "description": "認証エラー。"
+          },
+          "409": {
+            "description": "割当量または冪等キーの競合。"
+          },
+          "503": {
+            "description": "書き込みノードが利用できません。"
+          }
+        },
+        "description": "小さい要求は同期処理し、大きい要求はジョブで進行します。冪等キーはJSONまたはIdempotency-Keyヘッダーで指定します。",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "product_id"
+                ],
+                "properties": {
+                  "product_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100000,
+                    "default": 1
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 100,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  },
+                  "license_mode": {
+                    "type": "string",
+                    "enum": [
+                      "single",
+                      "volume",
+                      "evaluation"
+                    ]
+                  },
+                  "execution_mode": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "direct",
+                      "vector",
+                      "async",
+                      "x20"
+                    ]
+                  },
+                  "atomicity": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "atomic",
+                      "chunk"
+                    ]
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "max_devices": {
+                    "type": "integer",
+                    "minimum": 2,
+                    "maximum": 10000
+                  },
+                  "evaluation_days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3650
+                  },
+                  "expires_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              },
+              "example": {
+                "product_id": 12,
+                "count": 10,
+                "license_mode": "single",
+                "idempotency_key": "replace_with_unique_request_0001"
+              }
+            }
+          }
+        },
+        "operationId": "post_api_baas_v6_issuance_php"
+      },
+      "get": {
+        "summary": "V6：発行状態または料金見積もりを取得",
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "処理結果。項目は操作により異なります。"
+          },
+          "400": {
+            "description": "入力が正しくありません。"
+          },
+          "401": {
+            "description": "認証情報が無効または不足しています。"
+          },
+          "503": {
+            "description": "サービスまたは書き込み担当ノードが利用できません。"
+          }
+        },
+        "description": "状態照会ではjob_idが必要です。料金見積もりではaction=quoteとcountを指定します。状態照会で処理が進む場合があります。",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "example": "0123456789abcdef0123456789abcdef"
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "quote"
+              ]
+            }
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "operationId": "get_api_baas_v6_issuance_php"
+      }
+    },
+    "/api/baas/v6/issuance-results.php": {
+      "get": {
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "summary": "発行結果をページ単位で取得",
+        "description": "Product keys are encrypted at rest. Set reveal=true only when the application explicitly needs the plaintext keys.",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "example": "0123456789abcdef0123456789abcdef"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 200
+            }
+          },
+          {
+            "name": "reveal",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Result page"
+          },
+          "404": {
+            "description": "Job not found"
+          }
+        },
+        "operationId": "get_api_baas_v6_issuance_results_php"
+      }
+    },
+    "/api/baas/v6/issuance-cancel.php": {
+      "post": {
+        "summary": "発行ジョブを取り消す",
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "取消要求を受け付けました。"
+          },
+          "409": {
+            "description": "終了済みジョブなどの状態競合。"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "job_id"
+                ],
+                "properties": {
+                  "job_id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{32}$"
+                  }
+                }
+              },
+              "example": {
+                "job_id": "0123456789abcdef0123456789abcdef"
+              }
+            }
+          }
+        },
+        "operationId": "post_api_baas_v6_issuance_cancel_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ]
+      }
+    },
+    "/api/baas/v7/issuance.php": {
+      "post": {
+        "summary": "V7：最大1,000件を同期発行",
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "同期発行完了。"
+          },
+          "200": {
+            "description": "冪等リプレイ。"
+          },
+          "400": {
+            "description": "入力不正。"
+          },
+          "401": {
+            "description": "認証エラー。"
+          },
+          "409": {
+            "description": "冪等キー競合。"
+          },
+          "503": {
+            "description": "書き込みノードが利用できません。"
+          },
+          "410": {
+            "description": "This issuance version is retired. Use /api/baas/v8/issuance.php."
+          }
+        },
+        "description": "singleモード専用の同期型Beta。冪等キーはJSONまたはIdempotency-Keyで指定します。料金は現行V7規則に従います。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "product_id"
+                ],
+                "properties": {
+                  "product_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000,
+                    "default": 1
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 100,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 100
+                  }
+                }
+              },
+              "example": {
+                "product_id": 12,
+                "count": 10,
+                "idempotency_key": "replace_with_unique_request_0001"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "operationId": "post_api_baas_v7_issuance_php",
+        "deprecated": true
+      }
+    },
+    "/api/v3/challenge.php": {
+      "post": {
+        "summary": "端末鍵のチャレンジを取得",
+        "tags": [
+          "端末認証v3"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "処理結果。項目は操作により異なります。"
+          },
+          "400": {
+            "description": "入力が正しくありません。"
+          },
+          "401": {
+            "description": "認証情報が無効または不足しています。"
+          },
+          "503": {
+            "description": "サービスまたは書き込み担当ノードが利用できません。"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "device_public_key"
+                ],
+                "properties": {
+                  "device_public_key": {
+                    "type": "string",
+                    "description": "端末公開鍵（PEM）。"
+                  },
+                  "purpose": {
+                    "type": "string",
+                    "enum": [
+                      "activate",
+                      "reauth"
+                    ],
+                    "default": "activate"
+                  }
+                }
+              },
+              "example": {
+                "device_public_key": "<端末公開鍵PEM>",
+                "purpose": "activate"
+              }
+            }
+          }
+        },
+        "operationId": "post_api_v3_challenge_php"
+      }
+    },
+    "/api/v3/activate.php": {
+      "post": {
+        "summary": "製品キーと端末鍵で初回認証",
+        "tags": [
+          "端末認証v3"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "処理結果。項目は操作により異なります。"
+          },
+          "400": {
+            "description": "入力が正しくありません。"
+          },
+          "401": {
+            "description": "認証情報が無効または不足しています。"
+          },
+          "503": {
+            "description": "サービスまたは書き込み担当ノードが利用できません。"
+          }
+        },
+        "description": "取得したチャレンジへ端末秘密鍵で署名し、製品キー・端末指紋と送信します。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "license_key",
+                  "device_fingerprint",
+                  "device_public_key",
+                  "challenge_id",
+                  "nonce",
+                  "signature"
+                ],
+                "properties": {
+                  "license_key": {
+                    "type": "string"
+                  },
+                  "product_code": {
+                    "type": "string"
+                  },
+                  "device_fingerprint": {
+                    "type": "string"
+                  },
+                  "device_public_key": {
+                    "type": "string"
+                  },
+                  "challenge_id": {
+                    "type": "string"
+                  },
+                  "nonce": {
+                    "type": "string"
+                  },
+                  "signature": {
+                    "type": "string"
+                  },
+                  "device_label": {
+                    "type": "string"
+                  },
+                  "app_version": {
+                    "type": "string"
+                  }
+                }
+              },
+              "example": {
+                "license_key": "<license_key>",
+                "product_code": "<product_code>",
+                "device_fingerprint": "<device_fingerprint>",
+                "device_public_key": "<device_public_key>",
+                "challenge_id": "<challenge_id>",
+                "nonce": "<nonce>",
+                "signature": "<signature>"
+              }
+            }
+          }
+        },
+        "operationId": "post_api_v3_activate_php"
+      }
+    },
+    "/api/v3/verify.php": {
+      "post": {
+        "summary": "セッションを検証",
+        "tags": [
+          "端末認証v3"
+        ],
+        "security": [
+          {
+            "runtimeAccessToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "処理結果。項目は操作により異なります。"
+          },
+          "400": {
+            "description": "入力が正しくありません。"
+          },
+          "401": {
+            "description": "認証情報が無効または不足しています。"
+          },
+          "503": {
+            "description": "サービスまたは書き込み担当ノードが利用できません。"
+          }
+        },
+        "description": "端末鍵の所持証明が必要です。timestampは現在のUnix秒（許容差±120秒）、request_nonceは毎回一意にします。Bearerだけでは実行できません。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "request_nonce",
+                  "timestamp",
+                  "signature"
+                ],
+                "properties": {
+                  "request_nonce": {
+                    "type": "string",
+                    "minLength": 16,
+                    "maxLength": 180
+                  },
+                  "timestamp": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "signature": {
+                    "type": "string",
+                    "description": "端末秘密鍵による署名（base64url）。"
+                  }
+                }
+              },
+              "example": {
+                "request_nonce": "replace_unique_nonce_0001",
+                "timestamp": 1793012400,
+                "signature": "<base64url署名>"
+              }
+            }
+          }
+        },
+        "operationId": "post_api_v3_verify_php"
+      }
+    },
+    "/api/v3/introspect.php": {
+      "post": {
+        "summary": "セッション詳細を取得",
+        "tags": [
+          "端末認証v3"
+        ],
+        "security": [
+          {
+            "runtimeAccessToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "処理結果。項目は操作により異なります。"
+          },
+          "400": {
+            "description": "入力が正しくありません。"
+          },
+          "401": {
+            "description": "認証情報が無効または不足しています。"
+          },
+          "503": {
+            "description": "サービスまたは書き込み担当ノードが利用できません。"
+          }
+        },
+        "description": "端末鍵の所持証明が必要です。timestampは現在のUnix秒（許容差±120秒）、request_nonceは毎回一意にします。Bearerだけでは実行できません。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "request_nonce",
+                  "timestamp",
+                  "signature"
+                ],
+                "properties": {
+                  "request_nonce": {
+                    "type": "string",
+                    "minLength": 16,
+                    "maxLength": 180
+                  },
+                  "timestamp": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "signature": {
+                    "type": "string",
+                    "description": "端末秘密鍵による署名（base64url）。"
+                  }
+                }
+              },
+              "example": {
+                "request_nonce": "replace_unique_nonce_0001",
+                "timestamp": 1793012400,
+                "signature": "<base64url署名>"
+              }
+            }
+          }
+        },
+        "operationId": "post_api_v3_introspect_php"
+      }
+    },
+    "/api/v3/refresh.php": {
+      "post": {
+        "summary": "更新トークンを交換",
+        "tags": [
+          "端末認証v3"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "処理結果。項目は操作により異なります。"
+          },
+          "400": {
+            "description": "入力が正しくありません。"
+          },
+          "401": {
+            "description": "認証情報が無効または不足しています。"
+          },
+          "503": {
+            "description": "サービスまたは書き込み担当ノードが利用できません。"
+          }
+        },
+        "description": "端末鍵の所持証明が必要です。timestampは現在のUnix秒（許容差±120秒）、request_nonceは毎回一意にします。Bearerだけでは実行できません。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "request_nonce",
+                  "timestamp",
+                  "signature",
+                  "refresh_token"
+                ],
+                "properties": {
+                  "request_nonce": {
+                    "type": "string",
+                    "minLength": 16,
+                    "maxLength": 180
+                  },
+                  "timestamp": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "signature": {
+                    "type": "string",
+                    "description": "端末秘密鍵による署名（base64url）。"
+                  },
+                  "refresh_token": {
+                    "type": "string"
+                  }
+                }
+              },
+              "example": {
+                "request_nonce": "replace_unique_nonce_0001",
+                "timestamp": 1793012400,
+                "signature": "<base64url署名>",
+                "refresh_token": "<refresh_token>"
+              }
+            }
+          }
+        },
+        "operationId": "post_api_v3_refresh_php"
+      }
+    },
+    "/api/v3/revoke.php": {
+      "post": {
+        "summary": "セッションを失効",
+        "tags": [
+          "端末認証v3"
+        ],
+        "security": [
+          {
+            "runtimeAccessToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "処理結果。項目は操作により異なります。"
+          },
+          "400": {
+            "description": "入力が正しくありません。"
+          },
+          "401": {
+            "description": "認証情報が無効または不足しています。"
+          },
+          "503": {
+            "description": "サービスまたは書き込み担当ノードが利用できません。"
+          }
+        },
+        "description": "端末鍵の所持証明が必要です。timestampは現在のUnix秒（許容差±120秒）、request_nonceは毎回一意にします。Bearerだけでは実行できません。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "request_nonce",
+                  "timestamp",
+                  "signature"
+                ],
+                "properties": {
+                  "request_nonce": {
+                    "type": "string",
+                    "minLength": 16,
+                    "maxLength": 180
+                  },
+                  "timestamp": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "signature": {
+                    "type": "string",
+                    "description": "端末秘密鍵による署名（base64url）。"
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "session",
+                      "family"
+                    ],
+                    "default": "session"
+                  }
+                }
+              },
+              "example": {
+                "request_nonce": "replace_unique_nonce_0001",
+                "timestamp": 1793012400,
+                "signature": "<base64url署名>"
+              }
+            }
+          }
+        },
+        "operationId": "post_api_v3_revoke_php"
+      }
+    },
+    "/api/v3/offline-ticket.php": {
+      "post": {
+        "summary": "オフラインチケットを発行",
+        "tags": [
+          "端末認証v3"
+        ],
+        "security": [
+          {
+            "runtimeAccessToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "処理結果。項目は操作により異なります。"
+          },
+          "400": {
+            "description": "入力が正しくありません。"
+          },
+          "401": {
+            "description": "認証情報が無効または不足しています。"
+          },
+          "503": {
+            "description": "サービスまたは書き込み担当ノードが利用できません。"
+          }
+        },
+        "description": "端末鍵の所持証明が必要です。timestampは現在のUnix秒（許容差±120秒）、request_nonceは毎回一意にします。Bearerだけでは実行できません。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "request_nonce",
+                  "timestamp",
+                  "signature"
+                ],
+                "properties": {
+                  "request_nonce": {
+                    "type": "string",
+                    "minLength": 16,
+                    "maxLength": 180
+                  },
+                  "timestamp": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "signature": {
+                    "type": "string",
+                    "description": "端末秘密鍵による署名（base64url）。"
+                  },
+                  "hours": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 72,
+                    "default": 24
+                  }
+                }
+              },
+              "example": {
+                "request_nonce": "replace_unique_nonce_0001",
+                "timestamp": 1793012400,
+                "signature": "<base64url署名>"
+              }
+            }
+          }
+        },
+        "operationId": "post_api_v3_offline_ticket_php"
+      }
+    },
+    "/api/v3/reauth.php": {
+      "post": {
+        "summary": "登録済み端末鍵で再認証",
+        "tags": [
+          "端末認証v3"
+        ],
+        "security": [
+          {
+            "runtimeAccessToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "処理結果。項目は操作により異なります。"
+          },
+          "400": {
+            "description": "入力が正しくありません。"
+          },
+          "401": {
+            "description": "認証情報が無効または不足しています。"
+          },
+          "503": {
+            "description": "サービスまたは書き込み担当ノードが利用できません。"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "challenge_id",
+                  "nonce",
+                  "signature"
+                ],
+                "properties": {
+                  "challenge_id": {
+                    "type": "string"
+                  },
+                  "nonce": {
+                    "type": "string"
+                  },
+                  "signature": {
+                    "type": "string"
+                  }
+                }
+              },
+              "example": {
+                "challenge_id": "<purpose=reauthで取得したID>",
+                "nonce": "<nonce>",
+                "signature": "<base64url署名>"
+              }
+            }
+          }
+        },
+        "operationId": "post_api_v3_reauth_php"
+      }
+    },
+    "/api/v3/offline-public-key.php": {
+      "get": {
+        "summary": "オフライン検証用の公開鍵を取得",
+        "tags": [
+          "端末認証v3"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "処理結果。項目は操作により異なります。"
+          },
+          "400": {
+            "description": "入力が正しくありません。"
+          },
+          "401": {
+            "description": "認証情報が無効または不足しています。"
+          },
+          "503": {
+            "description": "サービスまたは書き込み担当ノードが利用できません。"
+          }
+        },
+        "operationId": "get_api_v3_offline_public_key_php"
+      }
+    },
+    "/api/baas/v1/invoices.php": {
+      "get": {
+        "summary": "確定済み・支払済み請求書を取得",
+        "tags": [
+          "監査・請求"
+        ],
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "処理結果。項目は操作により異なります。"
+          },
+          "400": {
+            "description": "入力が正しくありません。"
+          },
+          "401": {
+            "description": "認証情報が無効または不足しています。"
+          },
+          "503": {
+            "description": "サービスまたは書き込み担当ノードが利用できません。"
+          }
+        },
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}$"
+            },
+            "example": "2026-10"
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "operationId": "get_api_baas_v1_invoices_php"
+      }
+    },
+    "/ha/release.php": {
+      "get": {
+        "summary": "共有サイトのリリース情報を取得",
+        "tags": [
+          "基本・状態確認"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "処理結果。項目は操作により異なります。"
+          },
+          "400": {
+            "description": "入力が正しくありません。"
+          },
+          "401": {
+            "description": "認証情報が無効または不足しています。"
+          },
+          "503": {
+            "description": "サービスまたは書き込み担当ノードが利用できません。"
+          }
+        },
+        "operationId": "get_ha_release_php"
+      }
+    },
+    "/ha/card-result.php": {
+      "get": {
+        "summary": "暗号化カード読取結果の閲覧画面",
+        "tags": [
+          "回転QR"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "結果閲覧HTML。",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "get_ha_card_result_php"
+      },
+      "post": {
+        "summary": "暗号化結果の作成・取得・回転・破棄",
+        "tags": [
+          "回転QR"
+        ],
+        "security": [],
+        "responses": {
+          "201": {
+            "description": "作成成功。id/token/ownerを返します。"
+          },
+          "200": {
+            "description": "取得・回転・破棄が成功。"
+          },
+          "400": {
+            "description": "入力不正。"
+          },
+          "404": {
+            "description": "期限切れ・取得済み・認証token不一致。"
+          },
+          "429": {
+            "description": "作成数または回転間隔の制限。"
+          },
+          "503": {
+            "description": "保存領域が利用できません。"
+          }
+        },
+        "description": "createはiv/cipher、read/rotate/revokeはid/tokenが必要です。read成功で結果を消費します。寿命180秒、回転tokenは原則8秒。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "action"
+                ],
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "create",
+                      "read",
+                      "rotate",
+                      "revoke"
+                    ]
+                  },
+                  "iv": {
+                    "type": "string",
+                    "description": "AES-GCMの12バイトIVをbase64化。"
+                  },
+                  "cipher": {
+                    "type": "string",
+                    "description": "クライアント側で暗号化したデータ。base64形式。"
+                  },
+                  "rotating": {
+                    "type": "boolean"
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{32}$"
+                  },
+                  "token": {
+                    "type": "string",
+                    "description": "readは閲覧token、rotate/revokeはownerを指定。"
+                  }
+                }
+              },
+              "examples": {
+                "read": {
+                  "summary": "結果を一度だけ取得",
+                  "value": {
+                    "action": "read",
+                    "id": "0123456789abcdef0123456789abcdef",
+                    "token": "<閲覧token>"
+                  }
+                },
+                "rotate": {
+                  "summary": "閲覧tokenを回転",
+                  "value": {
+                    "action": "rotate",
+                    "id": "0123456789abcdef0123456789abcdef",
+                    "token": "<owner>"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "operationId": "post_ha_card_result_php"
+      }
+    },
+    "/api/baas/v8/issuance.php": {
+      "post": {
+        "summary": "Submit an independent V8 product-key issuance job or read its status/quote",
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "V8 job accepted for asynchronous issuance"
+          },
+          "200": {
+            "description": "冪等リプレイ結果。"
+          },
+          "400": {
+            "description": "入力不正。"
+          },
+          "401": {
+            "description": "認証エラー。"
+          },
+          "409": {
+            "description": "割当量または冪等キーの競合。"
+          },
+          "503": {
+            "description": "書き込みノードが利用できません。"
+          }
+        },
+        "description": "Independent V8 bulk issuance API. Jobs of up to 1,000 keys may complete inline in the submit request; larger or contended jobs return asynchronously with a job ID. Uses V8-only job/result tables and the canonical licenses table.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "product_id"
+                ],
+                "properties": {
+                  "product_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100000,
+                    "default": 1
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 100,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  },
+                  "license_mode": {
+                    "type": "string",
+                    "enum": [
+                      "single",
+                      "volume",
+                      "evaluation"
+                    ]
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "max_devices": {
+                    "type": "integer",
+                    "minimum": 2,
+                    "maximum": 10000
+                  },
+                  "evaluation_days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3650
+                  },
+                  "expires_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              },
+              "example": {
+                "product_id": 12,
+                "count": 10,
+                "license_mode": "single",
+                "idempotency_key": "replace_with_unique_request_0001"
+              }
+            }
+          }
+        },
+        "operationId": "post_api_baas_v8_issuance_php"
+      },
+      "get": {
+        "summary": "Submit an independent V8 product-key issuance job or read its status/quote",
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "処理結果。項目は操作により異なります。"
+          },
+          "400": {
+            "description": "入力が正しくありません。"
+          },
+          "401": {
+            "description": "認証情報が無効または不足しています。"
+          },
+          "503": {
+            "description": "サービスまたは書き込み担当ノードが利用できません。"
+          }
+        },
+        "description": "Independent V8 bulk issuance API. Jobs of up to 1,000 keys may complete inline in the submit request; larger or contended jobs return asynchronously with a job ID. Uses V8-only job/result tables and the canonical licenses table.",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "example": "0123456789abcdef0123456789abcdef"
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "quote"
+              ]
+            }
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "operationId": "get_api_baas_v8_issuance_php"
+      }
+    },
+    "/api/baas/v8/issuance-results.php": {
+      "get": {
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "summary": "Read paged V8 issuance results",
+        "description": "Read paginated V8 job results. Revealing product keys requires an authorized tenant API key.",
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "example": "0123456789abcdef0123456789abcdef"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 200
+            }
+          },
+          {
+            "name": "reveal",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Result page"
+          },
+          "404": {
+            "description": "Job not found"
+          }
+        },
+        "operationId": "get_api_baas_v8_issuance_results_php"
+      }
+    },
+    "/api/baas/v8/issuance-cancel.php": {
+      "post": {
+        "summary": "Request V8 job cancellation",
+        "tags": [
+          "プロダクトキー発行"
+        ],
+        "security": [
+          {
+            "baasApiKey": []
+          },
+          {
+            "tenantApiKey": []
+          },
+          {
+            "haSession": [],
+            "tenantId": [],
+            "tenantEnvironment": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Cancellation requested; processing stops at a chunk boundary"
+          },
+          "409": {
+            "description": "終了済みジョブなどの状態競合。"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "job_id"
+                ],
+                "properties": {
+                  "job_id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{32}$"
+                  }
+                }
+              },
+              "example": {
+                "job_id": "0123456789abcdef0123456789abcdef"
+              }
+            }
+          }
+        },
+        "operationId": "post_api_baas_v8_issuance_cancel_php",
+        "parameters": [
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            },
+            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
+          }
+        ],
+        "description": "Request cancellation of a V8 job. Active work stops at a chunk boundary."
+      }
+    },
+    "/ha/product-key-v8-worker.php": {
+      "post": {
+        "tags": [
+          "HA Operations"
+        ],
+        "summary": "Process independent V8 product-key jobs",
+        "description": "Restricted HA worker for the independent V8 job store. Requires ha:operate and an active writable node passing the HA write fence.",
+        "security": [
+          {
+            "haSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "V8 worker run summary"
+          },
+          "403": {
+            "description": "HA operation scope required"
+          },
+          "503": {
+            "description": "Migration, write fence, or worker failure"
+          }
+        },
+        "operationId": "post_ha_product_key_v8_worker_php"
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HealthResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "service": {
+            "type": "string",
+            "title": "Service",
+            "default": "baas-api-catalog"
+          }
+        },
+        "type": "object",
+        "title": "HealthResponse"
+      }
+    },
+    "securitySchemes": {
+      "baasApiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "baas_live_xxx | baas_sandbox_xxx | baas_sdk_xxx",
+        "description": "AuthorizationがCGIで除去される環境では同じ値をX-Tenant-API-Keyへ設定する"
+      },
+      "haToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-HA-Token"
+      },
+      "haSession": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-HA-Session"
+      },
+      "haAutomation": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-HA-Automation"
+      },
+      "tenantApiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Tenant-API-Key",
+        "description": "Tenant APIキー。Authorization Bearerの代わりに利用できます。"
+      },
+      "runtimeAccessToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "端末認証v3のaccess_token。端末鍵の署名も必要です。"
+      },
+      "tenantId": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Tenant-ID",
+        "description": "管理者セッションをTenant APIで利用するときの対象Tenant ID。"
+      },
+      "tenantEnvironment": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-BaaS-Environment",
+        "description": "管理者認証では対象Tenantに合わせてproductionまたはsandboxを指定。"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "health",
+      "description": "APIカタログの生存確認。"
+    },
+    {
+      "name": "基本・状態確認",
+      "description": "接続確認・状態"
+    },
+    {
+      "name": "製品管理",
+      "description": "テナント製品"
+    },
+    {
+      "name": "プロダクトキー発行",
+      "description": "V1互換の単発発行とV8独立一括発行。V2・V3・V7の新規発行は終了。V4〜V6は新規受付を終了し、既存ジョブの照会・結果取得・取消のみ利用可能。"
+    },
+    {
+      "name": "ライセンス管理",
+      "description": "ライセンス・端末管理"
+    },
+    {
+      "name": "監査・請求",
+      "description": "監査・課金・エクスポート"
+    },
+    {
+      "name": "APIキー・Webhook",
+      "description": "Sandbox APIキー、Sample SDK限定キー、Webhook"
+    },
+    {
+      "name": "契約者SDK",
+      "description": "BaaS契約者向けSandbox SDKオンボーディング。管理者資格情報は使用しない"
+    },
+    {
+      "name": "MNSL",
+      "description": "MNSL統合セキュアID処理"
+    },
+    {
+      "name": "JPKI",
+      "description": "MNSL Windows CSPを使ったカード鍵challenge応答。証明書発行元・失効状態・法定本人確認は検証しない"
+    },
+    {
+      "name": "端末認証v2",
+      "description": "配布アプリから利用する認証API"
+    },
+    {
+      "name": "HA管理",
+      "description": "HA管理API"
+    },
+    {
+      "name": "回転QR"
+    },
+    {
+      "name": "端末認証v3"
+    },
+    {
+      "name": "統合サービスAPI"
+    }
+  ],
+  "x-catalog-source": {
+    "file": "BaaS-Operator/docs/openapi.yaml",
+    "sha256": "ae188344a4b96ad01e429a0e8a328cbd41930fade005031d5e937ed63a1fa5c1",
+    "supplements": [
+      "baas_issuance_handlers.py",
+      "baas_v7_handlers.py",
+      "v3_handlers.py",
+      "card_result_handlers.py"
+    ]
+  }
+}
