@@ -12,7 +12,7 @@ Sunabar v2 is a browser-based practice environment for learning the complete Sun
 
 ## Install on the existing Sunabar site
 
-Copy `index.html`, `sunabar.css`, and `sunabar.js` into the existing `xrea-source/sunabar/` web directory, replacing those three files. Keep the existing same-origin relay at `/license/api/sunabar/v1/` in place. The files are also usable as a static offline preview; API requests require the deployed same-origin relay.
+The split `sunabar.css` and `sunabar.js` files are the editable sources. Run `operations/Sunabar/Build-SunabarV2.ps1` to generate a self-contained `index.html` with CSP hashes for its embedded styles and script. Deploy that single HTML file to the existing `xrea-source/sunabar/` directory. Its interface can be viewed offline; API requests require the deployed same-origin relay at `/license/api/sunabar/v1/`.
 
 ## Security and storage
 
