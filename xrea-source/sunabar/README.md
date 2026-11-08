@@ -1,38 +1,36 @@
-# Sunabarの使い方
+# Sunabar v2 — API Verification Workbench
 
-Sunabarは、専用APIキーを使って製品一覧の取得、デモライセンスの発行と検証を試せるサービスです。実製品の認証には利用できません。
+Sunabar v2 is a browser-based practice environment for learning the complete Sunabar API workflow. The interface runs against the same-origin Sunabar relay and its isolated demo database. Demo credentials must not be used with real products.
 
-## はじめる
+## What's included
 
-1. [Sunabar](https://2415.jp/license/sunabar/)を開き、「専用APIキー」からキーを発行します。
-2. 「製品一覧」を選び、APIを呼び出します。
-3. 「ライセンス発行」を選び、製品IDなどを指定して送信します。
-4. 結果欄の「デモ用プロダクトキー」を確認し、必要に応じて「キーをコピー」を押します。JSONの `product_key` と `license_key` に同じ値が入ります。検証にはどちらの項目も指定できます。
+- Guided license practice: list products, issue a demo license, and verify it.
+- Guided device practice: activate, check, rotate tokens, and deactivate a session.
+- Explorer for all ten API operations, editable JSON bodies, response diagnostics, request IDs, and a 20-second timeout.
+- Searchable, filterable in-tab history capped at 50 requests. API keys and token/license secrets are redacted from history and JSON exports.
+- Responsive layout for desktop and mobile; all interface assets are local.
 
-専用APIキーは24時間有効です。画面で発行したキーはそのタブのセッションに保存され、タブを閉じるかリセットすると消えます。デモライセンスの有効期間は30日ですが、検証には発行時と同じワークスペースの有効なAPIキーが必要です。
+## Install on the existing Sunabar site
 
-## API
+Copy `index.html`, `sunabar-v2.css`, and `sunabar-v2.js` into the existing `xrea-source/sunabar/` web directory, replacing its `index.html` and adding the two v2 assets. Keep the existing same-origin relay at `/license/api/sunabar/v1/` in place. The files are also usable as a static offline preview; API requests require the deployed same-origin relay.
 
-ベースURLは `https://2415.jp/license/api/sunabar/v1/` です。認証には `X-Sunabar-API-Key` または `Authorization: Bearer <key>` を指定します。
+## Security and storage
 
-| メソッド | パス | 操作 |
+The dedicated API key is kept in `sessionStorage` for the current tab and expires according to the API response. License keys and session tokens stay in JavaScript memory. History stays in memory and is cleared when the page is reloaded or the tab closes. Exported history is redacted. The app sends requests only to relative `/license/api/sunabar/v1/` paths, with `credentials: omit`; it does not target the production BaaS or Sandbox API.
+
+## Operations
+
+| Method | Endpoint | Purpose |
 | --- | --- | --- |
-| POST | `key.php` | 専用APIキーを発行 |
-| GET | `products.php` | サンプル製品一覧を取得 |
-| POST | `licenses.php` | デモライセンスを発行 |
-| POST | `verify.php` | デモライセンスを検証 |
-| GET | `license-list.php` | この専用キーのワークスペースのライセンスを最大100件取得 |
-| POST | `license-revoke.php` | `{"license_id":"..."}` を指定してライセンスを失効 |
-| GET | `health.php` | 中継先APIとDBの稼働状態を確認 |
+| GET | `health.php` | Check relay and database readiness |
+| GET | `products.php` | List sample products |
+| POST | `licenses.php` | Issue demo license |
+| POST | `verify.php` | Verify demo license |
+| GET | `license-list.php` | List licenses in the current workspace |
+| POST | `license-revoke.php` | Revoke a demo license |
+| POST | `activate.php` | Start a device session |
+| POST | `session-check.php` | Check a device session |
+| POST | `session-refresh.php` | Rotate session tokens |
+| POST | `session-deactivate.php` | End a device session |
 
-リクエストはXREAからCore Server上のSunabar APIへ中継されます。キーとライセンスの記録はSunabar専用DBで管理し、キー本体はハッシュで保存します。本番BaaSやSandbox APIには接続しません。
-
-## エラーと稼働確認
-
-- HTTP 401：キーの未指定、期限切れ、無効化を確認し、必要なら新しいキーを発行します。
-- HTTP 429：発行・呼び出しの制限に達しています。時間をおいて再試行します。現在、XREA経由のキー発行は中継元全体で1時間あたり10件の上限です。
-- HTTP 503：中継先またはDBを利用できません。`health.php` の結果を確認します。
-
-同じワークスペースで発行できるデモライセンスは1時間に20件までです。PlaygroundのAPI要求は20秒でタイムアウトし、二重送信を抑止します。エラー応答の `request_id` を問い合わせに含めてください。サーバー診断ログはID・パス・例外種別だけを記録し、APIキー、セッショントークン、本文、例外メッセージは記録しません。
-
-ヘルスチェックの成功は中継先とDBへの接続・テーブル準備を示します。キー発行からライセンス検証までの一連の操作が成功することを保証するものではありません。
+The API contract and relay configuration are documented in `docs/SUNABAR.md` and `xrea-source/sunabar_api.py` in the repository.

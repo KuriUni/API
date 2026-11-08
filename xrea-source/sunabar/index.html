@@ -3,62 +3,99 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#101d31">
-  <meta name="description" content="専用APIキーで試せる、独立したSunabar APIエミュレーター。">
+  <meta name="theme-color" content="#101a2a">
+  <meta name="description" content="本番環境から分離されたSunabar API検証ワークベンチ。APIフローを再現し、応答と失敗を確認できます。">
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>Sunabar — API Playground</title>
-  <link rel="stylesheet" href="sunabar.css?v=20261107-1">
-  <script src="sunabar.js?v=20261107-1" defer></script>
+  <title>Sunabar v2 — API Verification Workbench</title>
+  <link rel="stylesheet" href="sunabar-v2.css?v=20261108-1">
+  <script src="sunabar-v2.js?v=20261108-1" defer></script>
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="./" aria-label="Sunabar home"><span class="brand-mark">S</span><span>sunabar<span class="brand-light">.playground</span></span></a>
-    <div class="top-status"><span id="key-status" class="local-indicator"><i></i> API KEY REQUIRED</span><button id="open-key" class="button button-key" type="button">専用APIキー</button><button id="reset" class="button button-quiet" type="button">リセット</button></div>
+    <a class="brand" href="./" aria-label="Sunabar v2 ホーム"><span class="brand-symbol">S</span><span>sunabar<span class="brand-version">v2</span></span></a>
+    <div class="top-context"><span class="isolation-dot"></span><span>ISOLATED ENVIRONMENT</span><span class="context-divider"></span><span>API VERIFICATION WORKBENCH</span></div>
+    <div class="top-actions"><span id="key-status" class="key-status"><i></i>キー未発行</span><button id="open-key" class="button button-outline" type="button">専用キー</button><button id="reset" class="button button-quiet" type="button" title="このタブのキーと一時データを消去">リセット</button></div>
   </header>
-  <main class="shell">
-    <section class="hero">
-      <div class="hero-copy"><p class="eyebrow">SUNABAR · API EMULATOR</p><h1>本番に触れずに、<br><span>API連携を試す。</span></h1><p>稼働確認から、デモキー発行・端末認証・トークン更新まで一連のAPIフローを試せます。発行したキーやセッション情報はこのタブ内で次の操作に引き継ぎます。</p><div class="hero-tags"><span>登録不要</span><span>24時間有効</span><span>本番データに非接続</span></div></div>
-      <div class="hero-console" aria-hidden="true"><div class="console-head"><span></span><span></span><span></span><b>request.js</b></div><pre><span class="code-muted">// Sunabar APIを呼び出す</span>
-<span class="code-purple">const</span> response = <span class="code-purple">await</span> fetch(
-  <span class="code-green">'/license/api/sunabar/v1/licenses.php'</span>, {
-  method: <span class="code-green">'POST'</span>,
-  headers: { <span class="code-green">'X-Sunabar-API-Key'</span>: apiKey,
-    <span class="code-green">'Content-Type'</span>: <span class="code-green">'application/json'</span> },
-  body: JSON.stringify({ product_id: <span class="code-number">101</span> })
-});
-<span class="code-purple">const</span> result = <span class="code-purple">await</span> response.json();</pre></div>
+
+  <main class="app-shell">
+    <section class="welcome">
+      <div class="welcome-copy"><p class="eyebrow">SUNABAR · API EMULATOR · V2</p><h1>APIを試す。<span>流れを確かめる。</span></h1><p>キー発行からライセンス・端末セッションまで、実際のAPI要求を安全なデモ環境でつなげて検証できます。</p></div>
+      <div class="welcome-state"><span class="state-icon">↗</span><div><b>本番データには接続しません</b><small>デモ用キーとライセンスは実製品では使えません</small></div></div>
     </section>
-    <div class="notice"><span class="notice-icon">i</span><div><b>Sunabar専用のエミュレーターです</b><p>実BaaS API、Sandbox API、本番データには接続しません。発行されたデモライセンスは実ソフトで使えません。</p></div><span class="notice-lock">ISOLATED API</span></div>
-    <section class="workspace-grid">
-      <aside class="sidebar"><div class="side-title">PLAYGROUND <span>10 OPERATIONS</span></div>
-        <button class="operation active" data-operation="health"><span class="operation-icon">●</span><span><b>稼働状態</b><small>GET · 認証不要</small></span><span class="chevron">›</span></button>
-        <button class="operation" data-operation="products"><span class="operation-icon">▦</span><span><b>製品一覧</b><small>GET · 製品データ取得</small></span><span class="chevron">›</span></button>
-        <button class="operation" data-operation="issue"><span class="operation-icon">＋</span><span><b>ライセンス発行</b><small>POST · デモキー作成</small></span><span class="chevron">›</span></button>
-        <button class="operation" data-operation="verify"><span class="operation-icon">✓</span><span><b>ライセンス検証</b><small>POST · デモキー確認</small></span><span class="chevron">›</span></button>
-        <button class="operation" data-operation="list"><span class="operation-icon">≡</span><span><b>ライセンス一覧</b><small>GET · 発行済みを確認</small></span><span class="chevron">›</span></button>
-        <button class="operation" data-operation="revoke"><span class="operation-icon">×</span><span><b>ライセンス失効</b><small>POST · デモキーを失効</small></span><span class="chevron">›</span></button>
-        <button class="operation" data-operation="activate"><span class="operation-icon">▶</span><span><b>端末を認証</b><small>POST · セッション発行</small></span><span class="chevron">›</span></button>
-        <button class="operation" data-operation="check"><span class="operation-icon">✓</span><span><b>セッション確認</b><small>POST · Access token</small></span><span class="chevron">›</span></button>
-        <button class="operation" data-operation="refresh"><span class="operation-icon">↻</span><span><b>セッション更新</b><small>POST · Refresh token</small></span><span class="chevron">›</span></button>
-        <button class="operation" data-operation="deactivate"><span class="operation-icon">■</span><span><b>セッション終了</b><small>POST · 端末を無効化</small></span><span class="chevron">›</span></button>
-        <div class="side-foot"><span class="storage-dot"></span><span>SESSION STORAGE<br><b>タブを閉じるとキーを破棄</b></span></div>
-      </aside>
-      <section class="request-panel" aria-labelledby="operation-title"><div class="panel-heading"><div><p class="eyebrow">REQUEST BUILDER</p><h2 id="operation-title">製品一覧を取得</h2></div><span id="method-badge" class="method-badge get">GET</span></div>
-        <p id="operation-description" class="panel-description">利用可能な製品をAPIから取得します。</p>
-        <div class="endpoint-bar"><span class="endpoint-host" id="endpoint-host">suna.2415.jp</span><span class="endpoint-path" id="endpoint-path">/suna/api/v1/products</span><button id="copy-path" class="copy-button" type="button" title="パスをコピー">⧉</button></div>
-        <div class="request-fields" id="request-fields"></div><div class="body-heading"><label for="request-body">REQUEST BODY</label><button id="reset-body" type="button" class="text-button">サンプルに戻す</button></div>
-        <div class="editor-wrap"><div class="line-number">1<br>2<br>3<br>4<br>5</div><textarea id="request-body" spellcheck="false" aria-label="JSONリクエスト本文"></textarea></div>
-        <div class="request-actions"><span class="auth-note"><span>⌑</span> X-Sunabar-API-Key <b id="auth-state">未設定</b></span><button id="send" class="button button-primary" type="button"><span>▶</span> APIを呼び出す</button></div><p id="form-error" class="form-error" role="alert"></p>
-      </section>
-      <section class="response-panel" aria-labelledby="response-title"><div class="response-heading"><div><p class="eyebrow">RESPONSE</p><h2 id="response-title">結果</h2></div><button id="copy-response" class="copy-button" type="button" title="レスポンスをコピー" disabled>⧉</button></div>
-        <div id="product-key-result" class="product-key-result" hidden><b>デモ用プロダクトキー</b><code id="product-key-value"></code><button id="copy-product-key" class="button button-secondary" type="button">キーをコピー</button><span id="product-key-message" role="status"></span></div><div class="response-meta"><span id="response-status" class="status-empty">未実行</span><span id="response-time">— ms</span><span class="response-tab active">JSON</span></div><pre id="response-json" class="response-json"><span class="json-placeholder">操作を選んでAPIを呼び出してください。</span></pre><div class="response-footer"><span><i></i> simulated response</span><span id="response-size">—</span></div>
-        <div class="history-block"><div class="history-title"><b>このセッションの履歴</b><button id="clear-history" class="text-button" type="button">消去</button></div><div id="history-list" class="history-list"><p class="empty-history">まだリクエストはありません。</p></div></div>
-      </section>
+
+    <nav class="view-tabs" aria-label="メイン画面">
+      <button class="view-tab active" type="button" data-view="overview"><span>01</span>フロー実行</button>
+      <button class="view-tab" type="button" data-view="console"><span>02</span>APIコンソール</button>
+      <button class="view-tab" type="button" data-view="history"><span>03</span>履歴・診断</button>
+      <span class="tab-spacer"></span><span id="session-state" class="session-chip"><i></i>セッション未開始</span>
+    </nav>
+
+    <section id="view-overview" class="view active" aria-labelledby="overview-title">
+      <div class="section-heading"><div><p class="eyebrow">RUN A SCENARIO</p><h2 id="overview-title">実習フロー</h2><p>単発のAPI呼び出しではなく、前の応答を次の要求へ引き継いで一連の処理を確認します。</p></div><button id="health-check" class="button button-light" type="button"><span>↻</span>稼働状態を確認</button></div>
+      <div class="metrics-grid">
+        <article class="metric-card"><div class="metric-label">API RELAY</div><div class="metric-value"><span id="relay-indicator" class="metric-dot neutral"></span><span id="relay-status">未確認</span></div><small id="relay-detail">確認するとSunabarの稼働状態を表示します</small></article>
+        <article class="metric-card"><div class="metric-label">DEMO LICENSE</div><div class="metric-value"><span id="license-indicator" class="metric-dot neutral"></span><span id="license-status">未作成</span></div><small id="license-detail">このタブで発行したデモライセンス</small></article>
+        <article class="metric-card"><div class="metric-label">DEVICE SESSION</div><div class="metric-value"><span id="device-indicator" class="metric-dot neutral"></span><span id="device-status">未認証</span></div><small id="device-detail">アクセストークンと更新トークンはメモリー内</small></article>
+        <article class="metric-card"><div class="metric-label">REQUESTS</div><div class="metric-value"><span id="request-count">0</span><span class="metric-unit">件</span></div><small>このタブで実行したAPI要求</small></article>
+      </div>
+
+      <div class="scenario-grid">
+        <article class="scenario-card scenario-primary">
+          <div class="scenario-top"><span class="scenario-index">FLOW 01</span><span class="scenario-tag">約1分 · 3 API要求</span></div>
+          <div class="scenario-icon license-icon">01</div><h3>デモライセンスを発行して検証</h3><p>製品一覧 → デモ発行 → キー検証までを連続実行。発行キーをこのタブの状態へ安全に引き継ぎます。</p>
+          <label class="input-label" for="flow-product-id">製品ID</label><div class="scenario-input-row"><input id="flow-product-id" value="101" inputmode="numeric" aria-label="製品ID"><input id="flow-label" value="Sunabar v2 practice" maxlength="80" aria-label="デモライセンスのラベル"></div>
+          <button id="run-license-flow" class="button button-primary" type="button">デモ発行フローを実行 <span>→</span></button>
+          <div class="flow-steps" aria-label="フローの段階"><span>製品一覧</span><i>›</i><span>発行</span><i>›</i><span>検証</span></div>
+        </article>
+        <article class="scenario-card">
+          <div class="scenario-top"><span class="scenario-index">FLOW 02</span><span class="scenario-tag">約1分 · 4 API要求</span></div>
+          <div class="scenario-icon session-icon">02</div><h3>端末セッションを最後まで確認</h3><p>端末認証 → セッション確認 → トークン更新 → セッション終了。更新後の新しいトークンを使う動きも確認します。</p>
+          <label class="input-label" for="flow-device-id">端末ID</label><div class="scenario-input-row"><input id="flow-device-id" value="sunabar-v2-device-01" maxlength="128" aria-label="端末ID"></div>
+          <button id="run-session-flow" class="button button-secondary" type="button">セッションフローを実行 <span>→</span></button>
+          <div class="flow-steps" aria-label="フローの段階"><span>認証</span><i>›</i><span>確認</span><i>›</i><span>更新</span><i>›</i><span>終了</span></div>
+        </article>
+        <aside class="scenario-side">
+          <div class="side-card"><p class="eyebrow">QUICK ACTION</p><h3>単独のAPIを試す</h3><p>要求本文を編集して、特定のエラーや入力条件を確認できます。</p><button id="open-console" class="button button-light" type="button">APIコンソールを開く <span>↗</span></button></div>
+          <div class="side-card side-card-tip"><span class="tip-mark">i</span><div><b>まず稼働確認から</b><p>healthチェックはAPIキー不要です。キー発行後、残りの操作を試せます。</p></div></div>
+        </aside>
+      </div>
+
+      <section id="flow-progress" class="flow-progress" hidden aria-live="polite"><div class="flow-progress-head"><div><p class="eyebrow">FLOW RUNNER</p><h3 id="flow-title">実行中</h3></div><span id="flow-counter" class="flow-counter">0 / 0</span></div><div class="progress-track"><i id="flow-progress-bar"></i></div><ol id="flow-log" class="flow-log"></ol><div id="flow-summary" class="flow-summary" hidden></div></section>
+
+      <section class="operation-catalog"><div class="catalog-heading"><div><p class="eyebrow">10 AVAILABLE OPERATIONS</p><h2>操作カタログ</h2></div><button class="text-button" data-go-view="console" type="button">一覧から選ぶ <span>→</span></button></div><div class="catalog-grid" id="catalog-grid"></div></section>
+      <div class="safety-note"><span>!</span><p><b>デモ環境の範囲</b><br>Sunabar専用DBと専用キーを使います。デモキーは実ソフトの認証に使えず、本番BaaS・Sandbox・契約情報には接続しません。セッションをリセットすると、このタブのキーと一時データが消えます。</p></div>
     </section>
-    <section class="how-section"><div><p class="eyebrow">HOW SUNABAR WORKS</p><h2>APIの一連の流れを試せます。</h2><p>ライセンス発行後は検証・端末認証へ、端末認証後はセッション確認・更新・終了へ値を自動で引き継ぎます。キーやトークンはサーバーへ保存されず、ブラウザーのメモリー内だけで扱います。</p></div><div class="steps"><article><span>01</span><b>専用キーを発行</b><p>この画面専用のキーです。</p></article><article><span>02</span><b>操作を連続実行</b><p>発行した値を次のAPIへ自動入力。</p></article><article><span>03</span><b>結果を確認</b><p>HTTP状態・応答時間・JSONを表示。</p></article></div></section>
-    <footer><span>Sunabar · API Emulator</span><span>ISOLATED KEY · PRODUCTION API IS NEVER CALLED</span></footer>
+
+    <section id="view-console" class="view" aria-labelledby="console-title" hidden>
+      <div class="console-layout">
+        <aside class="operation-nav"><div class="operation-nav-head"><div><p class="eyebrow">API EXPLORER</p><h2>操作</h2></div><span>10</span></div><label class="operation-search"><span>⌕</span><input id="operation-search" type="search" placeholder="操作を検索" aria-label="API操作を検索"></label><div id="operation-list" class="operation-list"></div><div class="nav-help">キーとトークンはブラウザーのタブ内で扱います。</div></aside>
+        <section class="request-panel" aria-labelledby="operation-title"><div class="request-panel-head"><div><p class="eyebrow" id="operation-category">LICENSE</p><h2 id="operation-title">稼働状態</h2><p id="operation-description"></p></div><span id="method-badge" class="method-badge get">GET</span></div>
+          <div class="endpoint-bar"><span id="endpoint-host" class="endpoint-host">2415.jp</span><span id="endpoint-path" class="endpoint-path">/license/api/sunabar/v1/health.php</span><button id="copy-path" class="icon-button" type="button" title="URLをコピー" aria-label="URLをコピー">⧉</button></div>
+          <div class="request-controls"><span id="auth-state" class="auth-chip">認証不要</span><span id="operation-risk" class="risk-chip">READ ONLY</span><button id="reset-body" class="text-button" type="button">例を戻す</button></div>
+          <div class="editor-label"><label for="request-body">REQUEST BODY</label><span>JSON · Ctrl/⌘ + Enterで実行</span></div><textarea id="request-body" spellcheck="false" aria-label="JSONリクエスト本文"></textarea>
+          <p id="form-error" class="form-error" role="alert"></p><div class="request-actions"><p id="request-hint">この操作は状態を変更しません。</p><button id="send" class="button button-primary" type="button"><span>▶</span>要求を送る</button></div>
+        </section>
+        <section class="response-panel" aria-labelledby="response-title"><div class="response-panel-head"><div><p class="eyebrow">LIVE RESPONSE</p><h2 id="response-title">応答インスペクター</h2></div><button id="copy-response" class="icon-button" type="button" title="応答をコピー" aria-label="応答をコピー" disabled>⧉</button></div>
+          <div class="response-metrics"><span id="response-status" class="status-empty">未実行</span><span id="response-time">— ms</span><span id="response-size">— bytes</span></div>
+          <div id="response-diagnostic" class="diagnostic" hidden></div>
+          <div id="product-key-result" class="product-key-result" hidden><div><b>デモ用プロダクトキー</b><small>実ソフトの認証には使用できません</small></div><code id="product-key-value"></code><button id="copy-product-key" class="button button-light" type="button">コピー</button><span id="product-key-message" aria-live="polite"></span></div>
+          <pre id="response-json" class="response-json"><span class="json-placeholder">要求を送ると、HTTP状態・応答・診断情報がここに表示されます。</span></pre>
+          <div class="response-foot"><span><i></i> same-origin relay · no external API target</span><span id="response-request-id">Request ID —</span><button id="open-history" class="text-button" type="button">履歴を見る <span>→</span></button></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="view-history" class="view" aria-labelledby="history-title" hidden>
+      <div class="section-heading"><div><p class="eyebrow">SESSION ACTIVITY</p><h2 id="history-title">履歴・診断</h2><p>このタブ内での要求を最大50件表示します。履歴に含めるキーやトークンは伏字にします。</p></div><div class="history-actions"><button id="export-history" class="button button-light" type="button">JSONを書き出す</button><button id="clear-history" class="button button-quiet-dark" type="button">履歴を消去</button></div></div>
+      <div class="history-toolbar"><label class="history-search"><span>⌕</span><input id="history-search" type="search" placeholder="パス・HTTP状態・request_idで検索"></label><select id="history-filter" aria-label="履歴の絞り込み"><option value="all">すべて</option><option value="success">成功</option><option value="error">エラー</option></select><span id="history-count" class="history-count">0 件</span></div>
+      <div class="history-table-wrap"><table class="history-table"><thead><tr><th>時刻</th><th>操作 / endpoint</th><th>結果</th><th>時間</th><th>Request ID</th><th></th></tr></thead><tbody id="history-rows"><tr class="history-empty"><td colspan="6">まだ履歴がありません。フロー実行かAPIコンソールから要求を送ってください。</td></tr></tbody></table></div>
+      <div class="history-disclaimer"><span>i</span><p>履歴はメモリー内だけに保持し、キーやトークンを伏せて表示・書き出します。リセットまたはタブを閉じると、履歴とセッション状態が消えます。</p></div>
+    </section>
+
+    <footer class="app-footer"><span>Sunabar v2 · API Emulator</span><span>DEMO DATA ONLY · PRODUCTION API IS NEVER CALLED</span><span><a href="https://github.com/KuriUni/API/blob/main/docs/SUNABAR.md" target="_blank" rel="noopener">API仕様 ↗</a></span></footer>
   </main>
-  <dialog id="key-dialog" class="key-dialog"><div class="key-dialog-head"><div><p class="eyebrow">SUNABAR API ACCESS</p><h2>専用APIキー</h2></div><button id="close-key" class="copy-button" type="button" aria-label="閉じる">×</button></div><p class="key-dialog-copy">このキーはSunabar専用で、24時間後に期限切れになります。実BaaS APIでは使えません。キーはこのタブのセッション内だけに保存されます。</p><label class="key-label" for="api-key-value">X-Sunabar-API-Key</label><div class="key-row"><input id="api-key-value" type="password" readonly autocomplete="off" spellcheck="false" placeholder="キーはまだありません"><button id="toggle-key" type="button" class="button button-quiet">表示</button><button id="copy-key" type="button" class="button button-secondary" disabled>コピー</button></div><p id="key-expiry" class="key-expiry"></p><p id="key-message" class="form-error" role="status"></p><button id="issue-api-key" class="button button-primary key-issue" type="button">専用キーを発行</button></dialog>
+
+  <dialog id="key-dialog" class="key-dialog"><div class="dialog-head"><div><p class="eyebrow">SUNABAR API ACCESS</p><h2>専用APIキー</h2></div><button id="close-key" class="icon-button" type="button" aria-label="閉じる">×</button></div><p>このキーはSunabar専用で24時間有効です。このタブのsessionStorageに保存され、タブを閉じるかリセットすると消えます。</p><label for="api-key-value" class="input-label">X-Sunabar-API-Key</label><div class="key-entry"><input id="api-key-value" type="password" readonly autocomplete="off" spellcheck="false" placeholder="キーはまだありません"><button id="toggle-key" class="button button-light" type="button">表示</button><button id="copy-key" class="button button-light" type="button" disabled>コピー</button></div><p id="key-expiry" class="key-expiry"></p><p id="key-message" class="form-error" role="status"></p><button id="issue-api-key" class="button button-primary" type="button">専用キーを発行</button></dialog>
 </body>
 </html>
