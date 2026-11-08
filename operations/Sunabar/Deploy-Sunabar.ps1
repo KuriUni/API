@@ -28,6 +28,7 @@ if (-not ($credential -is [System.Management.Automation.PSCredential]) -or $cred
 }
 
 $assemblyCandidates = @(
+    (Join-Path $env:LOCALAPPDATA 'Programs\WinSCP\netstandard2.0\WinSCPnet.dll'),
     (Join-Path $env:LOCALAPPDATA 'Programs\WinSCP\WinSCPnet.dll'),
     (Join-Path $env:ProgramFiles 'WinSCP\WinSCPnet.dll'),
     (Join-Path ${env:ProgramFiles(x86)} 'WinSCP\WinSCPnet.dll')
@@ -41,6 +42,7 @@ $verifyDirectory = Join-Path $env:TEMP "sunabar-relay-verify-$stamp"
 New-Item -ItemType Directory -Path $backupDirectory -Force | Out-Null
 New-Item -ItemType Directory -Path $verifyDirectory -Force | Out-Null
 $session = New-Object WinSCP.Session
+$session.ExecutablePath = Join-Path $env:LOCALAPPDATA 'Programs\WinSCP\WinSCP.exe'
 try {
     $options = New-Object WinSCP.SessionOptions -Property @{
         Protocol = [WinSCP.Protocol]::Ftp
