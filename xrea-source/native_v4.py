@@ -24,6 +24,8 @@ from starlette.concurrency import run_in_threadpool
 API_VERSION = v4_crypto.API_VERSION
 ROUTES = ('index', 'challenge', 'activate', 'verify', 'refresh', 'reauth', 'revoke')
 PROOF_HEADERS = ('x-license-session', 'x-license-timestamp', 'x-license-nonce', 'x-license-proof')
+REQUIRED_TABLES = ('license_v4_challenges', 'license_v4_devices', 'license_v4_sessions',
+                   'license_v4_proofs', 'license_v4_refresh_history')
 
 
 def reply(payload, rid, status=200, headers=None):
@@ -48,11 +50,11 @@ def error_response(exc, rid):
 
 def _require_schema(connection):
     with connection.cursor() as cursor:
-        for table in ('license_v4_challenges','license_v4_devices','license_v4_sessions',
-                      'license_v4_proofs','license_v4_refresh_history'):
-            cursor.execute('SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=%s', (table,))
-            if int(cursor.fetchone()['n']) != 1:
-                raise domain.V3Error(503, 'V4_MIGRATION_REQUIRED', 'License API v4のDB移行が必要です。', {'required_migration': 'license_v4'})
+        placeholders = ','.join(['%s'] * len(REQUIRED_TABLES))
+        cursor.execute('SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN (' + placeholders + ')', REQUIRED_TABLES)
+        present = {str(row['table_name']) for row in cursor.fetchall()}
+        if not set(REQUIRED_TABLES).issubset(present):
+            raise domain.V3Error(503, 'V4_MIGRATION_REQUIRED', 'License API v4のDB移行が必要です。', {'required_migration': 'license_v4'})
 
 
 def _connect(begin=False):
