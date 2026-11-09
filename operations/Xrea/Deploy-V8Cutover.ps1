@@ -23,7 +23,7 @@ if ($Profile -eq 'License') {
     $files = @('http_utils.py','v3_handlers.py','native_v3.py','v2_handlers.py','openapi-catalog.json','api-catalog/openapi.json')
 }
 if ($Profile -eq 'LicenseV4') {
-    $files = @('schema39_storage.py','v4_crypto.py','license_v4_storage.py','v3_handlers.py','native_v4.py','asgi.py',
+    $files = @('schema39_storage.py','v4_crypto.py','license_v4_storage.py','v3_handlers.py','native_v4.py','mnsl_app_sso.py','asgi.py',
         'native_routes.py','routes.json','ha_migrate.py','ha_export.py','ha_snapshot.py',
         'openapi-catalog.json','api-catalog/openapi.json','api/v4/activate.html')
 }
@@ -135,7 +135,7 @@ foreach ($destination in $targets) {
             }
             $result = $migration.Content | ConvertFrom-Json
             if ([int]$migration.StatusCode -ne 200 -or -not $result.ok -or -not $result.license_v4.ok) { throw 'V4 additive schema installation failed.' }
-            foreach ($table in @('license_v4_challenges','license_v4_devices','license_v4_sessions','license_v4_proofs','license_v4_refresh_history')) {
+            foreach ($table in @('license_v4_challenges','license_v4_devices','license_v4_sessions','license_v4_proofs','license_v4_refresh_history','license_v4_offline_tickets')) {
                 if ($table -notin $result.license_v4.tables) { throw "V4 migration omitted table: $table" }
             }
             Write-Host "$($destination.Name): additive V4 schema installation completed."
@@ -152,7 +152,7 @@ foreach ($destination in $targets) {
             $v2Body = $v2.Content|ConvertFrom-Json
             if (-not $v2.Headers['X-Request-ID'] -or ([int]$v2.StatusCode -ne 400 -and -not ([int]$v2.StatusCode -eq 503 -and $v2Body.error -eq 'server_not_writable'))) { throw 'V2 authentication protection failed.' }
             $catalog = Invoke-RestMethod -Uri "https://$domain/license/api-catalog/index.php?document=openapi.json" -TimeoutSec 30
-            $expectedCatalogVersion = if ($Profile -eq 'LicenseV4') { '1.17.0' } else { '1.16.0' }
+            $expectedCatalogVersion = if ($Profile -eq 'LicenseV4') { '1.18.0' } else { '1.16.0' }
             if ($catalog.info.version -ne $expectedCatalogVersion) { throw 'License API specification not updated.' }
             if ($Profile -eq 'LicenseV4') {
                 $guide = Invoke-WebRequest -Uri "https://$domain/license/api/v4/activate.php" -TimeoutSec 30 -SkipHttpErrorCheck
@@ -160,6 +160,8 @@ foreach ($destination in $targets) {
                 $challenge = Invoke-WebRequest -Uri "https://$domain/license/api/v4/challenge.php" -Method Post -ContentType 'application/json' -Body '{}' -TimeoutSec 30 -SkipHttpErrorCheck
                 $challengeBody = $challenge.Content | ConvertFrom-Json
                 if ([int]$challenge.StatusCode -ne 400 -or $challengeBody.error_code -ne 'DEVICE_PUBLIC_KEY_INVALID' -or -not $challenge.Headers['X-Request-ID']) { throw 'V4 safe challenge validation failed.' }
+                $offlineKey = Invoke-RestMethod -Uri "https://$domain/license/api/v4/offline-public-key.php" -TimeoutSec 30
+                if ($offlineKey.offline_signing_key.algorithm -ne 'Ed25519' -or -not $offlineKey.offline_signing_key.kid -or -not $offlineKey.offline_signing_key.public_key) { throw 'V4 offline ticket verification key is unavailable.' }
             }
             Write-Host "$($destination.Name): $($uploaded.Count) changed files hash-verified; license API contracts verified."
         } else {

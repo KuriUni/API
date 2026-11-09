@@ -173,6 +173,8 @@ def admin_api(request_context):
     if host == 'backup.2415.jp' and action != 'diagnose_error' and (not auth_callback):
         primary = site_url('https://2415.jp/license/python-migration/admin_api.php')
         if method.upper() == 'POST' or 'step_up_resume' in query:
+            if 'application/json' in str(request_context.get('content_type', '')).lower():
+                return admin_respond('409 Conflict', False, 'この操作は正系の管理センターから行ってください。正系へ移動します。', {'error_code': 'PRIMARY_ONLY', 'canonical_url': primary})
             body = ('<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>正系サーバーで操作してください</title><body style="font:16px system-ui,sans-serif;max-width:680px;margin:12vh auto;padding:24px;color:#172033"><h1>管理操作を続けられません</h1><p>この画面は待機系サーバーです。登録などの操作は正系の管理センターから行ってください。今回の送信は処理されていません。</p><p><a href="' + primary + '">正系のライセンス管理センターを開く</a></p></body></html>').encode()
             _http_status, _http_headers = ('409 Conflict', [('Content-Type', 'text/html; charset=utf-8'), ('Cache-Control', 'no-store'), ('Content-Length', str(len(body)))])
             return make_response([body], _http_status, _http_headers)
@@ -327,6 +329,7 @@ def _admin_page(request_context):
                 host = '2415.jp'
             reauth_link = site_url('<p><a href="/license/python-migration/admin_api.php?admin_sso_start=1&amp;step_up=1&amp;return_host=') + quote(host, safe='') + '">Passkeyを再認証して権限変更・所属解除を有効化</a></p>'
         admin_management_panel = '<section class="card" id="api-invoices-link"><h2>API請求書</h2><p>利用明細の確認・下書き・発行を管理します。</p><a class="button" href="admin_api.php?view=api-invoices">請求書管理を開く</a></section><section class="card" id="admin-principal-management"><h2>管理者権限</h2><p class="muted">自分自身と最後のセキュリティ管理者は変更できません。権限変更にはPasskey再認証が必要です。</p><button class="secondary" id="load-admin-principals">管理者一覧を取得</button><div id="admin-principals"></div><p id="principal-status" role="status"></p></section><section class="card" id="common-id-management"><h2>共通ID・テナント所属</h2><p class="muted">Passkey認証情報は表示せず、テナント所属だけを管理します。解除後も他テナントの所属は維持されます。</p><button class="secondary" id="load-common-id-memberships">所属一覧を取得</button><div id="common-id-memberships"></div><p id="common-id-status" role="status"></p>' + reauth_link + '</section>'
+        admin_management_panel += '<section class="card" id="one-time-issuance-grant"><h2>今回1件だけの発行権限</h2><p class="muted">契約に所属するSSO IDを選び、そのIDにライセンス1件だけの発行権限を付与します。直近2分以内のPasskey再認証が必要です。未使用でも24時間で失効します。</p><label for="one-time-tenant">対象契約</label><select id="one-time-tenant" required><option value="">契約を選択してください</option></select><label for="one-time-sso-id">この契約に所属するSSO ID</label><select id="one-time-sso-id" required disabled><option value="">先に契約を選択してください</option></select><p id="one-time-identities-status" class="muted" role="status"></p><button id="grant-one-time" disabled>選択したSSO IDに今回1件の権限を付与</button><p id="one-time-grant-status" role="status"></p>' + ('' if passkey_recent else reauth_link) + '</section>'
     if 'admin:manage' in claims_scopes:
         admin_management_panel += '<section class="card" id="admin-password-change"><h2>緊急用パスワードの変更</h2><p class="muted">Passkey再認証後、現在のパスワードを確認して隔離設定を更新します。</p><label for="current-admin-password">現在のパスワード</label><input id="current-admin-password" type="password" autocomplete="current-password"><label for="new-admin-password">新しいパスワード（12文字以上）</label><input id="new-admin-password" type="password" autocomplete="new-password"><label for="confirm-admin-password">新しいパスワード（確認）</label><input id="confirm-admin-password" type="password" autocomplete="new-password"><button id="change-admin-password" ' + ('' if passkey_recent else 'disabled') + '>パスワードを変更</button><p id="password-status" role="status"></p></section>'
     if 'passkey:manage' in claims_scopes:
@@ -386,6 +389,8 @@ def _admin_page(request_context):
     if 'audit:read' not in claims_scopes:
         body = body.replace('<button class="secondary" id="load-audit">監査ログ</button>'.encode(), '<button class="secondary" id="load-audit" disabled hidden>監査ログ</button>'.encode(), 1)
         body = body.replace(b'<div id="audit-filters">', b'<div id="audit-filters" hidden>', 1)
+    grant_script = ("<script>(async()=>{const target=document.getElementById('one-time-sso-id'),select=document.getElementById('one-time-tenant'),button=document.getElementById('grant-one-time'),out=document.getElementById('one-time-grant-status'),identityStatus=document.getElementById('one-time-identities-status'),passkeyReady=" + ('true' if passkey_recent else 'false') + ";if(!select||!button||!target)return;async function readResponse(r){const raw=await r.text();let d;try{d=JSON.parse(raw)}catch(e){if(r.status===409&&location.hostname==='backup.2415.jp'){out.textContent='正系管理センターに移動します…';location.href='https://2415.jp/license/python-migration/admin_api.php#one-time-issuance-grant';throw new Error('正系管理センターに移動しています。')}throw new Error('管理APIがJSON以外の応答を返しました (HTTP '+r.status+')。ページを再読み込みしてください。')}if(r.status===409&&d.error_code==='PRIMARY_ONLY'){out.textContent='正系管理センターに移動します…';location.href=d.canonical_url+'#one-time-issuance-grant';throw new Error('正系管理センターに移動しています。')}return d};try{const r=await fetch('admin_api.php',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':" + json.dumps(csrf) + "},body:JSON.stringify({action:'list_tenants',page:1,limit:100})});const d=await readResponse(r);if(!r.ok||!d.success)throw new Error(d.message||'契約一覧を取得できませんでした');for(const t of d.tenants||[]){if(t.status!=='active'||t.environment!=='production'||t.parent_tenant_id)continue;const o=document.createElement('option');o.value=t.id;o.textContent=(t.name||t.slug)+' · '+t.slug+' · #'+t.id;select.append(o)}if(select.options.length<=1){select.options[0].textContent='対象となる本番契約がありません';button.disabled=true}}catch(e){out.className='error';out.textContent=e.message}select.addEventListener('change',async()=>{target.replaceChildren();const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='SSO IDを取得しています…';target.append(placeholder);target.disabled=true;button.disabled=true;identityStatus.textContent='契約所属を確認しています…';out.textContent='';try{const r=await fetch('admin_api.php',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':" + json.dumps(csrf) + "},body:JSON.stringify({action:'list_tenant_sso_identities',tenant_id:Number(select.value)})});const d=await readResponse(r);if(!r.ok||!d.success)throw new Error(d.message||'SSO ID一覧を取得できませんでした');target.replaceChildren();for(const identity of d.identities||[]){const o=document.createElement('option');o.value=identity.public_id;o.textContent=identity.public_id+(identity.display_name?' · '+identity.display_name:'');target.append(o)}if(!target.options.length){const o=document.createElement('option');o.value='';o.textContent='この契約に所属するSSO IDはありません';target.append(o);identityStatus.textContent='';target.disabled=true}else{identityStatus.textContent=(d.identities||[]).length+'件のSSO ID';target.disabled=false;button.disabled=!passkeyReady}}catch(e){target.replaceChildren();const o=document.createElement('option');o.value='';o.textContent='一覧を取得できませんでした';target.append(o);identityStatus.className='error';identityStatus.textContent=e.message;target.disabled=true}});target.addEventListener('change',()=>{button.disabled=!passkeyReady||!target.value});button.addEventListener('click',async()=>{const publicId=target.value,t=select.options[select.selectedIndex];if(!publicId){out.className='error';out.textContent='契約に所属するSSO IDを選択してください。';return}if(!t||!select.value||!confirm(publicId+' に「'+t.textContent+'」で1件だけ発行できる権限を付与します。実行しますか？'))return;button.disabled=true;out.className='';out.textContent='付与しています…';try{const r=await fetch('admin_api.php',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':" + json.dumps(csrf) + "},body:JSON.stringify({action:'grant_one_time_issuance',tenant_id:Number(select.value),target_public_id:publicId})});const d=await readResponse(r);if(!r.ok||!d.success)throw new Error(d.message||'権限を付与できませんでした');out.textContent=d.message+' 対象: '+d.target_public_id+' · 期限: 24時間以内 · Grant ID: '+d.grant_id}catch(e){out.className='error';out.textContent=e.message;button.disabled=!passkeyReady||!target.value}});})();</script>").encode('utf-8')
+    body = body.replace(b'</body>', grant_script + b'</body>', 1)
     _http_status, _http_headers = ('200 OK', [('Content-Type', 'text/html; charset=utf-8'), ('Cache-Control', 'no-store'), ('X-Content-Type-Options', 'nosniff'), ('Referrer-Policy', 'no-referrer'), ('Content-Security-Policy', "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"), ('Content-Length', str(len(body)))])
     return make_response([body], _http_status, _http_headers)
 
@@ -808,6 +813,9 @@ def _admin_api_request(request_context):
     supported = {'list_devices', 'list_sessions', 'revoke_device', 'unrevoke_device', 'logout', 'list_audit_logs', 'clear_attempts', 'revoke_common_id_membership', 'set_admin_role', 'list_licenses', 'list_deleted_licenses', 'list_volume_licenses', 'get_license', 'ping'}
     supported.update({'export_license_csv', 'pause_license', 'resume_license', 'force_reauth_license', 'delete_license', 'restore_license', 'renew_license', 'bulk_license_action', 'permanently_delete_license', 'list_phone_requests', 'get_phone_request', 'cancel_phone_request', 'issue_phone_confirmation_code'})
     supported.update({'create_tenant', 'create_contractor_sso', 'lookup_sso_identity', 'delete_sso_identity', 'issue_tenant_api_key', 'revoke_tenant_api_key', 'rotate_tenant_api_key', 'list_tenant_api_keys', 'list_tenants'})
+    supported.add('grant_one_time_issuance')
+    supported.add('sign_update_manifest')
+    supported.add('list_tenant_sso_identities')
     supported.update({'diagnose_error', 'change_admin_password'})
     supported.update({'list_admin_principals', 'list_common_id_memberships'})
     supported.add('list_workbench_tenants')
@@ -820,22 +828,24 @@ def _admin_api_request(request_context):
     write = action in {'revoke_device', 'unrevoke_device', 'logout', 'clear_attempts', 'revoke_common_id_membership', 'set_admin_role', 'pause_license', 'resume_license', 'force_reauth_license'}
     write = write or action in {'delete_license', 'restore_license', 'renew_license', 'bulk_license_action', 'create_license', 'update_license', 'permanently_delete_license', 'import_licenses_csv', 'cancel_phone_request', 'issue_phone_confirmation_code', 'create_tenant', 'create_contractor_sso', 'lookup_sso_identity', 'delete_sso_identity', 'issue_tenant_api_key', 'revoke_tenant_api_key'}
     write = write or action == 'rotate_tenant_api_key'
+    write = write or action == 'grant_one_time_issuance'
+    write = write or action == 'sign_update_manifest'
     write = write or action == 'change_admin_password'
     write = write or action in reception_actions - {'list_reception_intakes'}
     if write and method != 'POST':
         return _error('405 Method Not Allowed', 'State-changing actions require POST.', 'METHOD_NOT_ALLOWED', headers=[('Allow', 'POST')])
-    scope = 'passkey:manage' if action == 'diagnose_error' else 'admin:manage' if action in {'revoke_common_id_membership', 'set_admin_role', 'create_tenant', 'create_contractor_sso', 'lookup_sso_identity', 'delete_sso_identity', 'issue_tenant_api_key', 'revoke_tenant_api_key', 'rotate_tenant_api_key', 'list_tenant_api_keys', 'list_tenants', 'list_admin_principals', 'list_common_id_memberships'} else 'audit:read' if action in {'list_audit_logs', 'clear_attempts'} else 'intake:manage' if action in reception_actions or action == 'list_workbench_tenants' else 'phone:manage' if action in {'list_phone_requests', 'get_phone_request', 'cancel_phone_request', 'issue_phone_confirmation_code'} else 'license:write' if action in {'revoke_device', 'unrevoke_device', 'pause_license', 'resume_license', 'force_reauth_license', 'delete_license', 'restore_license', 'renew_license', 'bulk_license_action', 'create_license', 'update_license', 'permanently_delete_license', 'import_licenses_csv'} else 'license:read'
+    scope = 'passkey:manage' if action == 'diagnose_error' else 'admin:manage' if action in {'revoke_common_id_membership', 'set_admin_role', 'create_tenant', 'create_contractor_sso', 'lookup_sso_identity', 'delete_sso_identity', 'issue_tenant_api_key', 'revoke_tenant_api_key', 'rotate_tenant_api_key', 'list_tenant_api_keys', 'list_tenants', 'list_admin_principals', 'list_common_id_memberships', 'grant_one_time_issuance', 'list_tenant_sso_identities', 'sign_update_manifest'} else 'audit:read' if action in {'list_audit_logs', 'clear_attempts'} else 'intake:manage' if action in reception_actions or action == 'list_workbench_tenants' else 'phone:manage' if action in {'list_phone_requests', 'get_phone_request', 'cancel_phone_request', 'issue_phone_confirmation_code'} else 'license:write' if action in {'revoke_device', 'unrevoke_device', 'pause_license', 'resume_license', 'force_reauth_license', 'delete_license', 'restore_license', 'renew_license', 'bulk_license_action', 'create_license', 'update_license', 'permanently_delete_license', 'import_licenses_csv'} else 'license:read'
     claims, status, message = _authorize(request_context, data, scope)
     if status:
         return _error(status, message, 'INSUFFICIENT_ROLE' if status == '403 Forbidden' else 'SSO_SESSION_EXPIRED')
-    if action in {'change_admin_password', 'create_contractor_sso', 'lookup_sso_identity', 'delete_sso_identity', 'set_admin_role', 'revoke_common_id_membership'}:
+    if action in {'change_admin_password', 'create_contractor_sso', 'lookup_sso_identity', 'delete_sso_identity', 'set_admin_role', 'revoke_common_id_membership', 'grant_one_time_issuance', 'sign_update_manifest'}:
         try:
             issued_at = int(claims.get('reauthenticated_at', 0))
         except (TypeError, ValueError):
             issued_at = 0
         if issued_at < int(time.time()) - 120 or issued_at > int(time.time()) + 60:
             return _error('428 Precondition Required', 'Passkey reauthentication is required.', 'PASSKEY_REAUTH_REQUIRED')
-    if action in {'create_contractor_sso', 'lookup_sso_identity', 'delete_sso_identity'} and (not claims.get('oidc_sid')):
+    if action in {'create_contractor_sso', 'lookup_sso_identity', 'delete_sso_identity', 'grant_one_time_issuance', 'list_tenant_sso_identities', 'sign_update_manifest'} and (not claims.get('oidc_sid')):
         return _error('403 Forbidden', 'SSO IDで再ログインしてから招待してください。', 'OIDC_SESSION_REQUIRED')
     if action in reception_actions:
         return admin_respond('410 Gone', False, '相談受付は終了しました。契約先ごとのAPI操作をご利用ください。', {'error_code': 'RECEPTION_RETIRED'})
@@ -844,6 +854,102 @@ def _admin_api_request(request_context):
     connection = None
     try:
         connection = database.connect()
+        if action == 'sign_update_manifest':
+            manifest = data.get('manifest')
+            if isinstance(manifest, str):
+                try:
+                    manifest = json.loads(manifest)
+                except (TypeError, ValueError):
+                    manifest = None
+            if not isinstance(manifest, dict):
+                return admin_respond('400 Bad Request', False, '更新マニフェストを確認してください。')
+            from admin_oidc import sign_update_manifest
+            try:
+                result = sign_update_manifest(str(claims.get('oidc_sid') or ''), manifest)
+            except RuntimeError as exc:
+                signer_error = str(exc)
+                signer_errors = {
+                    'oidc_update_signer_admin_session_required': ('403 Forbidden', 'SSO署名サービスがこの管理者セッションを許可しませんでした。管理者SSO IDの権限を確認してください。'),
+                    'oidc_update_signer_passkey_expired': ('428 Precondition Required', 'Passkey再認証の期限が切れました。公開操作を最初からやり直してください。'),
+                    'oidc_update_signer_manifest_rejected': ('400 Bad Request', 'SSO署名サービスが更新マニフェストを拒否しました。配信元ファイルとProductRevisionを確認してください。'),
+                    'oidc_update_signer_rejected': ('502 Bad Gateway', 'SSO署名サービスが要求を拒否しました。管理者権限または署名設定を確認してください。'),
+                }
+                status, message = signer_errors.get(signer_error, ('502 Bad Gateway', 'SSO署名サービスに接続できませんでした。時間をおいて再度お試しください。'))
+                return admin_respond(status, False, message, {'error_code': signer_error})
+            except Exception:
+                return admin_respond('502 Bad Gateway', False, 'SSO署名サービスに接続できませんでした。時間をおいて再度お試しください。')
+            _audit_write(connection, request_context, 'update_manifest_signed', None, None, {}, {
+                'channel': str(manifest.get('channel') or '')[:16],
+                'version': str(manifest.get('version') or '')[:32],
+                'revision': manifest.get('revision'),
+                'sha256': str(manifest.get('sha256') or '')[:64],
+                'signing_kid': str(result.get('kid') or '')[:64],
+            }, claims, target_type='software_update_manifest', target_id=str(manifest.get('package_name') or '')[:120])
+            connection.commit()
+            return admin_respond('200 OK', True, '管理者SSOで承認し、更新マニフェストに署名しました。', {'signature': result['signature'], 'algorithm': result['algorithm'], 'kid': result['kid'], 'authorized_admin_sid': result.get('authorized_admin_sid', ''), 'signed_at': result.get('signed_at')})
+        if action == 'list_tenant_sso_identities':
+            tenant_id = admin_request_int(data, 'tenant_id', 0, 1, 9223372036854775807)
+            with connection.cursor() as cursor:
+                cursor.execute("CREATE TABLE IF NOT EXISTS tenant_sso_temporary_grants (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,grant_id CHAR(32) NOT NULL,subject_hash CHAR(64) NOT NULL,tenant_id BIGINT UNSIGNED NOT NULL,source_client_id BIGINT UNSIGNED NOT NULL,scopes_json TEXT NOT NULL,granted_by CHAR(64) NOT NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,expires_at DATETIME NOT NULL,issue_request_key VARCHAR(80) DEFAULT NULL,session_token_hash CHAR(64) DEFAULT NULL,consumed_at DATETIME DEFAULT NULL,revoked_at DATETIME DEFAULT NULL,PRIMARY KEY(id),UNIQUE KEY uq_tenant_sso_temporary_grant_id(grant_id),KEY idx_tenant_sso_temporary_subject(subject_hash,tenant_id,expires_at,revoked_at),KEY idx_tenant_sso_temporary_session(session_token_hash),KEY idx_tenant_sso_temporary_expiry(expires_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci")
+                cursor.execute("SELECT id FROM tenants WHERE id=%s AND status='active' AND environment='production' AND parent_tenant_id IS NULL LIMIT 1", (tenant_id,))
+                if not cursor.fetchone():
+                    return admin_respond('400 Bad Request', False, '有効な本番契約を選択してください。')
+                cursor.execute("SELECT subject_hash FROM tenant_sso_memberships WHERE tenant_id=%s UNION SELECT subject_hash FROM tenant_sso_temporary_grants WHERE tenant_id=%s AND expires_at>UTC_TIMESTAMP() AND revoked_at IS NULL ORDER BY subject_hash LIMIT 200", (tenant_id, tenant_id))
+                subject_hashes = [str(row['subject_hash']) for row in cursor.fetchall() if re.fullmatch('[a-f0-9]{64}', str(row.get('subject_hash') or ''))]
+            if not subject_hashes:
+                return admin_respond('200 OK', True, 'この契約に所属するSSO IDはありません。', {'identities': []})
+            try:
+                from admin_oidc import list_sso_identities_for_subjects
+                identities = list_sso_identities_for_subjects(str(claims.get('oidc_sid') or ''), subject_hashes)
+            except Exception:
+                return admin_respond('502 Bad Gateway', False, '契約に所属するSSO IDを取得できませんでした。時間をおいて再度お試しください。')
+            allowed = set(subject_hashes)
+            rows = [{'public_id': str(row.get('public_id') or ''), 'display_name': str(row.get('display_name') or '')}
+                    for row in identities if str(row.get('subject_hash') or '') in allowed and re.fullmatch('SID-[A-Z2-7]{26}', str(row.get('public_id') or ''))]
+            rows.sort(key=lambda row: (row['public_id'], row['display_name']))
+            return admin_respond('200 OK', True, '契約に所属するSSO IDを取得しました。', {'identities': rows})
+        if action == 'grant_one_time_issuance':
+            tenant_id = admin_request_int(data, 'tenant_id', 0, 1, 9223372036854775807)
+            target_public_id = admin_request_string(data, 'target_public_id').strip().upper()
+            if not re.fullmatch('SID-[A-Z2-7]{26}', target_public_id):
+                return admin_respond('400 Bad Request', False, '付与先のSSO IDを確認してください。')
+            from admin_oidc import ISSUER, resolve_sso_identity
+            try:
+                identity = resolve_sso_identity(str(claims['oidc_sid']), target_public_id)
+            except RuntimeError as exc:
+                if 'not_found' in str(exc):
+                    return admin_respond('404 Not Found', False, '指定したSSO IDが見つからないか、利用できません。')
+                return admin_respond('502 Bad Gateway', False, 'SSO IDを確認できませんでした。再ログイン後にやり直してください。')
+            subject = hashlib.sha256((ISSUER + '\0' + identity['sub']).encode('utf-8')).hexdigest()
+            actor = str(claims.get('credential_id_hash') or '')
+            if not re.fullmatch('[a-f0-9]{64}', actor):
+                return admin_respond('403 Forbidden', False, '管理者セッションを確認できません。')
+            with connection.cursor() as cursor:
+                cursor.execute("CREATE TABLE IF NOT EXISTS tenant_sso_temporary_grants (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,grant_id CHAR(32) NOT NULL,subject_hash CHAR(64) NOT NULL,tenant_id BIGINT UNSIGNED NOT NULL,source_client_id BIGINT UNSIGNED NOT NULL,scopes_json TEXT NOT NULL,granted_by CHAR(64) NOT NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,expires_at DATETIME NOT NULL,issue_request_key VARCHAR(80) DEFAULT NULL,session_token_hash CHAR(64) DEFAULT NULL,consumed_at DATETIME DEFAULT NULL,revoked_at DATETIME DEFAULT NULL,PRIMARY KEY(id),UNIQUE KEY uq_tenant_sso_temporary_grant_id(grant_id),KEY idx_tenant_sso_temporary_subject(subject_hash,tenant_id,expires_at,revoked_at),KEY idx_tenant_sso_temporary_session(session_token_hash),KEY idx_tenant_sso_temporary_expiry(expires_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci")
+                cursor.execute("SELECT id,name,slug FROM tenants WHERE id=%s AND status='active' AND environment='production' AND parent_tenant_id IS NULL LIMIT 1", (tenant_id,))
+                tenant = cursor.fetchone()
+                if not tenant:
+                    return admin_respond('400 Bad Request', False, '有効な本番契約を選択してください。')
+                cursor.execute('SELECT 1 FROM tenant_sso_memberships WHERE subject_hash=%s AND tenant_id=%s UNION SELECT 1 FROM tenant_sso_temporary_grants WHERE subject_hash=%s AND tenant_id=%s AND expires_at>UTC_TIMESTAMP() AND revoked_at IS NULL LIMIT 1', (subject, tenant_id, subject, tenant_id))
+                if not cursor.fetchone():
+                    return admin_respond('403 Forbidden', False, '指定したSSO IDは選択した契約に所属していません。')
+                cursor.execute("SELECT id FROM tenant_api_clients WHERE tenant_id=%s AND key_kind='standard' AND status='active' AND key_hash IS NOT NULL AND key_hash<>'' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP()) ORDER BY id DESC LIMIT 1", (tenant_id,))
+                client = cursor.fetchone()
+            if not client:
+                return admin_respond('409 Conflict', False, 'この契約に有効なAPIクライアントがありません。')
+            from v3_handlers import _assert_write_fence
+            _assert_write_fence(connection)
+            connection.begin()
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT grant_id FROM tenant_sso_temporary_grants WHERE subject_hash=%s AND tenant_id=%s AND expires_at>UTC_TIMESTAMP() AND revoked_at IS NULL LIMIT 1 FOR UPDATE", (subject, tenant_id))
+                if cursor.fetchone():
+                    connection.rollback()
+                    return admin_respond('409 Conflict', False, 'このSSO IDには対象契約の未失効な1回限り権限があります。先にその権限を使用してください。')
+                grant_id = secrets.token_hex(16)
+                cursor.execute("INSERT INTO tenant_sso_temporary_grants(grant_id,subject_hash,tenant_id,source_client_id,scopes_json,granted_by,created_at,expires_at) VALUES(%s,%s,%s,%s,%s,%s,UTC_TIMESTAMP(),UTC_TIMESTAMP()+INTERVAL 24 HOUR)", (grant_id, subject, tenant_id, int(client['id']), '[\"tenant:read\",\"licenses:write\"]', actor))
+            _audit_write(connection, request_context, 'tenant_one_time_issuance_granted', tenant_id, None, {}, {'grant_id': grant_id, 'target_public_id': identity.get('public_id', ''), 'source_client_id': int(client['id']), 'expires_in_hours': 24}, claims, target_type='tenant_sso_temporary_grant', target_id=grant_id)
+            connection.commit()
+            return admin_respond('200 OK', True, '指定したSSO IDに今回1件のライセンス発行権限を付与しました。1件発行すると自動失効します。', {'grant_id': grant_id, 'target_public_id': identity['public_id'], 'tenant_id': tenant_id, 'tenant_name': str(tenant['name']), 'expires_in_hours': 24})
         if action == 'create_contractor_sso':
             email = str(data.get('contractor_email', '')).strip()
             tenant_id = admin_request_int(data, 'tenant_id', 0, 1, 9223372036854775807)

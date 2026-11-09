@@ -70,6 +70,13 @@ def _encode_flow(flow):
     signature = _b64e(hmac.new(_flow_key(), payload.encode('ascii'), hashlib.sha256).digest())
     return payload + '.' + signature
 
+def _flow_cookie_name(prefix, state):
+    """Give every concurrent OIDC request its own cookie slot."""
+    state = str(state or '')
+    if not re.fullmatch('[A-Za-z0-9_-]{32,128}', state):
+        raise ValueError('oidc_state_invalid')
+    return prefix + '_' + state
+
 @legacy_compatible(callback_index=None, request_index=0)
 def _read_flow(request_context, cookie_name=FLOW_COOKIE):
     jar = SimpleCookie()
@@ -122,6 +129,47 @@ def _http_json(url, form=None, basic=None):
     if not isinstance(value, dict):
         raise RuntimeError('oidc_invalid_response')
     return value
+
+def sign_update_manifest(sid, manifest):
+    """Ask the SSO core to sign an update manifest after admin Passkey step-up."""
+    if not re.fullmatch('[a-f0-9]{64}', str(sid or '')) or not isinstance(manifest, dict):
+        raise RuntimeError('oidc_update_signing_request_invalid')
+    secret = _secret()
+    if not secret:
+        raise RuntimeError('oidc_client_unconfigured')
+    body = json.dumps({'sid': sid, 'manifest': manifest}, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    headers = {
+        'Accept': 'application/json', 'Content-Type': 'application/json',
+        'User-Agent': 'TutiLicensePythonAdmin/1.0', 'Connection': 'close',
+        'Authorization': 'Basic ' + base64.b64encode((CLIENT_ID + ':' + secret).encode()).decode('ascii'),
+    }
+    req = urllib.request.Request(ISSUER + '/admin/update/sign', data=body, headers=headers, method='POST')
+    opener = urllib.request.build_opener(_NoRedirect())
+    try:
+        with opener.open(req, timeout=20) as response:
+            raw = response.read(65537)
+    except urllib.error.HTTPError as exc:
+        try:
+            error_body = json.loads(exc.read(4097).decode('utf-8'))
+            error = str(error_body.get('error') or '') if isinstance(error_body, dict) else ''
+        except Exception:
+            error = ''
+        if error == 'admin_session_required':
+            raise RuntimeError('oidc_update_signer_admin_session_required') from exc
+        if error == 'recent_admin_passkey_required':
+            raise RuntimeError('oidc_update_signer_passkey_expired') from exc
+        if error == 'invalid_manifest':
+            raise RuntimeError('oidc_update_signer_manifest_rejected') from exc
+        raise RuntimeError('oidc_update_signer_rejected') from exc
+    try:
+        if len(raw) > 65536:
+            raise RuntimeError('oidc_response_too_large')
+        result = json.loads(raw.decode('utf-8'))
+    except (OSError, urllib.error.URLError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError('oidc_update_signer_unavailable') from exc
+    if not isinstance(result, dict) or not re.fullmatch('[A-Za-z0-9+/]+={0,2}', str(result.get('signature') or '')) or result.get('algorithm') != 'RS256':
+        raise RuntimeError('oidc_update_signer_invalid_response')
+    return result
 
 def _jwks(force_refresh=False):
     global _JWKS_CACHE, _JWKS_CACHE_EXPIRES
@@ -219,6 +267,38 @@ def lookup_sso_identity(sid, email):
         raise RuntimeError('oidc_client_unconfigured')
     return _http_json(ISSUER + '/admin/identity/search', {'sid': sid, 'email': email}, base64.b64encode((CLIENT_ID + ':' + secret).encode()).decode())
 
+def resolve_sso_identity(sid, public_id):
+    if not re.fullmatch('[a-f0-9]{64}', str(sid or '')) or not re.fullmatch('SID-[A-Z2-7]{26}', str(public_id or '').strip().upper()):
+        raise RuntimeError('oidc_identity_invalid')
+    secret = _secret()
+    if not secret:
+        raise RuntimeError('oidc_client_unconfigured')
+    result = _http_json(ISSUER + '/admin/identity/resolve', {'sid': sid, 'public_id': str(public_id).strip().upper()}, base64.b64encode((CLIENT_ID + ':' + secret).encode()).decode())
+    if result.get('found') is not True or not isinstance(result.get('identity'), dict):
+        raise RuntimeError('oidc_identity_not_found')
+    identity = result['identity']
+    sub = str(identity.get('sub') or '')
+    if not sub or len(sub) > 200:
+        raise RuntimeError('oidc_subject_unavailable')
+    return {'sub': sub, 'public_id': str(identity.get('public_id') or ''), 'display_name': str(identity.get('display_name') or '')}
+
+def list_sso_identities_for_subjects(sid, subject_hashes):
+    if not re.fullmatch('[a-f0-9]{64}', str(sid or '')) or not isinstance(subject_hashes, (list, tuple)):
+        raise RuntimeError('oidc_identity_invalid')
+    hashes = list(dict.fromkeys(str(value) for value in subject_hashes))
+    if not hashes or len(hashes) > 200 or any(not re.fullmatch('[a-f0-9]{64}', value) for value in hashes):
+        raise RuntimeError('oidc_subject_list_invalid')
+    secret = _secret()
+    if not secret:
+        raise RuntimeError('oidc_client_unconfigured')
+    result = _http_json(ISSUER + '/admin/identity/list-members',
+                        {'sid': sid, 'subject_hashes': ','.join(hashes)},
+                        base64.b64encode((CLIENT_ID + ':' + secret).encode()).decode())
+    identities = result.get('identities')
+    if result.get('ok') is not True or not isinstance(identities, list):
+        raise RuntimeError('oidc_identity_list_invalid')
+    return identities
+
 def delete_sso_identity(sid, email, public_id):
     if not re.fullmatch('[a-f0-9]{64}', str(sid or '')):
         raise RuntimeError('oidc_session_invalid')
@@ -286,7 +366,8 @@ def start(request_context):
         params['max_age'] = '0'
     location = ISSUER + '/authorize?' + urllib.parse.urlencode(params)
     cookie = _encode_flow(flow)
-    return _redirect(location, '303 See Other', [('Set-Cookie', FLOW_COOKIE + '=' + cookie + site_url('; Path=/license/python-migration/; Max-Age=600; Secure; HttpOnly; SameSite=Lax'))])
+    cookie_name = _flow_cookie_name(FLOW_COOKIE, state)
+    return _redirect(location, '303 See Other', [('Set-Cookie', cookie_name + '=' + cookie + site_url('; Path=/license/python-migration/; Max-Age=600; Secure; HttpOnly; SameSite=Lax'))])
 
 @legacy_compatible(callback_index=1, request_index=0)
 def start_tenant(request_context):
@@ -314,40 +395,80 @@ def start_tenant(request_context):
     if app_ticket:
         params['max_age'] = '0'
     location = ISSUER + '/authorize?' + urllib.parse.urlencode(params)
+    if app_ticket:
+        from mnsl_app_sso import store_oidc_flow
+        store_oidc_flow(app_ticket, host, flow)
     cookie = _encode_flow(flow)
-    return _redirect(location, '303 See Other', [('Set-Cookie', TENANT_FLOW_COOKIE + '=' + cookie + site_url('; Path=/license/python-migration/; Max-Age=600; Secure; HttpOnly; SameSite=Lax'))])
+    cookie_name = _flow_cookie_name(TENANT_FLOW_COOKIE, state)
+    return _redirect(location, '303 See Other', [('Set-Cookie', cookie_name + '=' + cookie + site_url('; Path=/license/python-migration/; Max-Age=600; Secure; HttpOnly; SameSite=Lax'))])
 
 @legacy_compatible(callback_index=1, request_index=0)
 def callback(request_context):
     host = _host(request_context)
     query = php_parse_query(str(request_context.get('query', '')), keep_blank_values=True)
     requested_state = query.get('state', [''])[-1]
-    admin_flow = _read_flow(request_context, FLOW_COOKIE)
-    tenant_flow = _read_flow(request_context, TENANT_FLOW_COOKIE)
-    candidates = [(FLOW_COOKIE, admin_flow), (TENANT_FLOW_COOKIE, tenant_flow)]
-    matching = [(name, item) for name, item in candidates if isinstance(item, dict) and item.get('state') == requested_state]
+    matching = []
+    if re.fullmatch('[A-Za-z0-9_-]{32,128}', str(requested_state or '')):
+        for prefix in (TENANT_FLOW_COOKIE, FLOW_COOKIE):
+            name = _flow_cookie_name(prefix, requested_state)
+            item = _read_flow(request_context, name)
+            if isinstance(item, dict) and hmac.compare_digest(str(item.get('state', '')), requested_state):
+                matching.append((name, item))
+        # Accept old clients during rollout, but only when their cookie state
+        # exactly matches this callback. Never fall back to another live flow.
+        for name in (TENANT_FLOW_COOKIE, FLOW_COOKIE):
+            item = _read_flow(request_context, name)
+            if isinstance(item, dict) and hmac.compare_digest(str(item.get('state', '')), requested_state):
+                matching.append((name, item))
     if matching:
-        flow_cookie, flow = matching[-1]
-    elif isinstance(admin_flow, dict) and (not isinstance(tenant_flow, dict)):
-        flow_cookie, flow = (FLOW_COOKIE, admin_flow)
-    elif isinstance(tenant_flow, dict) and (not isinstance(admin_flow, dict)):
-        flow_cookie, flow = (TENANT_FLOW_COOKIE, tenant_flow)
+        flow_cookie, flow = matching[0]
     else:
-        flow_cookie, flow = (FLOW_COOKIE, admin_flow)
-    clear = ('Set-Cookie', flow_cookie + site_url('=; Path=/license/python-migration/; Max-Age=0; Secure; HttpOnly; SameSite=Lax'))
+        flow_cookie, flow = '', None
+    if not flow and re.fullmatch('[A-Za-z0-9_-]{32,128}', str(requested_state or '')):
+        # Some embedded browsers discard or overwrite cookies across the SSO
+        # provider round-trip. The random state plus server-held PKCE verifier
+        # safely recovers this native-app flow without accepting another login.
+        try:
+            from mnsl_app_sso import consume_oidc_flow
+            recovered = consume_oidc_flow(requested_state, host)
+        except Exception:
+            recovered = None
+        if isinstance(recovered, dict) and recovered.get('target') == 'tenant_app' and recovered.get('app_ticket'):
+            flow = recovered
+            flow_cookie = _flow_cookie_name(TENANT_FLOW_COOKIE, requested_state)
+    elif flow and flow.get('target') == 'tenant_app':
+        try:
+            from mnsl_app_sso import consume_oidc_flow
+            consume_oidc_flow(requested_state, host)
+        except Exception:
+            pass
+    clear = (('Set-Cookie', flow_cookie + site_url('=; Path=/license/python-migration/; Max-Age=0; Secure; HttpOnly; SameSite=Lax')) if flow_cookie else None)
+    clear_headers = [clear] if clear else []
+    def fail_app_login(code):
+        if isinstance(flow, dict) and flow.get('target') == 'tenant_app' and flow.get('app_ticket'):
+            try:
+                from mnsl_app_sso import fail_login
+                fail_login(str(flow['app_ticket']), host, code)
+            except Exception:
+                pass
     if not host or not isinstance(flow, dict) or flow.get('host') != host or (int(flow.get('created', 0)) < int(time.time()) - 600):
-        return _redirect('admin_api.php?oidc_error=expired', headers=[clear])
+        fail_app_login('mnsl_sso_login_expired')
+        return _redirect('admin_api.php?oidc_error=expired', headers=clear_headers)
     if 'error' in query:
-        return _redirect('admin_api.php?oidc_error=provider', headers=[clear])
+        fail_app_login('mnsl_sso_provider_login_failed')
+        return _redirect('admin_api.php?oidc_error=provider', headers=clear_headers)
     code, state = (query.get('code', [''])[-1], query.get('state', [''])[-1])
     if not code or not hmac.compare_digest(str(flow.get('state', '')), state):
-        return _redirect('admin_api.php?oidc_error=state', headers=[clear])
+        fail_app_login('mnsl_sso_callback_state_invalid')
+        return _redirect('admin_api.php?oidc_error=state', headers=clear_headers)
     secret = _secret()
     if not secret:
-        return _redirect('admin_api.php?oidc_error=unconfigured', headers=[clear])
+        fail_app_login('mnsl_sso_service_unavailable')
+        return _redirect('admin_api.php?oidc_error=unconfigured', headers=clear_headers)
     target = str(flow.get('target', 'admin'))
     if target not in {'admin', 'mobile', 'tenant', 'tenant_app'}:
-        return _redirect('admin_api.php?oidc_error=failed', headers=[clear])
+        fail_app_login('mnsl_sso_callback_invalid')
+        return _redirect('admin_api.php?oidc_error=failed', headers=clear_headers)
     connection = None
     failure_stage = 'token_exchange'
     try:
@@ -362,7 +483,7 @@ def callback(request_context):
         failure_stage = 'post_authentication_setup'
         if target == 'tenant_app':
             from mnsl_app_sso import complete_login
-            return complete_login(request_context, flow, claims, session, clear)
+            return complete_login(request_context, flow, claims, session, clear_headers)
         if target == 'tenant':
             ticket = _b64e(secrets.token_bytes(32))
             subject_hash = hashlib.sha256((ISSUER + '\x00' + str(claims['sub'])).encode()).hexdigest()
@@ -374,7 +495,7 @@ def callback(request_context):
                 cursor.execute('INSERT INTO tenant_sso_bootstrap_tickets (ticket_hash,subject_hash,oidc_sid,created_at,expires_at) VALUES(%s,%s,%s,UTC_TIMESTAMP(),UTC_TIMESTAMP()+INTERVAL 2 MINUTE)', (hashlib.sha256(ticket.encode()).hexdigest(), subject_hash, str(claims['sid'])))
             connection.commit()
             location = 'https://' + host + site_url('/license/python-migration/tenant-portal/#sso_ticket=') + urllib.parse.quote(ticket, safe='')
-            return _redirect(location, headers=[clear, ('Referrer-Policy', 'no-referrer')])
+            return _redirect(location, headers=[*clear_headers, ('Referrer-Policy', 'no-referrer')])
         principal_hash = hashlib.sha256((ISSUER + '\x00' + claims['sub']).encode()).hexdigest()
         auth_time = int(claims.get('auth_time') or 0)
         if flow.get('step_up') and (not hmac.compare_digest(str(flow.get('actor_hash') or ''), principal_hash) or auth_time < int(flow['created']) or auth_time > int(time.time()) + 60):
@@ -410,7 +531,7 @@ def callback(request_context):
             csrf = secrets.token_urlsafe(32)
             max_age = 300
             destination = 'https://' + host + site_url('/license/python-migration/mobile-manager/admin-auth.php?action=app_authorize&ticket=') + app_ticket if app_ticket else 'https://' + host + site_url('/license/python-migration/mobile-manager/?mode=admin&sso_resume=1')
-            return _redirect(destination, headers=[clear, ('Set-Cookie', SESSION_COOKIE + '=' + mobile_token + '; Path=' + BASE_PATH + '; Max-Age=' + str(max_age) + '; Secure; HttpOnly; SameSite=Strict'), ('Set-Cookie', CSRF_COOKIE + '=' + csrf + '; Path=' + BASE_PATH + '; Max-Age=300; Secure; SameSite=Strict'), ('Set-Cookie', SSO_COOKIE + '=; Path=' + BASE_PATH + '; Max-Age=0; Secure; HttpOnly; SameSite=Strict')])
+            return _redirect(destination, headers=[*clear_headers, ('Set-Cookie', SESSION_COOKIE + '=' + mobile_token + '; Path=' + BASE_PATH + '; Max-Age=' + str(max_age) + '; Secure; HttpOnly; SameSite=Strict'), ('Set-Cookie', CSRF_COOKIE + '=' + csrf + '; Path=' + BASE_PATH + '; Max-Age=300; Secure; SameSite=Strict'), ('Set-Cookie', SSO_COOKIE + '=; Path=' + BASE_PATH + '; Max-Age=0; Secure; HttpOnly; SameSite=Strict')])
         expires = min(int(time.time()) + 1800, int(session['expires_at']))
         from web_passkey_auth import ADMIN_SCOPES, _encode_token
         local_token = _encode_token({'purpose': 'ha_admin', 'auth_source': 'oidc_sso', 'scope': list(ADMIN_SCOPES), 'client': 'admin_web', 'credential_id_hash': principal_hash, 'issued_at': 0, 'expires': expires, 'oidc_sid': str(claims['sid']), 'reauthenticated_at': reauthenticated_at, 'auth_method': 'oidc_sso', 'nonce': _b64e(secrets.token_bytes(16))})
@@ -420,15 +541,20 @@ def callback(request_context):
             destination = str(flow.get('desktop_redirect') or '') + '#session=' + urllib.parse.quote(local_token, safe='') + '&state=' + urllib.parse.quote(str(flow.get('desktop_state') or ''), safe='')
             session_cookie = SESSION_COOKIE + '=' + local_token + site_url('; Path=/license/python-migration/; Max-Age=') + str(max(1, expires - int(time.time()))) + '; Secure; HttpOnly; SameSite=Lax'
             csrf_cookie = CSRF_COOKIE + '=' + csrf + site_url('; Path=/license/python-migration/; Max-Age=') + str(max(1, expires - int(time.time()))) + '; Secure; SameSite=Lax'
-            return _redirect(destination, headers=[clear, ('Set-Cookie', session_cookie), ('Set-Cookie', csrf_cookie), ('Referrer-Policy', 'no-referrer')])
+            return _redirect(destination, headers=[*clear_headers, ('Set-Cookie', session_cookie), ('Set-Cookie', csrf_cookie), ('Referrer-Policy', 'no-referrer')])
         destination = 'ops-app/' if target == 'admin' and flow.get('return_app') == 'ops' else 'admin_api.php'
         cookie_path = site_url('/license/python-migration/')
         cookie_max_age = str(max(1, expires - int(time.time())))
         reset = _clear_admin_cookie_paths((SESSION_COOKIE, CSRF_COOKIE))
-        return _redirect(destination, headers=[clear, *reset,
+        return _redirect(destination, headers=[*clear_headers, *reset,
             ('Set-Cookie', SESSION_COOKIE + '=' + local_token + '; Path=' + cookie_path + '; Max-Age=' + cookie_max_age + '; Secure; HttpOnly; SameSite=Lax'),
             ('Set-Cookie', CSRF_COOKIE + '=' + csrf + '; Path=' + cookie_path + '; Max-Age=' + cookie_max_age + '; Secure; SameSite=Lax')])
     except Exception:
+        if target == 'tenant_app':
+            # Keep internal exception details in the audit log; the native app
+            # receives only a stable, non-sensitive code instead of polling
+            # forever while the browser shows a different page.
+            fail_app_login('mnsl_sso_' + failure_stage + '_failed')
         try:
             from audit import append_event
             append_event('admin_oidc_callback_failed', {
@@ -444,7 +570,7 @@ def callback(request_context):
                 connection.rollback()
             except Exception:
                 pass
-        return _redirect('admin_api.php?oidc_error=failed', headers=[clear])
+        return _redirect('admin_api.php?oidc_error=failed', headers=clear_headers)
     finally:
         if connection:
             connection.close()

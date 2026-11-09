@@ -770,6 +770,27 @@ CREATE TABLE IF NOT EXISTS `tenant_sso_memberships` (
   KEY `idx_tenant_sso_membership_tenant` (`tenant_id`,`subject_hash`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `tenant_sso_temporary_grants` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `grant_id` char(32) NOT NULL,
+  `subject_hash` char(64) NOT NULL,
+  `tenant_id` bigint(20) unsigned NOT NULL,
+  `source_client_id` bigint(20) unsigned NOT NULL,
+  `scopes_json` text NOT NULL,
+  `granted_by` char(64) NOT NULL,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `expires_at` datetime NOT NULL,
+  `issue_request_key` varchar(80) DEFAULT NULL,
+  `session_token_hash` char(64) DEFAULT NULL,
+  `consumed_at` datetime DEFAULT NULL,
+  `revoked_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_tenant_sso_temporary_grant_id` (`grant_id`),
+  KEY `idx_tenant_sso_temporary_subject` (`subject_hash`,`tenant_id`,`expires_at`,`revoked_at`),
+  KEY `idx_tenant_sso_temporary_session` (`session_token_hash`),
+  KEY `idx_tenant_sso_temporary_expiry` (`expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `tenant_sso_sessions` (
   `token_hash` char(64) NOT NULL,
   `subject_hash` char(64) NOT NULL,

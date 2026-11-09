@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "2415.jp API (V8 independent product-key issuance)",
-    "description": "ライセンス認証API v4を追加。署名付き端末セッション、短期アクセストークン、ローテーション式更新トークンに対応。",
-    "version": "1.17.0"
+    "description": "ライセンス認証API v4にセッション照会とV4専用の署名付きオフラインチケットを追加。V2/V3との互換性を維持します。",
+    "version": "1.18.0"
   },
   "servers": [
     {
@@ -239,7 +239,6 @@
                       "licenses.restore_device",
                       "licenses.revoke_all_devices",
                       "licenses.sandbox_bulk_delete",
-                      "licenses.batch_issue",
                       "licenses.bulk_issue",
                       "licenses.bulk_cancel",
                       "sandbox_keys.issue",
@@ -1079,59 +1078,6 @@
             "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
           }
         ]
-      },
-      "post": {
-        "summary": "Issue up to 100 licenses idempotently",
-        "security": [
-          {
-            "baasApiKey": []
-          },
-          {
-            "tenantApiKey": []
-          },
-          {
-            "haSession": [],
-            "tenantId": [],
-            "tenantEnvironment": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 20,
-              "maxLength": 100
-            }
-          },
-          {
-            "name": "X-BaaS-Environment",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "sandbox",
-                "production"
-              ]
-            },
-            "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
-          }
-        ],
-        "responses": {
-          "207": {
-            "description": "Per-item issuance result"
-          },
-          "503": {
-            "description": "Node is not writable"
-          }
-        },
-        "tags": [
-          "プロダクトキー発行"
-        ],
-        "operationId": "post_api_baas_v1_batch_php"
       }
     },
     "/api/baas/v1/webhooks.php": {
@@ -5944,6 +5890,410 @@
         }
       },
       "description": "全要求は本文hash、POST、固定APIパス、session_id、時刻、一度限りnonce、Bearer tokenのSHA-256 hexを端末署名します。"
+    },
+    "/api/v4/introspect.php": {
+      "post": {
+        "summary": "Inspect an active V4 license session",
+        "tags": [
+          "ライセンス認証v4"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "処理成功。"
+          },
+          "400": {
+            "description": "要求形式または署名が正しくありません。"
+          },
+          "401": {
+            "description": "認証または署名が無効です。"
+          },
+          "403": {
+            "description": "ライセンスが無効または期限切れです。"
+          },
+          "409": {
+            "description": "端末上限または再利用を検知しました。"
+          },
+          "429": {
+            "description": "試行回数上限です。"
+          },
+          "503": {
+            "description": "サービスまたはHA書込みノードを利用できません。Retry-After: 2"
+          }
+        },
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": true,
+            "description": "Bearer access token",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-License-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-License-Timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-License-Nonce",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 180
+            }
+          },
+          {
+            "name": "X-License-Proof",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [],
+                "properties": {}
+              }
+            }
+          }
+        },
+        "description": "Requires a fresh device proof bound to this exact endpoint and request body."
+      }
+    },
+    "/api/v4/offline-ticket.php": {
+      "post": {
+        "summary": "Issue a signed V4 offline ticket",
+        "tags": [
+          "ライセンス認証v4"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "処理成功。"
+          },
+          "400": {
+            "description": "要求形式または署名が正しくありません。"
+          },
+          "401": {
+            "description": "認証または署名が無効です。"
+          },
+          "403": {
+            "description": "ライセンスが無効または期限切れです。"
+          },
+          "409": {
+            "description": "端末上限または再利用を検知しました。"
+          },
+          "429": {
+            "description": "試行回数上限です。"
+          },
+          "503": {
+            "description": "サービスまたはHA書込みノードを利用できません。Retry-After: 2"
+          }
+        },
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": true,
+            "description": "Bearer access token",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-License-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-License-Timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-License-Nonce",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 180
+            }
+          },
+          {
+            "name": "X-License-Proof",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "hours": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 72,
+                    "default": 24
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Requires a fresh device proof. Tickets last at most 72 hours and never outlive the license."
+      }
+    },
+    "/api/v4/offline-public-key.php": {
+      "get": {
+        "summary": "Get the V4 offline ticket verification key",
+        "description": "Returns the public Ed25519 key used for V4 offline tickets.",
+        "responses": {
+          "200": {
+            "description": "Public signing key."
+          },
+          "503": {
+            "description": "Signing key unavailable."
+          }
+        }
+      }
+    },
+    "/license/api/v4/introspect.php": {
+      "post": {
+        "summary": "Inspect an active V4 license session",
+        "tags": [
+          "ライセンス認証v4"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "処理成功。"
+          },
+          "400": {
+            "description": "要求形式または署名が正しくありません。"
+          },
+          "401": {
+            "description": "認証または署名が無効です。"
+          },
+          "403": {
+            "description": "ライセンスが無効または期限切れです。"
+          },
+          "409": {
+            "description": "端末上限または再利用を検知しました。"
+          },
+          "429": {
+            "description": "試行回数上限です。"
+          },
+          "503": {
+            "description": "サービスまたはHA書込みノードを利用できません。Retry-After: 2"
+          }
+        },
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": true,
+            "description": "Bearer access token",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-License-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-License-Timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-License-Nonce",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 180
+            }
+          },
+          {
+            "name": "X-License-Proof",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [],
+                "properties": {}
+              }
+            }
+          }
+        },
+        "description": "Requires a fresh device proof bound to this exact endpoint and request body."
+      }
+    },
+    "/license/api/v4/offline-ticket.php": {
+      "post": {
+        "summary": "Issue a signed V4 offline ticket",
+        "tags": [
+          "ライセンス認証v4"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "処理成功。"
+          },
+          "400": {
+            "description": "要求形式または署名が正しくありません。"
+          },
+          "401": {
+            "description": "認証または署名が無効です。"
+          },
+          "403": {
+            "description": "ライセンスが無効または期限切れです。"
+          },
+          "409": {
+            "description": "端末上限または再利用を検知しました。"
+          },
+          "429": {
+            "description": "試行回数上限です。"
+          },
+          "503": {
+            "description": "サービスまたはHA書込みノードを利用できません。Retry-After: 2"
+          }
+        },
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": true,
+            "description": "Bearer access token",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-License-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-License-Timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "X-License-Nonce",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 180
+            }
+          },
+          {
+            "name": "X-License-Proof",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "hours": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 72,
+                    "default": 24
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Requires a fresh device proof. Tickets last at most 72 hours and never outlive the license."
+      }
+    },
+    "/license/api/v4/offline-public-key.php": {
+      "get": {
+        "summary": "Get the V4 offline ticket verification key",
+        "description": "Returns the public Ed25519 key used for V4 offline tickets.",
+        "responses": {
+          "200": {
+            "description": "Public signing key."
+          },
+          "503": {
+            "description": "Signing key unavailable."
+          }
+        }
+      }
     }
   },
   "components": {

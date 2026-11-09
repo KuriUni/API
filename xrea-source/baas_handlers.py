@@ -250,7 +250,8 @@ def _authorize_sso_session(connection, request_context, scope, operation, ip_has
         raise BaaSError(401, 'tenant_sso_session_required')
     token_hash = hashlib.sha256(session_token.encode()).hexdigest()
     with connection.cursor() as cursor:
-        cursor.execute("SELECT s.subject_hash,s.oidc_sid,s.sso_checked_at,s.tenant_id,s.expires_at,s.created_at,m.source_client_id,m.scopes_json,linked_key.scopes_json AS linked_scopes_json,t.slug AS tenant_slug,t.status AS tenant_status,t.environment AS tenant_environment,t.parent_tenant_id FROM tenant_sso_sessions s JOIN tenant_sso_memberships m ON m.subject_hash=s.subject_hash AND m.tenant_id=s.tenant_id JOIN tenant_api_clients linked_key ON linked_key.id=m.source_client_id AND linked_key.tenant_id=m.tenant_id AND linked_key.key_hash IS NOT NULL AND linked_key.key_hash<>'' AND linked_key.status IN ('active','retiring') AND linked_key.revoked_at IS NULL AND (linked_key.expires_at IS NULL OR linked_key.expires_at>UTC_TIMESTAMP()) AND (linked_key.status='active' OR linked_key.grace_expires_at>UTC_TIMESTAMP()) JOIN tenants t ON t.id=s.tenant_id WHERE s.token_hash=%s AND s.revoked_at IS NULL AND s.expires_at>UTC_TIMESTAMP() LIMIT 1", (token_hash,))
+        # A one-time grant supplies its own fixed scopes; the linked standard key must still be live.
+        cursor.execute("SELECT s.subject_hash,s.oidc_sid,s.sso_checked_at,s.tenant_id,s.expires_at,s.created_at,COALESCE(g.source_client_id,m.source_client_id) source_client_id,COALESCE(g.scopes_json,m.scopes_json) scopes_json,COALESCE(g.scopes_json,linked_key.scopes_json) AS linked_scopes_json,t.slug AS tenant_slug,t.status AS tenant_status,t.environment AS tenant_environment,t.parent_tenant_id FROM tenant_sso_sessions s LEFT JOIN tenant_sso_memberships m ON m.subject_hash=s.subject_hash AND m.tenant_id=s.tenant_id LEFT JOIN tenant_sso_temporary_grants g ON g.session_token_hash=s.token_hash AND g.subject_hash=s.subject_hash AND g.tenant_id=s.tenant_id AND g.expires_at>UTC_TIMESTAMP() AND g.revoked_at IS NULL JOIN tenant_api_clients linked_key ON linked_key.id=COALESCE(g.source_client_id,m.source_client_id) AND linked_key.tenant_id=s.tenant_id AND linked_key.key_hash IS NOT NULL AND linked_key.key_hash<>'' AND linked_key.status IN ('active','retiring') AND linked_key.revoked_at IS NULL AND (linked_key.expires_at IS NULL OR linked_key.expires_at>UTC_TIMESTAMP()) AND (linked_key.status='active' OR linked_key.grace_expires_at>UTC_TIMESTAMP()) JOIN tenants t ON t.id=s.tenant_id WHERE s.token_hash=%s AND s.revoked_at IS NULL AND s.expires_at>UTC_TIMESTAMP() AND (m.subject_hash IS NOT NULL OR g.grant_id IS NOT NULL) LIMIT 1", (token_hash,))
         row = cursor.fetchone()
     if not row or row.get('tenant_status') != 'active':
         _attempt(connection, None, prefix, operation, 'invalid_tenant_sso_session', 401, ip_hash)
@@ -1292,14 +1293,15 @@ def licenses(request_context):
 
 @legacy_compatible(callback_index=1, request_index=0)
 def batch(request_context):
-    """Port the synchronous BaaS batch license issue and job lookup endpoint."""
+    """Retain old job reads while moving every new multi-key request to V8."""
     rid = uuid.uuid4().hex[:16]
     connection = None
     method = str(request_context.get('method', 'GET'))
     try:
         connection = database.connect()
         scope = 'licenses:read' if method == 'GET' else 'licenses:write'
-        client, headers, ip_hash = _authorize_key(connection, request_context, scope, 'batch.' + method.lower(), rid)
+        operation = 'batch.status' if method == 'GET' else 'batch.issue'
+        client, headers, ip_hash = _authorize_key(connection, request_context, scope, operation, rid)
         tenant_id = int(client['tenant_id'])
         if method == 'GET':
             job_id = max(1, _query_int(request_context, 'job_id'))
@@ -1329,7 +1331,6 @@ def batch(request_context):
             return _reply(200, {'ok': True, 'job': job}, headers)
         if method != 'POST':
             raise BaaSError(405, 'method_not_allowed')
-        _assert_write_fence(connection)
         data = _baas_json_input(request_context)
         items = data.get('items')
         if not isinstance(items, list) or not 1 <= len(items) <= 100:
@@ -1342,7 +1343,27 @@ def batch(request_context):
             existing = cursor.fetchone()
         if existing and existing.get('id'):
             return _reply(200, {'ok': True, 'job_id': int(existing['id']), 'replayed': True}, headers)
+        _assert_write_fence(connection)
         with connection.cursor() as cursor:
+            cursor.execute("SELECT max_licenses FROM tenants WHERE id=%s AND status='active' FOR UPDATE", (tenant_id,))
+            tenant = cursor.fetchone()
+            if not tenant:
+                raise BaaSError(409, 'tenant_not_found_or_inactive')
+            cursor.execute('SELECT COUNT(*) AS n FROM licenses WHERE tenant_id=%s AND deleted_at IS NULL', (tenant_id,))
+            current_licenses = int((cursor.fetchone() or {}).get('n', 0))
+            cursor.execute("SELECT COALESCE(SUM(GREATEST(requested_count-processed_count,0)),0) AS n FROM product_key_v8_jobs WHERE tenant_id=%s AND status IN ('queued','processing','cancel_requested')", (tenant_id,))
+            reserved = int((cursor.fetchone() or {}).get('n', 0))
+            cursor.execute("SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('product_key_issue_jobs_v4','product_key_issue_jobs_v5')")
+            legacy_tables = int((cursor.fetchone() or {}).get('n', 0))
+            for table in ('product_key_issue_jobs_v4', 'product_key_issue_jobs_v5'):
+                cursor.execute('SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=%s', (table,))
+                if int((cursor.fetchone() or {}).get('n', 0)):
+                    cursor.execute("SELECT COALESCE(SUM(GREATEST(requested_count-processed_count,0)),0) AS n FROM " + table + " WHERE tenant_id=%s AND status IN ('queued','processing','cancel_requested')", (tenant_id,))
+                    reserved += int((cursor.fetchone() or {}).get('n', 0))
+            if legacy_tables or current_licenses + reserved + len(items) > int(tenant['max_licenses']):
+                raise BaaSError(410 if legacy_tables else 409,
+                                'bulk_issuance_moved_to_v8' if legacy_tables else 'license_quota_exceeded',
+                                {'replacement': '/api/baas/v8/issuance.php'} if legacy_tables else {})
             cursor.execute("INSERT INTO baas_batch_jobs(tenant_id,client_id,request_key,status,requested_count) VALUES(%s,%s,%s,'processing',%s)", (tenant_id, int(client['id']), idem, len(items)))
             job_id = int(cursor.lastrowid)
         from core import license_key_hash, offline_secret, offline_lookup, offline_secret_encrypt

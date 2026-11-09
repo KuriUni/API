@@ -5,6 +5,7 @@ never appear in URLs or HTML; the native app consumes a grant once using both
 its polling secret and its locally generated PKCE verifier.
 """
 from contextlib import contextmanager
+import copy
 import base64
 import hashlib
 import hmac
@@ -76,7 +77,9 @@ def _store():
                 except (TypeError, ValueError, OverflowError):
                     continue
                 if expires > now:
-                    rows[key] = row
+                    # Keep the comparison snapshot independent: mutating a row
+                    # in-place must be detected and written back to disk.
+                    rows[key] = copy.deepcopy(row)
             yield rows
             # Poll requests that only observe a pending login do not mutate the
             # store; avoid rewriting and fsyncing the whole file on every poll.

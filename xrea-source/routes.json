@@ -683,6 +683,22 @@
       "access": "endpoint_or_include"
     },
     {
+      "path": "/api/v4/introspect.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/v4/offline-public-key.php",
+      "methods": ["GET"],
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/api/v4/offline-ticket.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
       "path": "/api/v4/reauth.php",
       "access": "endpoint_or_include",
       "native_only": true
@@ -1053,6 +1069,22 @@
         "GET"
       ],
       "access": "endpoint_or_include"
+    },
+    {
+      "path": "/license/api/v4/introspect.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/license/api/v4/offline-public-key.php",
+      "methods": ["GET"],
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/license/api/v4/offline-ticket.php",
+      "access": "endpoint_or_include",
+      "native_only": true
     },
     {
       "path": "/license/api/v4/reauth.php",

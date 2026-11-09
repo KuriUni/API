@@ -59,7 +59,13 @@ X-License-Nonce: {一度限りのランダム値}
 X-License-Proof: {Base64URL署名}
 Authorization: Bearer {access_token}</code></pre><p class="fine">refresh.phpはAuthorizationの代わりに本文のrefresh_tokenを使います。</p><p>時刻ずれは最大60秒、nonceは一度だけ利用できます。Access tokenは5分、Refresh tokenは14日で、更新のたびに両方をローテーションします。Refresh tokenの再利用を検知すると、その系列を失効します。</p></section>
 
-  <section class="section"><h2>エンドポイント</h2><p><span class="method">POST</span>challenge · activate · verify · refresh · reauth · revoke</p><p>V4はオンライン端末認証とセッション管理を提供します。オフライン利用はV3のチケットAPIを引き続き使用してください。</p><p>エラー調査には応答ヘッダー <code>X-Request-ID</code> を記録してください。DBやHAが一時利用不可の場合は503と <code>Retry-After: 2</code> を返します。</p></section>
+  <section class="section"><h2>5. セッション状態を照会</h2><p>verifyと同じ端末署名を付けて、期限や端末情報を取得します。ライセンス詳細を含めず、セッションの状態だけを確認できます。</p><div class="endpoint"><span class="method">POST</span><code class="path">/license/api/v4/introspect.php</code></div><p class="fine">Authorization: Bearer access token と X-License-Session、X-License-Timestamp、X-License-Nonce、X-License-Proof が必要です。</p></section>
+
+  <section class="section"><h2>6. オフライン利用チケット</h2><p>有効なAccess tokenで署名付き要求を送り、最大72時間のオフライン利用チケットを取得します。ライセンス期限より後にはなりません。</p><div class="endpoint"><span class="method">POST</span><code class="path">/license/api/v4/offline-ticket.php</code><ul class="fields"><li>hours: 1〜72（省略時24）</li></ul></div><pre><code>{"hours":24}</code></pre><p>応答の <code>offline_ticket.ticket</code> は <code>v4o.&lt;payload&gt;.&lt;signature&gt;</code> 形式です。payloadはBase64URL化したUTF-8 JSON、署名はEd25519です。payloadにはバージョン、チケットID、ライセンス・製品ID、端末公開鍵thumbprint、セッションID、オフライン世代、発行・期限時刻、鍵IDが含まれます。</p><p>署名検証鍵はGET <code>/license/api/v4/offline-public-key.php</code> から取得します。V4鍵はV3鍵と異なる鍵IDを持ちます。クライアントは署名、<code>v=4</code>、期限、製品ID、端末鍵thumbprintを必ず検証してください。</p>
+    <div class="endpoint"><span class="method">GET</span><code class="path">/license/api/v4/offline-public-key.php</code></div>
+  </section>
+
+  <section class="section"><h2>エンドポイント</h2><p><span class="method">POST</span>challenge · activate · verify · introspect · refresh · reauth · revoke · offline-ticket</p><p><span class="method">GET</span>activate（ガイド） · offline-public-key</p><p>V4はライセンス認証、署名付きセッション、状態照会、オフラインチケットを提供します。V2／V3は既存クライアント向けに引き続き利用できます。</p><p>エラー調査には応答ヘッダー <code>X-Request-ID</code> を記録してください。DBやHAが一時利用不可の場合は503と <code>Retry-After: 2</code> を返します。</p></section>
 
   <aside class="note"><span class="note-icon">i</span><p><b>実装ガイド</b><br>このページはV4 APIの説明です。認証データをブラウザーへ入力するフォームではありません。V3ガイドは<a href="/license/api/v3/activate.php">こちら</a>です。</p></aside>
   <footer>TUTI LICENSE · API responses include X-Request-ID</footer>

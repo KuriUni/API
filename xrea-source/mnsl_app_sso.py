@@ -59,7 +59,80 @@ def valid_ticket(ticket, host):
             return False
 
 
-def complete_login(context, flow, claims, session, clear):
+def fail_login(ticket, host, error_code):
+    """Make an OIDC callback failure visible to the native polling client."""
+    if not re.fullmatch('[A-Za-z0-9_]{1,64}', str(error_code)):
+        error_code = 'mnsl_sso_callback_failed'
+    with _store() as rows:
+        try:
+            row = _row(rows, ticket, host)
+        except FlowError:
+            return False
+        if row.get('grant') or row.get('consumed'):
+            return False
+        row.update(error=error_code, stage='failed', stage_at=int(time.time()))
+        return True
+
+
+def set_login_stage(ticket, host, stage):
+    """Store a low-sensitivity stage so the native client can show where SSO waits."""
+    allowed = {'provider_login_started', 'provider_callback_received', 'sso_authenticated', 'awaiting_mnsl_approval', 'approved'}
+    if stage not in allowed:
+        return False
+    with _store() as rows:
+        try:
+            row = _row(rows, ticket, host)
+        except FlowError:
+            return False
+        if row.get('error') or row.get('consumed'):
+            return False
+        row.update(stage=stage, stage_at=int(time.time()))
+        return True
+
+
+def store_oidc_flow(ticket, host, flow):
+    """Keep the PKCE verifier server-side so parallel browser flows cannot overwrite it."""
+    state = str(flow.get('state') or '')
+    if not re.fullmatch('[A-Za-z0-9_-]{32,128}', state) or flow.get('target') != 'tenant_app' or str(flow.get('app_ticket') or '') != ticket:
+        raise FlowError(400, 'mnsl_oidc_flow_invalid')
+    with _store() as rows:
+        row = _row(rows, ticket, host)
+        if row.get('error') or row.get('consumed'):
+            raise FlowError(409, 'mnsl_login_expired')
+        row['oidc_state_hash'] = hashlib.sha256(state.encode()).hexdigest()
+        row['oidc_flow'] = _seal(flow, host + ':' + ticket + ':oidc-flow')
+        row['stage'] = 'provider_login_started'
+        row['stage_at'] = int(time.time())
+
+
+def consume_oidc_flow(state, host):
+    """Atomically recover and consume one app OIDC flow by its random state."""
+    if not re.fullmatch('[A-Za-z0-9_-]{32,128}', str(state or '')):
+        return None
+    wanted = hashlib.sha256(state.encode()).hexdigest()
+    found = None
+    with _store() as rows:
+        for ticket, row in rows.items():
+            if row.get('kind') != KIND or row.get('host') != host or not row.get('oidc_state_hash'):
+                continue
+            if not hmac.compare_digest(str(row.get('oidc_state_hash') or ''), wanted):
+                continue
+            try:
+                flow = _open(str(row.get('oidc_flow') or ''), host + ':' + ticket + ':oidc-flow')
+            except Exception:
+                row.update(error='mnsl_oidc_flow_unreadable', stage='failed', stage_at=int(time.time()))
+                row.pop('oidc_flow', None)
+                row.pop('oidc_state_hash', None)
+                return None
+            row.pop('oidc_flow', None)
+            row.pop('oidc_state_hash', None)
+            row.update(stage='provider_callback_received', stage_at=int(time.time()))
+            found = flow if hmac.compare_digest(str(flow.get('state') or ''), state) else None
+            break
+    return found
+
+
+def complete_login(context, flow, claims, session, clear_headers):
     """Called only after admin_oidc has verified state, PKCE, ID token and SSO sid."""
     from admin_oidc import ISSUER
     host, ticket = _host(context), str(flow['app_ticket'])
@@ -78,10 +151,11 @@ def complete_login(context, flow, claims, session, clear):
         row = _row(rows, ticket, host)
         identity['expires'] = min(row['expires'], identity['expires'])
         row.update(identity=_seal(identity, host + ':' + ticket), browser_hash=hashlib.sha256(cookie.encode()).hexdigest(),
-                   csrf=_b64(secrets.token_bytes(32)), expires=min(row['expires'], identity['expires']))
+                   csrf=_b64(secrets.token_bytes(32)), expires=min(row['expires'], identity['expires']),
+                   stage='sso_authenticated', stage_at=now)
     from admin_oidc import _redirect
-    return _redirect(_endpoint(host) + '?action=mnsl_authorize&ticket=' + ticket, headers=[clear,
-        ('Set-Cookie', 'tuti_mnsl_' + ticket + '=' + cookie + '; Path=' + site_url(PATH) + '; Max-Age=300; Secure; HttpOnly; SameSite=Lax'),
+    return _redirect(_endpoint(host) + '?action=mnsl_authorize&ticket=' + ticket, headers=[*clear_headers,
+        ('Set-Cookie', 'tuti_mnsl_' + ticket + '=' + cookie + '; Path=' + site_url('/license/python-migration/') + '; Max-Age=300; Secure; HttpOnly; SameSite=Lax'),
         ('Referrer-Policy', 'no-referrer')])
 
 
@@ -123,7 +197,7 @@ def _contracts(connection, identity):
             cursor.execute("SELECT id tenant_id,slug,name,environment,parent_tenant_id FROM tenants WHERE status='active' AND environment='production' AND parent_tenant_id IS NULL ORDER BY slug LIMIT 200")
             return [dict(row, source='administrator') for row in cursor.fetchall()]
     from tenant_sso_contracts import memberships
-    result = [dict(row, source='membership') for row in memberships(connection, identity['subject_hash'])
+    result = [dict(row, source=row.get('source') or 'membership') for row in memberships(connection, identity['subject_hash'])
               if row['environment'] == 'production' and 'licenses:write' in row['scopes'] and 'tenant:read' in row['scopes']]
     invited_tenant = identity.get('tenant_id')
     if type(invited_tenant) is int and 0 < invited_tenant < 2**63 and not any(int(row['tenant_id']) == invited_tenant for row in result):
@@ -182,6 +256,11 @@ def _delegation(connection, context, identity, contract):
     with connection.cursor() as cursor:
         cursor.execute('INSERT INTO tenant_sso_sessions(token_hash,subject_hash,oidc_sid,tenant_id,created_at,expires_at,sso_checked_at) VALUES(%s,%s,%s,%s,UTC_TIMESTAMP(),UTC_TIMESTAMP()+INTERVAL 5 MINUTE,UTC_TIMESTAMP())',
                        (hashed, identity['subject_hash'], identity['oidc_sid'], int(contract['tenant_id'])))
+        if contract.get('source') == 'temporary':
+            cursor.execute('UPDATE tenant_sso_temporary_grants SET session_token_hash=%s WHERE grant_id=%s AND subject_hash=%s AND tenant_id=%s AND issue_request_key IS NOT NULL AND expires_at>UTC_TIMESTAMP() AND revoked_at IS NULL',
+                           (hashed, contract.get('grant_id'), identity['subject_hash'], int(contract['tenant_id'])))
+            if int(cursor.rowcount or 0) != 1:
+                raise FlowError(403, 'mnsl_temporary_grant_unavailable')
     connection.commit()
     context['header:x-tenant-sso-session'] = token
     return hashed
@@ -205,6 +284,9 @@ def _issue(context, identity, data):
     app_version = data.get('app_version', '1.0.0')
     if not isinstance(app_version, str) or not re.fullmatch('[A-Za-z0-9][A-Za-z0-9._+-]{0,39}', app_version):
         raise FlowError(400, 'mnsl_invalid_app_version')
+    license_api_version = data.get('license_api_version', 2)
+    if type(license_api_version) is not int or license_api_version not in (2, 4):
+        raise FlowError(400, 'mnsl_invalid_license_api_version')
     fingerprint = fingerprint.lower()
     key = 'mnsl-' + hashlib.sha256((identity['host'] + '\0' + identity['subject_hash'] + '\0' + request_id).encode()).hexdigest()
     canonical = {'tenant_id': tenant, 'product_id': product, 'device_fingerprint': fingerprint,
@@ -224,6 +306,22 @@ def _issue(context, identity, data):
             locked = int((cursor.fetchone() or {}).get('acquired') or 0) == 1
         if not locked:
             raise FlowError(409, 'mnsl_request_in_progress')
+        if contract.get('source') == 'temporary':
+            with connection.cursor() as cursor:
+                cursor.execute('SELECT grant_id,issue_request_key,consumed_at FROM tenant_sso_temporary_grants WHERE grant_id=%s AND subject_hash=%s AND tenant_id=%s AND expires_at>UTC_TIMESTAMP() AND revoked_at IS NULL LIMIT 1 FOR UPDATE',
+                               (contract.get('grant_id'), identity['subject_hash'], tenant))
+                grant = cursor.fetchone()
+                if not grant:
+                    raise FlowError(403, 'mnsl_temporary_grant_expired')
+                bound_key = str(grant.get('issue_request_key') or '')
+                if bound_key and not hmac.compare_digest(bound_key, key):
+                    raise FlowError(403, 'mnsl_temporary_grant_already_used')
+                if not bound_key:
+                    cursor.execute('UPDATE tenant_sso_temporary_grants SET issue_request_key=%s WHERE grant_id=%s AND issue_request_key IS NULL',
+                                   (key, contract.get('grant_id')))
+                    if int(cursor.rowcount or 0) != 1:
+                        raise FlowError(409, 'mnsl_temporary_grant_race')
+            connection.commit()
         with connection.cursor() as cursor:
             cursor.execute('SELECT response_json FROM idempotency_keys WHERE tenant_id=%s AND operation=%s AND request_key=%s LIMIT 1', (tenant, OPERATION, key))
             saved = cursor.fetchone()
@@ -232,6 +330,8 @@ def _issue(context, identity, data):
                 raise FlowError(409, 'mnsl_request_changed')
             if receipt and receipt.get('sealed') and int(receipt.get('response_expires') or 0) > int(time.time()):
                 result = _open(receipt['sealed'], key)
+                if license_api_version == 2 and int(result.get('license_api_version') or 2) == 4:
+                    raise FlowError(409, 'mnsl_request_changed')
                 result['replayed'] = True
                 return _reply(200, result)
             if not receipt:
@@ -258,23 +358,34 @@ def _issue(context, identity, data):
             item = items[0]
             receipt = {'digest': digest, 'issued': _seal(item, key + ':issued')}
             with connection.cursor() as cursor:
+                if contract.get('source') == 'temporary':
+                    cursor.execute('UPDATE tenant_sso_temporary_grants SET consumed_at=COALESCE(consumed_at,UTC_TIMESTAMP()),expires_at=LEAST(expires_at,UTC_TIMESTAMP()+INTERVAL 5 MINUTE) WHERE grant_id=%s AND issue_request_key=%s',
+                                   (contract.get('grant_id'), key))
                 cursor.execute('UPDATE idempotency_keys SET response_json=%s WHERE tenant_id=%s AND operation=%s AND request_key=%s',
                                (json.dumps(receipt), tenant, OPERATION, key))
             connection.commit()
         if not re.fullmatch('[A-Z0-9]{5}(?:-[A-Z0-9]{5}){4}', str(item.get('product_key') or '')):
             raise FlowError(503, 'mnsl_issue_result_invalid')
         _provider(identity)  # Do not continue activation after SSO logout/expiry.
-        activation_context = _context(context, {'api_action': 'activate', 'license_key': item['product_key'],
-            'device_fingerprint': fingerprint, 'device_label': str(data.get('device_label') or 'MNSL device')[:100],
-            'app_version': canonical['app_version']})
-        from v2_handlers import _v2_activate
-        activated_response = _v2_activate(activation_context, secrets.token_hex(16))
-        activation = json.loads(activated_response.body)
-        activated = activated_response.status_code < 400 and activation.get('success') is True
+        if license_api_version == 4:
+            # The desktop client owns the V4 private key and must perform the
+            # signed challenge/activation exchange itself. Never mint a V2
+            # session as a side effect for a V4 request.
+            activation = {'success': False, 'v4_activation_required': True}
+            activated = False
+        else:
+            activation_context = _context(context, {'api_action': 'activate', 'license_key': item['product_key'],
+                'device_fingerprint': fingerprint, 'device_label': str(data.get('device_label') or 'MNSL device')[:100],
+                'app_version': canonical['app_version']})
+            from v2_handlers import _v2_activate
+            activated_response = _v2_activate(activation_context, secrets.token_hex(16))
+            activation = json.loads(activated_response.body)
+            activated = activated_response.status_code < 400 and activation.get('success') is True
         result = {'ok': True, 'issued': True, 'activated': activated, 'product_key': item['product_key'],
                   'request_id': request_id, 'tenant_id': tenant, 'product_id': product,
-                  'account_reference': _account(identity), 'activation': activation}
-        if activated:
+                  'account_reference': _account(identity), 'license_api_version': license_api_version,
+                  'activation': activation}
+        if activated or license_api_version == 4:
             receipt.update(sealed=_seal(result, key), response_expires=int(time.time()) + 300)
             with connection.cursor() as cursor:
                 cursor.execute('UPDATE idempotency_keys SET response_json=%s WHERE tenant_id=%s AND operation=%s AND request_key=%s',
@@ -311,7 +422,8 @@ def handle(context):
                 if len(rows) >= 1000 or sum(row.get('address') == address for row in rows.values()) >= 30:
                     raise FlowError(429, 'app_login_rate_limited')
                 rows[ticket] = {'kind': KIND, 'host': host, 'created': now, 'expires': now+TTL, 'address': address,
-                                'challenge': challenge, 'poll_hash': hashlib.sha256(polling.encode()).hexdigest()}
+                                'challenge': challenge, 'poll_hash': hashlib.sha256(polling.encode()).hexdigest(),
+                                'stage': 'started', 'stage_at': now}
             return _reply(200, {'ok': True, 'ticket': ticket, 'poll_token': polling, 'expires_in': TTL,
                                 'url': _endpoint(host)+'?action=mnsl_authorize&ticket='+ticket})
         if action == 'mnsl_poll' and method == 'POST':
@@ -325,8 +437,10 @@ def handle(context):
                     raise FlowError(401, 'invalid_app_proof')
                 if row.get('consumed'):
                     raise FlowError(409, 'mnsl_grant_already_used')
+                if row.get('error'):
+                    return _reply(401, {'ok': False, 'error': row['error']})
                 if not row.get('grant'):
-                    return _reply(202, {'ok': True, 'pending': True})
+                    return _reply(202, {'ok': True, 'pending': True, 'stage': str(row.get('stage') or 'started')})
                 identity = _open(row['identity'], host+':'+ticket)
                 grant = row['grant']
             _provider(identity)
@@ -349,6 +463,10 @@ def handle(context):
             if not row.get('identity') or not row.get('browser_hash') or not hmac.compare_digest(row['browser_hash'], hashlib.sha256(cookie.encode()).hexdigest()):
                 if method != 'GET':
                     raise FlowError(403, 'mnsl_browser_proof_required')
+                if row.get('identity') or row.get('browser_hash'):
+                    fail_login(ticket, host, 'mnsl_browser_cookie_missing')
+                    return _reply(401, '<!doctype html><html lang="ja"><meta charset="utf-8"><title>SSO連携を完了できません</title><h1>SSO連携を完了できません</h1><p>SSO IDの確認後、このブラウザーから連携用Cookieを受け取れませんでした。ブラウザーのCookie設定を確認して、アプリからもう一度ログインしてください。</p></html>', True)
+                set_login_stage(ticket, host, 'provider_login_started')
                 from admin_oidc import start_tenant
                 return start_tenant(dict(context, query='app_ticket='+ticket))
             identity = _open(row['identity'], host+':'+ticket)
@@ -364,9 +482,11 @@ def handle(context):
                         raise FlowError(409, 'app_login_already_approved')
                     current.update(approved=True, token_hash=hashlib.sha256(token.encode()).hexdigest(),
                         grant=_seal({'ok': True, 'session_token': token, 'authenticated_until': identity['expires'],
-                                     'auth_method': 'oidc_sso', 'purpose': KIND}, host+':'+ticket))
+                                     'auth_method': 'oidc_sso', 'purpose': KIND}, host+':'+ticket),
+                        stage='approved', stage_at=int(time.time()))
                 return _reply(200, '<!doctype html><html lang="ja"><meta charset="utf-8"><title>MNSL SSO完了</title><h1>MNSLへ戻ってください</h1><p>ログインを許可しました。発行はソフト側で契約・製品を確認して実行します。</p></html>', True)
             page = '<!doctype html><html lang="ja"><meta charset="utf-8"><title>MNSLへのSSOログイン</title><h1>MNSLへのSSOログイン</h1><p>接続先：'+html.escape(host)+'</p><p>既存の契約・権限内でキー発行と端末のオンライン認証を行うための、5分間のログインです。この操作だけではキーを発行しません。</p><form method="post"><input type="hidden" name="csrf" value="'+html.escape(row['csrf'], quote=True)+'"><button>このMNSLへのログインを許可</button></form></html>'
+            set_login_stage(ticket, host, 'awaiting_mnsl_approval')
             return _reply(200, page, True)
         if action in {'mnsl_contracts', 'mnsl_products', 'mnsl_issue'} and method == 'POST':
             identity = _identity(context)

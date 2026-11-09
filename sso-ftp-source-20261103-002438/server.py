@@ -46,7 +46,7 @@ PBKDF2_ROUNDS = 310_000
 ADMIN_CLIENT_ID = "tuti-admin-portal"
 TENANT_CLIENT_ID = "tuti-tenant-portal"
 PASSKEY_RP_ID = "sso.2415.jp"
-SSO_DATABASE_SCHEMA_VERSION = 4
+SSO_DATABASE_SCHEMA_VERSION = 5
 
 
 def b64u(value):
@@ -363,6 +363,11 @@ def ensure_session_schema():
         con.execute("CREATE TABLE IF NOT EXISTS mfa_flows(login_flow_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0)")
         con.execute("CREATE TABLE IF NOT EXISTS registration_onboarding(session_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,request_json TEXT NOT NULL,expires_at INTEGER NOT NULL)")
         con.execute("CREATE TABLE IF NOT EXISTS sso_schema_migrations(migration_id TEXT PRIMARY KEY,applied_at INTEGER NOT NULL)")
+        con.execute("CREATE TABLE IF NOT EXISTS global_subject_hashes(subject_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_global_subject_hashes_user ON global_subject_hashes(user_id)")
+        subject_rows = con.execute("SELECT g.user_id,g.sub FROM global_subjects g JOIN users u ON u.id=g.user_id").fetchall()
+        con.executemany("INSERT INTO global_subject_hashes(subject_hash,user_id) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET subject_hash=excluded.subject_hash",
+                        [(hashlib.sha256((ISSUER + "\0" + str(row["sub"])).encode("utf-8")).hexdigest(), int(row["user_id"])) for row in subject_rows])
         if not con.execute("SELECT 1 FROM sso_schema_migrations WHERE migration_id='retire-totp-recovery-codes-v1'").fetchone():
             con.execute("DROP TABLE IF EXISTS totp_recovery_codes")
             con.execute("INSERT INTO sso_schema_migrations(migration_id,applied_at) VALUES('retire-totp-recovery-codes-v1',?)",(int(time.time()),))
@@ -609,6 +614,80 @@ def valid_admin_api_request(environ, con, sid):
     return bool(client and client["active"] and hmac.compare_digest(hashlib.sha256(secret.encode("utf-8")).hexdigest(), client["secret_hash"]) and session and is_admin_user(con, session["id"]))
 
 
+def canonical_mnsl_update_manifest(value):
+    """Return the exact legacy MNSL updater payload after strict field validation."""
+    if not isinstance(value, dict):
+        raise ValueError("invalid_manifest")
+    product = value.get("product")
+    if value.get("schema") != 1 or product not in ("MyNumberSmartLogin", "MyNumberSmartLogin-SSO"):
+        raise ValueError("invalid_manifest")
+    channel = value.get("channel")
+    version = value.get("version")
+    package_name = value.get("package_name")
+    digest = value.get("sha256")
+    if channel not in ("stable", "beta") or not isinstance(version, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", version):
+        raise ValueError("invalid_manifest")
+    package_pattern = r"MNSL-[A-Za-z0-9._-]+\.zip" if product == "MyNumberSmartLogin" else r"MNSL-SSO-[A-Za-z0-9._-]+\.zip"
+    if not isinstance(package_name, str) or not re.fullmatch(package_pattern, package_name):
+        raise ValueError("invalid_manifest")
+    if not isinstance(digest, str) or not re.fullmatch(r"[a-fA-F0-9]{64}", digest):
+        raise ValueError("invalid_manifest")
+    try:
+        revision = int(value.get("revision"))
+        size = int(value.get("size"))
+    except (TypeError, ValueError):
+        raise ValueError("invalid_manifest")
+    if revision <= 0 or size <= 0 or size > 1_073_741_824:
+        raise ValueError("invalid_manifest")
+    published = value.get("published_utc")
+    terms = value.get("terms_version", "")
+    notes = value.get("release_notes", "")
+    if not isinstance(published, str) or len(published) > 40 or not isinstance(terms, str) or len(terms) > 32 or not isinstance(notes, str) or len(notes) > 2000:
+        raise ValueError("invalid_manifest")
+    reconsent = "true" if value.get("requires_reconsent") is True else "false"
+    mandatory = "true" if value.get("mandatory") is True else "false"
+    notes = notes.replace("\r", " ").replace("\n", " ")
+    return "\n".join((
+        "MNSL-UPDATE-V1", "schema=1", "product=" + product,
+        "channel=" + channel, "version=" + version, "revision=" + str(revision),
+        "package_name=" + package_name, "sha256=" + digest.lower(),
+        "size=" + str(size), "published_utc=" + published,
+        "terms_version=" + terms, "requires_reconsent=" + reconsent,
+        "mandatory=" + mandatory, "release_notes=" + notes,
+    ))
+
+
+def sign_mnsl_update_manifest(environ, start_response):
+    """Admin SSO step-up authorizes signing; the SSO private key never leaves this host."""
+    if environ.get("REQUEST_METHOD") != "POST":
+        return json_response(start_response, "405 Method Not Allowed", {"error": "method_not_allowed"})
+    try:
+        value = fields(environ)
+        sid = str(value.get("sid", ""))
+        manifest = value.get("manifest")
+        if isinstance(manifest, str):
+            manifest = json.loads(manifest)
+        payload = canonical_mnsl_update_manifest(manifest)
+        now = int(time.time())
+        with db() as con:
+            if not valid_admin_api_request(environ, con, sid):
+                return json_response(start_response, "403 Forbidden", {"error": "admin_session_required"})
+            session = con.execute("SELECT s.user_id,s.created_at,u.public_id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND s.revoked_at IS NULL AND u.active=1", (hashlib.sha256(sid.encode()).hexdigest(), now)).fetchone()
+            if not session or now - int(session["created_at"] or 0) > 120 or now < int(session["created_at"] or 0):
+                return json_response(start_response, "428 Precondition Required", {"error": "recent_admin_passkey_required"})
+            jwk = rsa_public_jwk()
+            signature = subprocess.run(
+                ["openssl", "dgst", "-sha256", "-sign", str(KEY)],
+                input=payload.encode("utf-8"), check=True, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, timeout=5,
+            ).stdout
+            con.execute("CREATE TABLE IF NOT EXISTS sso_update_signing_audit(event_id TEXT PRIMARY KEY,actor_user_id INTEGER NOT NULL,channel TEXT NOT NULL,version TEXT NOT NULL,revision INTEGER NOT NULL,package_sha256 TEXT NOT NULL,created_at INTEGER NOT NULL)")
+            con.execute("INSERT INTO sso_update_signing_audit(event_id,actor_user_id,channel,version,revision,package_sha256,created_at) VALUES(?,?,?,?,?,?,?)", (b64u(secrets.token_bytes(16)), int(session["user_id"]), str(manifest["channel"]), str(manifest["version"]), int(manifest["revision"]), str(manifest["sha256"]).lower(), now))
+        return json_response(start_response, "200 OK", {"signature": base64.b64encode(signature).decode("ascii"), "kid": jwk["kid"], "algorithm": "RS256", "authorized_admin_sid": str(session["public_id"]), "signed_at": now}, headers=[("Cache-Control", "no-store")])
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return json_response(start_response, "400 Bad Request", {"error": "invalid_manifest"})
+
+
 def valid_admin_browser_request(environ, con, f):
     if environ.get("HTTP_ORIGIN", "") != ISSUER:
         return False
@@ -794,11 +873,11 @@ def authorize_login_page(flow, csrf, error=False):
 <section class="card" aria-labelledby="page-title"><header class="card-head"><p class="kicker">SECURE SIGN IN</p><h1 id="page-title">SSO IDでログイン</h1><p class="lead">発行済みのSSO IDを入力し、パスキーで本人確認します。</p></header>
 <div class="panel">ERROR_SLOT
 <form id="passkey-login"><input type="hidden" name="flow" value="__FLOW__"><input type="hidden" name="csrf" value="__CSRF__"><div class="field"><label for="sso-id">SSO ID（省略可）</label><input id="sso-id" inputmode="text" autocomplete="username webauthn" autocapitalize="characters" spellcheck="false" placeholder="SID-…（空欄ならパスキーから選択）"></div><button type="submit">パスキー認証を準備</button><p class="hint">SSO IDを入力するか、空欄のまま進んで登録済みパスキーを選べます。</p></form>
-<p><a class="recover-link" href="/recover">パスキーを紛失した場合</a></p><button id="run-passkey" type="button" hidden>この端末のパスキーで認証</button><form id="totp-login" hidden><div class="field"><label for="totp-login-code">認証アプリの6桁コード</label><input id="totp-login-code" inputmode="numeric" autocomplete="one-time-code" maxlength="24" required></div><button type="submit">コードを確認してログイン</button><p class="hint">6桁コードは30秒ごとに更新されます。</p></form>
+<p><a class="recover-link" href="/recover">パスキーを紛失した場合</a></p><button id="run-passkey" type="button" hidden>この端末のパスキーで認証</button><p id="status" class="status" role="status" aria-live="polite"></p><form id="totp-login" hidden><div class="field"><label for="totp-login-code">認証アプリの6桁コード</label><input id="totp-login-code" inputmode="numeric" autocomplete="one-time-code" maxlength="24" required></div><button type="submit">コードを確認してログイン</button><p class="hint">6桁コードは30秒ごとに更新されます。</p></form>
 <details class="legacy"><summary>旧アカウントから移行する（初回のみ）</summary><p>初回登録済みの旧アカウントは、メールとパスワードで確認してからパスキーを登録します。</p><form id="legacy-login"><input type="hidden" name="flow" value="__FLOW__"><input type="hidden" name="csrf" value="__CSRF__"><div class="field"><label for="email">登録済みメールアドレス</label><input id="email" type="email" autocomplete="username" required maxlength="254"></div><div class="field"><label for="password">現在のパスワード</label><div class="password-row"><input id="password" type="password" autocomplete="current-password" required maxlength="1024"><button type="button" id="show-password">表示</button></div></div><button type="submit">本人確認してパスキー登録へ</button></form><button id="run-enroll" type="button" hidden>この端末のパスキー登録を開始</button></details>
-<p id="status" class="status" role="status" aria-live="polite"></p><p class="trust"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 20 6v5c0 5-3.4 8-8 10-4.6-2-8-5-8-10V6l8-3Z" stroke="currentColor" stroke-width="1.8"/><path d="m8.5 12 2.2 2.2 4.8-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>通信は暗号化され、パスキーで保護されます</p></div></section>
+<p class="trust"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 20 6v5c0 5-3.4 8-8 10-4.6-2-8-5-8-10V6l8-3Z" stroke="currentColor" stroke-width="1.8"/><path d="m8.5 12 2.2 2.2 4.8-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>通信は暗号化され、パスキーで保護されます</p></div></section>
 <footer class="footer">安全なシングルサインオン · sso.2415.jp</footer>
-</main><script>const FLOW="__FLOW__",CSRF="__CSRF__",statusNode=document.getElementById('status');const enc=b=>{let s='';new Uint8Array(b).forEach(v=>s+=String.fromCharCode(v));return btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')};const dec=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-s.length%4)%4)),c=>c.charCodeAt(0));function downloadCertificate(cert){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(cert,null,2)],{type:'application/json'}));a.href=url;a.download=(String(cert.subject||'SSO').replace(/[^A-Za-z0-9_-]/g,'')||'SSO')+'-recovery-certificate.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500)}async function post(path,data){const r=await fetch(path,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});let j={};try{j=await r.json()}catch(e){}if(!r.ok||!j.ok)throw new Error(j.message||'認証できませんでした。もう一度お試しください。');return j}async function enroll(o){let p=o.publicKey;p.challenge=dec(p.challenge);p.user.id=dec(p.user.id);const c=await navigator.credentials.create({publicKey:p});return{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]}}let loginOptions=null,enrollOptions=null;document.getElementById('passkey-login').addEventListener('submit',async e=>{e.preventDefault();statusNode.textContent='パスキーを準備しています…';try{let id=document.getElementById('sso-id').value.trim().toUpperCase(),b=await post('/login/begin',{flow:FLOW,csrf:CSRF,public_id:id});loginOptions=b.publicKey;loginOptions.challenge=dec(loginOptions.challenge);loginOptions.allowCredentials=loginOptions.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));document.getElementById('run-passkey').hidden=false;statusNode.textContent=id?'準備できました。端末のパスキーで認証してください。':'登録済みパスキーを選択してください。'}catch(err){statusNode.textContent=err.message==='Load failed'?'サーバーへ接続できません。通信を確認して再読み込みしてください。':err.message}});document.getElementById('run-passkey').addEventListener('click',async e=>{if(!loginOptions)return;const button=e.currentTarget;button.disabled=true;statusNode.textContent='端末のパスキーを確認しています…';try{let c=await navigator.credentials.get({publicKey:loginOptions}),f=await post('/login',{action:'passkey_assertion',flow:FLOW,csrf:CSRF,credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),authenticatorData:enc(c.response.authenticatorData),signature:enc(c.response.signature),userHandle:c.response.userHandle?enc(c.response.userHandle):''}});if(f.mfa_required){document.getElementById('totp-login').hidden=false;button.hidden=true;statusNode.textContent='パスキーを確認しました。認証アプリの6桁コードを入力してください。';document.getElementById('totp-login-code').focus();return}location.assign(f.next)}catch(err){button.disabled=false;statusNode.textContent=err.name==='NotAllowedError'?'認証がキャンセルされたか時間切れです。もう一度押してください。':err.message}});document.getElementById('totp-login').addEventListener('submit',async e=>{e.preventDefault();const field=document.getElementById('totp-login-code'),button=e.currentTarget.querySelector('button');button.disabled=true;statusNode.textContent='追加認証を確認しています…';try{const j=await post('/login/totp',{flow:FLOW,csrf:CSRF,code:field.value.trim()});location.assign(j.next)}catch(err){button.disabled=false;statusNode.textContent=err.message;field.focus()}});document.getElementById('legacy-login').addEventListener('submit',async e=>{e.preventDefault();statusNode.textContent='本人確認しています…';try{let b=await post('/login',{action:'legacy_login',flow:FLOW,csrf:CSRF,email:document.getElementById('email').value,password:document.getElementById('password').value});enrollOptions=b.publicKey;enrollOptions.challenge=dec(enrollOptions.challenge);enrollOptions.user.id=dec(enrollOptions.user.id);document.getElementById('run-enroll').hidden=false;statusNode.textContent='本人確認できました。「この端末のパスキー登録を開始」を押してください。'}catch(err){statusNode.textContent=err.message==='Load failed'?'サーバーへ接続できません。通信を確認して再読み込みしてください。':err.message}});document.getElementById('run-enroll').addEventListener('click',async e=>{if(!enrollOptions)return;const button=e.currentTarget;button.disabled=true;statusNode.textContent='端末のパスキー登録を待っています…';try{let c=await navigator.credentials.create({publicKey:enrollOptions}),credential={id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]},f=await post('/login',{action:'finish_enrollment',flow:FLOW,csrf:CSRF,credential});if(f.recovery_certificate)downloadCertificate(f.recovery_certificate);statusNode.textContent='登録完了。SSO ID: '+f.public_id+'。復旧証明書を安全な場所に保存してください。（6秒後に設定画面へ移動します）';try{await navigator.clipboard.writeText(f.public_id)}catch(copyError){}setTimeout(()=>location.assign(f.next),6000)}catch(err){button.disabled=false;statusNode.textContent=err.name==='NotAllowedError'?'登録がキャンセルされたか時間切れです。もう一度押してください。':err.message}});document.getElementById('show-password').addEventListener('click',function(){let p=document.getElementById('password'),show=p.type==='password';p.type=show?'text':'password';this.textContent=show?'隠す':'表示'});</script></html>'''
+</main><script>const FLOW="__FLOW__",CSRF="__CSRF__",statusNode=document.getElementById('status');const flowReloadMarker='sso-passkey-pending';try{const attemptAt=Number(localStorage.getItem(flowReloadMarker)||0);if(attemptAt&&Date.now()-attemptAt<120000){statusNode.textContent='パスキー確認後にSSOログイン画面へ戻りました。認証応答の処理が完了していません。最初からやり直してください。';localStorage.removeItem(flowReloadMarker)}else if(attemptAt){localStorage.removeItem(flowReloadMarker)}}catch(e){}const enc=b=>{let s='';new Uint8Array(b).forEach(v=>s+=String.fromCharCode(v));return btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')};const dec=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-s.length%4)%4)),c=>c.charCodeAt(0));function downloadCertificate(cert){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(cert,null,2)],{type:'application/json'}));a.href=url;a.download=(String(cert.subject||'SSO').replace(/[^A-Za-z0-9_-]/g,'')||'SSO')+'-recovery-certificate.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500)}async function post(path,data){const r=await fetch(path,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});let j={};try{j=await r.json()}catch(e){}if(!r.ok||!j.ok)throw new Error(j.message||j.error||('HTTP '+r.status+'：認証に失敗しました。'));return j}async function enroll(o){let p=o.publicKey;p.challenge=dec(p.challenge);p.user.id=dec(p.user.id);const c=await navigator.credentials.create({publicKey:p});return{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]}}let loginOptions=null,enrollOptions=null;document.getElementById('passkey-login').addEventListener('submit',async e=>{e.preventDefault();statusNode.textContent='パスキーを準備しています…';try{let id=document.getElementById('sso-id').value.trim().toUpperCase(),b=await post('/login/begin',{flow:FLOW,csrf:CSRF,public_id:id});loginOptions=b.publicKey;loginOptions.challenge=dec(loginOptions.challenge);loginOptions.allowCredentials=loginOptions.allowCredentials.map(x=>({type:'public-key',id:dec(x.id),transports:x.transports||[]}));document.getElementById('run-passkey').hidden=false;statusNode.textContent=id?'準備できました。端末のパスキーで認証してください。':'登録済みパスキーを選択してください。'}catch(err){statusNode.textContent=err.message==='Load failed'?'サーバーへ接続できません。通信を確認して再読み込みしてください。':err.message}});document.getElementById('run-passkey').addEventListener('click',async e=>{if(!loginOptions)return;const button=e.currentTarget;button.disabled=true;try{localStorage.setItem(flowReloadMarker,String(Date.now()))}catch(e){}statusNode.textContent='端末のパスキーを確認しています…';try{let c=await navigator.credentials.get({publicKey:loginOptions}),f=await post('/login',{action:'passkey_assertion',flow:FLOW,csrf:CSRF,credential:{id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),authenticatorData:enc(c.response.authenticatorData),signature:enc(c.response.signature),userHandle:c.response.userHandle?enc(c.response.userHandle):''}});if(f.mfa_required){try{localStorage.removeItem(flowReloadMarker)}catch(e){}document.getElementById('totp-login').hidden=false;button.hidden=true;statusNode.textContent='パスキーを確認しました。認証アプリの6桁コードを入力してください。';document.getElementById('totp-login-code').focus();return}try{localStorage.removeItem(flowReloadMarker)}catch(e){}location.assign(f.next)}catch(err){try{localStorage.removeItem(flowReloadMarker)}catch(e){}button.disabled=false;statusNode.textContent=err.name==='NotAllowedError'?'認証がキャンセルされたか時間切れです。もう一度押してください。':err.message}});document.getElementById('totp-login').addEventListener('submit',async e=>{e.preventDefault();const field=document.getElementById('totp-login-code'),button=e.currentTarget.querySelector('button');button.disabled=true;statusNode.textContent='追加認証を確認しています…';try{const j=await post('/login/totp',{flow:FLOW,csrf:CSRF,code:field.value.trim()});location.assign(j.next)}catch(err){button.disabled=false;statusNode.textContent=err.message;field.focus()}});document.getElementById('legacy-login').addEventListener('submit',async e=>{e.preventDefault();statusNode.textContent='本人確認しています…';try{let b=await post('/login',{action:'legacy_login',flow:FLOW,csrf:CSRF,email:document.getElementById('email').value,password:document.getElementById('password').value});enrollOptions=b.publicKey;enrollOptions.challenge=dec(enrollOptions.challenge);enrollOptions.user.id=dec(enrollOptions.user.id);document.getElementById('run-enroll').hidden=false;statusNode.textContent='本人確認できました。「この端末のパスキー登録を開始」を押してください。'}catch(err){statusNode.textContent=err.message==='Load failed'?'サーバーへ接続できません。通信を確認して再読み込みしてください。':err.message}});document.getElementById('run-enroll').addEventListener('click',async e=>{if(!enrollOptions)return;const button=e.currentTarget;button.disabled=true;statusNode.textContent='端末のパスキー登録を待っています…';try{let c=await navigator.credentials.create({publicKey:enrollOptions}),credential={id:enc(c.rawId),clientDataJSON:enc(c.response.clientDataJSON),attestationObject:enc(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]},f=await post('/login',{action:'finish_enrollment',flow:FLOW,csrf:CSRF,credential});if(f.recovery_certificate)downloadCertificate(f.recovery_certificate);statusNode.textContent='登録完了。SSO ID: '+f.public_id+'。復旧証明書を安全な場所に保存してください。（6秒後に設定画面へ移動します）';try{await navigator.clipboard.writeText(f.public_id)}catch(copyError){}setTimeout(()=>location.assign(f.next),6000)}catch(err){button.disabled=false;statusNode.textContent=err.name==='NotAllowedError'?'登録がキャンセルされたか時間切れです。もう一度押してください。':err.message}});document.getElementById('show-password').addEventListener('click',function(){let p=document.getElementById('password'),show=p.type==='password';p.type=show?'text':'password';this.textContent=show?'隠す':'表示'});</script></html>'''
     return (page.replace("__FLOW__", html.escape(flow, quote=True)).replace("__CSRF__", html.escape(csrf, quote=True)).replace("ERROR_SLOT", error_html)).encode("utf-8")
 
 
@@ -1064,7 +1143,7 @@ def _app_impl(environ, start_response):
         "/token": (60, 60), "/session/introspect": (300, 60),
         "/contractor/register/start": (20, 3600), "/contractor/verify": (30, 300),
         "/contractor/finish": (20, 300), "/recover/start": (10, 3600),
-        "/admin/identity/search": (20, 300), "/admin/identity/delete": (8, 3600),
+        "/admin/identity/search": (20, 300), "/admin/identity/resolve": (30, 300), "/admin/identity/list-members": (30, 300), "/admin/identity/delete": (8, 3600),
         "/recover/verify": (15, 300), "/recover/totp-verify": (8, 300), "/recover/passkey-begin": (20, 300),
         "/recover/passkey-check": (20, 300), "/recover/allow-reset": (10, 300),
         "/recover/send-otp": (5, 3600), "/recover/finish": (10, 300),
@@ -1175,13 +1254,36 @@ def _app_impl(environ, start_response):
             csrf = b64u(secrets.token_bytes(32))
             con.execute("UPDATE sessions SET csrf_hash=? WHERE token_hash=?", (hashlib.sha256(csrf.encode()).hexdigest(), token_hash))
         return response(start_response, "200 OK", admin_identity_page(csrf), "text/html; charset=utf-8", headers=[("Cache-Control", "no-store"), ("Referrer-Policy", "no-referrer")])
-    if path in ("/admin/identity/search", "/admin/identity/delete") and method == "POST":
+    if path in ("/admin/identity/search", "/admin/identity/resolve", "/admin/identity/list-members", "/admin/identity/delete") and method == "POST":
         try:
             f = fields(environ)
             sid = str(f.get("sid", ""))
             with db() as con:
                 if not valid_admin_api_request(environ, con, sid) and not valid_admin_browser_request(environ, con, f):
                     return json_response(start_response, "403 Forbidden", {"error": "admin_session_required"})
+                if path.endswith("/resolve"):
+                    public_id = str(f.get("public_id", "")).strip().upper()
+                    if not re.fullmatch(r"SID-[A-Z2-7]{26}", public_id):
+                        return json_response(start_response, "400 Bad Request", {"error": "invalid_public_id"})
+                    user = con.execute("SELECT u.public_id,u.display_name,g.sub FROM users u JOIN global_subjects g ON g.user_id=u.id WHERE u.public_id=? AND u.active=1 LIMIT 1", (public_id,)).fetchone()
+                    record_identity_admin_audit(con, environ, sid, "resolve_for_temporary_grant", security_rate_key("sso-admin-grant-target", public_id), bool(user), int(time.time()))
+                    con.commit()
+                    if not user:
+                        return json_response(start_response, "404 Not Found", {"ok": True, "found": False}, [("Cache-Control", "no-store")])
+                    return json_response(start_response, "200 OK", {"ok": True, "found": True, "identity": {"public_id": str(user["public_id"]), "display_name": str(user["display_name"] or ""), "sub": str(user["sub"] or "")}}, [("Cache-Control", "no-store")])
+                if path.endswith("/list-members"):
+                    raw_hashes = str(f.get("subject_hashes", ""))
+                    hashes = list(dict.fromkeys(part for part in raw_hashes.split(",") if re.fullmatch(r"[a-f0-9]{64}", part)))
+                    if not hashes or len(hashes) > 200 or len(hashes) != len([p for p in raw_hashes.split(",") if p]):
+                        return json_response(start_response, "400 Bad Request", {"error": "invalid_subject_list"})
+                    wanted = set(hashes)
+                    matches = []
+                    placeholders = ",".join("?" for _ in hashes)
+                    users = con.execute("SELECT h.subject_hash,u.public_id,u.display_name FROM global_subject_hashes h JOIN users u ON u.id=h.user_id WHERE u.active=1 AND h.subject_hash IN (" + placeholders + ") ORDER BY u.public_id", hashes).fetchall()
+                    matches = [{"subject_hash": str(user["subject_hash"]), "public_id": str(user["public_id"]), "display_name": str(user["display_name"] or "")} for user in users]
+                    record_identity_admin_audit(con, environ, sid, "list_tenant_members", security_rate_key("sso-tenant-members", ",".join(sorted(wanted))), True, int(time.time()))
+                    con.commit()
+                    return json_response(start_response, "200 OK", {"ok": True, "identities": matches}, [("Cache-Control", "no-store")])
                 if path.endswith("/search"):
                     address = str(f.get("email", "")).strip().casefold()
                     if len(address) > 254 or not re.fullmatch(r"[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+", address):
@@ -1323,6 +1425,8 @@ def _app_impl(environ, start_response):
             return json_response(start_response, "200 OK", {"keys": [rsa_public_jwk()]})
         except Exception:
             return json_response(start_response, "503 Service Unavailable", {"error": "signing_key_unavailable"})
+    if path == "/admin/update/sign":
+        return sign_mnsl_update_manifest(environ, start_response)
     if path == "/recover" and method == "GET":
         return response(start_response, "200 OK", recovery_page(), "text/html; charset=utf-8", headers=[("Cache-Control", "no-store")])
     if path == "/account/recovery-email/start" and method == "POST":
@@ -1922,6 +2026,9 @@ def _app_impl(environ, start_response):
             else:
                 sub = b64u(secrets.token_bytes(32))
                 con.execute("INSERT INTO global_subjects(user_id,sub) VALUES(?,?)", (code["user_id"], sub))
+            subject_hash = hashlib.sha256((ISSUER + "\0" + str(sub)).encode("utf-8")).hexdigest()
+            con.execute("INSERT INTO global_subject_hashes(subject_hash,user_id) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET subject_hash=excluded.subject_hash",
+                        (subject_hash, int(code["user_id"])))
             now = int(time.time())
             sid_hash = str(code["sid_hash"] or "")
             if not re.fullmatch(r"[a-f0-9]{64}", sid_hash):

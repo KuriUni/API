@@ -72,6 +72,21 @@ TABLES = {
       PRIMARY KEY (id), UNIQUE KEY uq_license_v4_refresh_history (token_hash),
       KEY idx_license_v4_refresh_family (family_id,used_at), KEY idx_license_v4_refresh_expiry (expires_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci''',
+    'license_v4_offline_tickets': '''CREATE TABLE IF NOT EXISTS license_v4_offline_tickets (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      ticket_id CHAR(32) NOT NULL,
+      license_id BIGINT UNSIGNED NOT NULL,
+      device_id BIGINT UNSIGNED NOT NULL,
+      session_id CHAR(32) NOT NULL,
+      kid CHAR(24) NOT NULL,
+      payload_hash CHAR(64) NOT NULL,
+      expires_at DATETIME NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      revoked_at DATETIME DEFAULT NULL,
+      PRIMARY KEY (id), UNIQUE KEY uq_license_v4_offline_ticket (ticket_id),
+      KEY idx_license_v4_offline_session (session_id,revoked_at),
+      KEY idx_license_v4_offline_expiry (expires_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci''',
 }
 
 REQUIRED_COLUMNS = {
@@ -80,6 +95,7 @@ REQUIRED_COLUMNS = {
     'license_v4_sessions': ('session_id','family_id','license_id','device_id','access_token_hash','refresh_token_hash','access_expires_at','refresh_expires_at','token_version','revoked_at'),
     'license_v4_proofs': ('proof_hash','session_id','action','expires_at'),
     'license_v4_refresh_history': ('token_hash','session_id','family_id','expires_at','used_at'),
+    'license_v4_offline_tickets': ('ticket_id','license_id','device_id','session_id','kid','payload_hash','expires_at','revoked_at'),
 }
 
 

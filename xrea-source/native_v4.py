@@ -22,10 +22,10 @@ from http_utils import RequestError
 from starlette.concurrency import run_in_threadpool
 
 API_VERSION = v4_crypto.API_VERSION
-ROUTES = ('index', 'challenge', 'activate', 'verify', 'refresh', 'reauth', 'revoke')
+ROUTES = ('index', 'challenge', 'activate', 'verify', 'introspect', 'refresh', 'reauth', 'revoke', 'offline-ticket', 'offline-public-key')
 PROOF_HEADERS = ('x-license-session', 'x-license-timestamp', 'x-license-nonce', 'x-license-proof')
 REQUIRED_TABLES = ('license_v4_challenges', 'license_v4_devices', 'license_v4_sessions',
-                   'license_v4_proofs', 'license_v4_refresh_history')
+                   'license_v4_proofs', 'license_v4_refresh_history', 'license_v4_offline_tickets')
 
 
 def reply(payload, rid, status=200, headers=None):
@@ -40,11 +40,11 @@ def reply(payload, rid, status=200, headers=None):
                         **({'Retry-After': '2'} if status == 503 else {}), **(headers or {})})
 
 
-def error_response(exc, rid):
+def error_response(exc, rid, allow='POST'):
     public = domain._public_error(exc)
     if public.status == 503:
         print('license_v4_request_failed request_id=%s error_type=%s' % (rid, type(exc).__name__), file=sys.stderr)
-    headers = {'Allow': 'POST'} if public.status == 405 else None
+    headers = {'Allow': allow} if public.status == 405 else None
     return reply({'success': False, 'error_code': public.code, 'error': str(public), **public.extra}, rid, public.status, headers)
 
 
@@ -163,7 +163,7 @@ def _new_tokens(connection, license_row, device, existing_session=None):
     refresh_token = 'v4.r.' + random_token(48)
     session_id = str(existing_session['session_id']) if existing_session else os.urandom(16).hex()
     family_id = str(existing_session['family_id']) if existing_session else os.urandom(16).hex()
-    scopes = ['license.verify','license.refresh','license.revoke']
+    scopes = ['license.verify','license.refresh','license.revoke','license.introspect','license.offline']
     if existing_session:
         with connection.cursor() as cursor:
             cursor.execute('INSERT IGNORE INTO license_v4_refresh_history(token_hash,session_id,family_id,expires_at,used_at) VALUES(%s,%s,%s,%s,UTC_TIMESTAMP())',
@@ -348,11 +348,28 @@ def _session_action(action, data, headers, remote_addr, rid):
             with connection.cursor() as cursor:
                 if scope == 'family':
                     cursor.execute("UPDATE license_v4_sessions SET revoked_at=UTC_TIMESTAMP(),revoke_reason='client_family_revoke' WHERE family_id=%s AND revoked_at IS NULL", (str(session['family_id']),))
+                    affected = cursor.rowcount
+                    cursor.execute('UPDATE license_v4_offline_tickets SET revoked_at=UTC_TIMESTAMP() WHERE session_id IN (SELECT session_id FROM license_v4_sessions WHERE family_id=%s) AND revoked_at IS NULL', (str(session['family_id']),))
                 else:
                     cursor.execute("UPDATE license_v4_sessions SET revoked_at=UTC_TIMESTAMP(),revoke_reason='client_revoke' WHERE id=%s AND revoked_at IS NULL", (int(session['id']),))
-                affected = cursor.rowcount
+                    affected = cursor.rowcount
+                    cursor.execute('UPDATE license_v4_offline_tickets SET revoked_at=UTC_TIMESTAMP() WHERE session_id=%s AND revoked_at IS NULL', (str(session['session_id']),))
             connection.commit()
             return {'revoked': True, 'scope': scope, 'affected_sessions': affected}
+        if action == 'offline-ticket':
+            ticket = _offline_ticket(connection, session, data.get('hours', 24))
+            connection.commit()
+            return {'offline_ticket': ticket}
+        if action == 'introspect':
+            with connection.cursor() as cursor:
+                cursor.execute('UPDATE license_v4_sessions SET last_seen_at=UTC_TIMESTAMP() WHERE id=%s', (int(session['id']),))
+                cursor.execute('UPDATE license_v4_devices SET last_seen_at=UTC_TIMESTAMP() WHERE id=%s', (int(session['device_id']),))
+            connection.commit()
+            session_payload = {key: session[key] for key in ('session_id', 'family_id', 'created_at', 'last_seen_at', 'access_expires_at', 'refresh_expires_at')}
+            session_payload.update({'token_version': int(session['token_version']), 'scopes': json.loads(session['scopes_json'])})
+            return {'active': True, 'session': session_payload,
+                    'device': {'device_ref': device_reference(str(session['device_hash'])),
+                               'key_thumbprint': str(session['key_thumbprint']), 'key_algorithm': str(session['key_algorithm'])}}
         with connection.cursor() as cursor:
             cursor.execute('UPDATE license_v4_sessions SET last_seen_at=UTC_TIMESTAMP() WHERE id=%s', (int(session['id']),))
             cursor.execute('UPDATE license_v4_devices SET last_seen_at=UTC_TIMESTAMP() WHERE id=%s', (int(session['device_id']),))
@@ -385,6 +402,35 @@ def execute(action, data, headers, remote_addr, rid):
         return error_response(exc, rid)
 
 
+def _offline_ticket(connection, session, hours):
+    material = v3_crypto.offline_signing_material(domain._config(), version=4)
+    try:
+        hours = max(1, min(72, int(hours)))
+    except (TypeError, ValueError):
+        hours = 24
+    now = int(time.time())
+    license_exp = domain._as_utc(session['expires_at']).timestamp() if session.get('expires_at') else now + hours * 3600
+    expires = min(now + hours * 3600, int(license_exp))
+    if expires <= now:
+        raise RuntimeError('license_expired')
+    ticket_id = os.urandom(16).hex()
+    payload = {'v': 4, 'ticket_id': ticket_id, 'license_id': int(session['license_id']),
+               'product_id': int(session.get('product_id') or 0),
+               'device_key_thumbprint': str(session['key_thumbprint']),
+               'session_id': str(session['session_id']), 'offline_epoch': int(session.get('offline_epoch') or 1),
+               'iat': now, 'exp': expires, 'kid': material['kid']}
+    body = v3_crypto.b64url_encode(json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+    signature = v3_crypto.b64url_encode(material['private_key'].sign(body.encode('ascii')))
+    ticket = 'v4o.' + body + '.' + signature
+    with connection.cursor() as cursor:
+        cursor.execute('DELETE FROM license_v4_offline_tickets WHERE expires_at<UTC_TIMESTAMP()')
+        cursor.execute('INSERT INTO license_v4_offline_tickets(ticket_id,license_id,device_id,session_id,kid,payload_hash,expires_at,created_at) VALUES(%s,%s,%s,%s,%s,%s,FROM_UNIXTIME(%s),UTC_TIMESTAMP())',
+                       (ticket_id, int(session['license_id']), int(session['device_id']), str(session['session_id']), material['kid'], hashlib.sha256(body.encode('ascii')).hexdigest(), expires))
+    return {'ticket': ticket, 'ticket_id': ticket_id, 'algorithm': material['algorithm'], 'kid': material['kid'],
+            'expires_at': datetime.fromtimestamp(expires, timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
+            'max_offline_hours': hours}
+
+
 def install_routes(api, maintenance_if_needed):
     def endpoint_for(action):
         async def endpoint(request: Request) -> Response:
@@ -402,6 +448,13 @@ def install_routes(api, maintenance_if_needed):
                     'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
                     'X-Frame-Options': 'DENY', 'X-Request-ID': rid,
                 })
+            if action == 'offline-public-key' and request.method == 'GET':
+                try:
+                    return reply({'offline_signing_key': v3_crypto.public_signing_key(domain._config(), version=4)}, rid)
+                except Exception as exc:
+                    return error_response(exc, rid)
+            if action == 'offline-public-key':
+                return error_response(domain.V3Error(405, 'METHOD_NOT_ALLOWED', 'GETを使用してください。'), rid, allow='GET')
             if request.method != 'POST':
                 return error_response(domain.V3Error(405, 'METHOD_NOT_ALLOWED', 'POSTを使用してください。'), rid)
             try:

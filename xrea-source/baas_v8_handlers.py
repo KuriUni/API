@@ -159,6 +159,31 @@ def _get_job(connection, tenant_id, job_id):
         return cursor.fetchone()
 
 
+def _legacy_issuance_reserved_count(cursor, tenant_id):
+    """Count queued work in every pre-V8 store while draining old jobs."""
+    reserved = 0
+    for table in ("product_key_issue_jobs_v4", "product_key_issue_jobs_v5"):
+        cursor.execute(
+            "SELECT COUNT(*) AS n FROM information_schema.tables "
+            "WHERE table_schema=DATABASE() AND table_name=%s", (table,))
+        exists = cursor.fetchone()
+        if not exists or int(exists.get("n", 0)) == 0:
+            continue
+        cursor.execute(
+            "SELECT COALESCE(SUM(GREATEST(requested_count-processed_count,0)),0) AS n "
+            "FROM " + table + " WHERE tenant_id=%s AND status IN "
+            "('queued','processing','cancel_requested')", (tenant_id,))
+        reserved += int((cursor.fetchone() or {}).get("n", 0))
+    # V6 (and jobs submitted by the retired V7 handler) used the unified store.
+    for engine in (4, 5, 6):
+        cursor.execute(
+            "SELECT COALESCE(SUM(GREATEST(requested_count-processed_count,0)),0) AS n "
+            "FROM issuance_jobs WHERE tenant_id=%s AND engine_version=%s AND status IN "
+            "('queued','processing','cancel_requested')", (tenant_id, engine))
+        reserved += int((cursor.fetchone() or {}).get("n", 0))
+    return reserved
+
+
 def _get_pricing(count, environment):
     from billing_policy import RULES, credit, issue_submit_units
     units = issue_submit_units(count)
@@ -598,13 +623,7 @@ def issuance(request_context):
                            "FROM product_key_v8_jobs WHERE tenant_id=%s AND status IN "
                            "('queued','processing','cancel_requested')", (tenant_id,))
             reserved = int((cursor.fetchone() or {}).get("n", 0))
-            # Keep quota reservations for V4-V6 jobs already accepted before
-            # cutover; all new submissions now enter the independent V8 queue.
-            for engine in (4, 5, 6):
-                cursor.execute("SELECT COALESCE(SUM(GREATEST(requested_count-processed_count,0)),0) AS n "
-                               "FROM issuance_jobs WHERE tenant_id=%s AND engine_version=%s AND status IN "
-                               "('queued','processing','cancel_requested')", (tenant_id, engine))
-                reserved += int((cursor.fetchone() or {}).get("n", 0))
+            reserved += _legacy_issuance_reserved_count(cursor, tenant_id)
             if current + reserved + count > int(tenant["max_licenses"]):
                 raise ValueError("license_quota_exceeded")
             job_id = secrets.token_hex(16)

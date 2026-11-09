@@ -44,7 +44,7 @@ def scopes(requested=None):
     return result or list(DEFAULT_SCOPES)
 
 
-def offline_signing_material(config):
+def offline_signing_material(config, version=3):
     try:
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -53,7 +53,9 @@ def offline_signing_material(config):
     root = str(config.get("license_v3_signing_secret", "") or "").strip()
     if len(root) < 32:
         root = token_secret(config)
-    seed = hmac.new(root.encode("utf-8"), b"TUTI-LICENSE-V3-OFFLINE-ED25519", hashlib.sha256).digest()
+    if version not in (3, 4):
+        raise ValueError("offline_signing_version_invalid")
+    seed = hmac.new(root.encode("utf-8"), ("TUTI-LICENSE-V%d-OFFLINE-ED25519" % version).encode("ascii"), hashlib.sha256).digest()
     private_key = Ed25519PrivateKey.from_private_bytes(seed)
     public = private_key.public_key().public_bytes(
         encoding=serialization.Encoding.Raw,
@@ -67,8 +69,8 @@ def offline_signing_material(config):
     }
 
 
-def public_signing_key(config):
-    material = offline_signing_material(config)
+def public_signing_key(config, version=3):
+    material = offline_signing_material(config, version=version)
     return {
         "algorithm": material["algorithm"],
         "kid": material["kid"],
