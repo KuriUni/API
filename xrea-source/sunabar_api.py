@@ -48,11 +48,11 @@ def _relay(request, route_name):
     route = ROUTES[route_name]
     method = str(request.get("method", "GET")).upper()
     if method == "OPTIONS":
+        # This relay is same-origin by design. Do not grant arbitrary sites
+        # browser access to credential-bearing Sunabar requests.
         return make_response(b"", 204, [
-            ("Access-Control-Allow-Origin", "*"),
-            ("Access-Control-Allow-Headers", "X-Sunabar-API-Key, Authorization, Content-Type"),
-            ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
             ("Cache-Control", "no-store"),
+            ("Vary", "Origin"),
             ("Content-Length", "0"),
         ])
     if method != route[1]:
@@ -106,8 +106,9 @@ def _relay(request, route_name):
                 ("X-Content-Type-Options", "nosniff"),
                 ("Content-Length", str(len(response_body))),
             ]
-            for name in ("Access-Control-Allow-Origin", "Access-Control-Allow-Headers",
-                         "Access-Control-Allow-Methods", "Retry-After", "X-Request-ID"):
+            # Never forward upstream CORS permissions through this same-origin
+            # relay. Operational headers may be passed through.
+            for name in ("Retry-After", "X-Request-ID"):
                 value = upstream.headers.get(name)
                 if value:
                     response_headers.append((name, value))
