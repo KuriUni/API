@@ -53,7 +53,14 @@ def _private_dir():
     if root == docroot or is_relative_to(root, docroot):
         raise RuntimeError('private_runtime_directory_inside_webroot')
     path = root / 'runtime'
+    # A pre-existing symlink could redirect credentials and recovery material
+    # outside the configured private directory.
+    if path.is_symlink():
+        raise RuntimeError('unsafe_private_runtime_directory')
     path.mkdir(mode=448, parents=True, exist_ok=True)
+    resolved = path.resolve(strict=True)
+    if resolved != path or not is_relative_to(resolved, root):
+        raise RuntimeError('unsafe_private_runtime_directory')
     try:
         path.chmod(448)
     except OSError:
