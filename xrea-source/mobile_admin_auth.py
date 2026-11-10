@@ -86,28 +86,28 @@ def _principal(credential_hash, enroll=False):
         connection.close()
 
 def _resume_sso(token):
-    from passkey_handlers import _read_store, _store_path, _write_store
+    from passkey_handlers import _read_store, _write_store, _passkey_store_lock
     from web_passkey_auth import issue_principal_token
-    path = _store_path()
-    store = _read_store(path)
-    row = store.get('sso_sessions', {}).get(token)
-    if not isinstance(row, dict):
-        return (None, None)
-    now = int(time.time())
-    absolute = int(row.get('absolute_expires', int(row.get('created', 0)) + 43200))
-    if int(row.get('expires', 0)) < now or absolute <= now:
-        del store['sso_sessions'][token]
+    with _passkey_store_lock() as path:
+        store = _read_store(path)
+        row = store.get('sso_sessions', {}).get(token)
+        if not isinstance(row, dict):
+            return (None, None)
+        now = int(time.time())
+        absolute = int(row.get('absolute_expires', int(row.get('created', 0)) + 43200))
+        if int(row.get('expires', 0)) < now or absolute <= now:
+            del store['sso_sessions'][token]
+            _write_store(path, store)
+            return (None, None)
+        credential_hash = str(row.get('credential_id_hash', ''))
+        role = _principal(credential_hash)
+        if role not in {'viewer', 'operator', 'security-admin', 'ha-admin'}:
+            del store['sso_sessions'][token]
+            _write_store(path, store)
+            return (None, None)
+        expires = min(now + 1800, absolute)
+        row.update({'role_name': role, 'expires': expires, 'absolute_expires': absolute})
         _write_store(path, store)
-        return (None, None)
-    credential_hash = str(row.get('credential_id_hash', ''))
-    role = _principal(credential_hash)
-    if role not in {'viewer', 'operator', 'security-admin', 'ha-admin'}:
-        del store['sso_sessions'][token]
-        _write_store(path, store)
-        return (None, None)
-    expires = min(now + 1800, absolute)
-    row.update({'role_name': role, 'expires': expires, 'absolute_expires': absolute})
-    _write_store(path, store)
     return ({'credential_id_hash': credential_hash, 'role': role, 'expires': expires}, issue_principal_token(credential_hash, 'admin_mobile', 300))
 
 @legacy_compatible(callback_index=None, request_index=0)
@@ -226,11 +226,11 @@ def admin_auth(request_context):
             return _reply('403 Forbidden', {'ok': False, 'error': 'csrf_validation_failed'})
         sso_token = cookies.get(SSO_COOKIE, '')
         if sso_token:
-            from passkey_handlers import _read_store, _store_path, _write_store, _audit
-            path = _store_path()
-            store = _read_store(path)
-            removed = store.get('sso_sessions', {}).pop(sso_token, None)
-            _write_store(path, store)
+            from passkey_handlers import _read_store, _write_store, _passkey_store_lock, _audit
+            with _passkey_store_lock() as path:
+                store = _read_store(path)
+                removed = store.get('sso_sessions', {}).pop(sso_token, None)
+                _write_store(path, store)
             if removed:
                 _audit(request_context, 'admin_sso_revoked', {'credential_id_hash': removed.get('credential_id_hash', '')})
         return _reply('200 OK', {'ok': True, 'logout_url': _logout_url(request_context)}, _clear_cookies())
