@@ -8,6 +8,8 @@ $root = $PSScriptRoot
 $python = Join-Path $root '.venv\Scripts\python.exe'
 $stdoutLog = Join-Path $root 'business-ops.stdout.log'
 $stderrLog = Join-Path $root 'business-ops.stderr.log'
+$requirementsFile = Join-Path $root 'requirements.txt'
+$requirementsStamp = Join-Path $root '.venv\.requirements-lock.sha256'
 $baseUrl = "http://127.0.0.1:$Port"
 
 if (-not (Test-Path -LiteralPath $python)) {
@@ -16,11 +18,16 @@ if (-not (Test-Path -LiteralPath $python)) {
     if ($LASTEXITCODE -ne 0) { throw 'Python virtual environment creation failed.' }
 }
 
+$importsReady = $false
 & $python -c 'import fastapi, uvicorn, cryptography' 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host 'Installing required packages...'
-    & $python -m pip install -r (Join-Path $root 'requirements.txt')
+if ($LASTEXITCODE -eq 0) { $importsReady = $true }
+$expectedLockHash = (Get-FileHash -LiteralPath $requirementsFile -Algorithm SHA256).Hash
+$installedLockHash = if (Test-Path -LiteralPath $requirementsStamp) { (Get-Content -LiteralPath $requirementsStamp -Raw).Trim() } else { '' }
+if (-not $importsReady -or $installedLockHash -ne $expectedLockHash) {
+    Write-Host 'Installing pinned and locked packages...'
+    & $python -m pip install --disable-pip-version-check -r $requirementsFile
     if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
+    Set-Content -LiteralPath $requirementsStamp -Value $expectedLockHash -Encoding ascii -NoNewline
 }
 
 $running = $false

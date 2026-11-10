@@ -17,6 +17,10 @@ from pathlib import Path
 API_KEY_TTL = 86400
 LICENSE_TTL = 30 * 86400
 MAX_BODY = 16384
+RATE_MAX_IDENTITIES = 5000
+# All current _limited() windows are at most one hour. Keep only the longest
+# active window so a quiet identity cannot retain a full day's history.
+RATE_RETENTION_SECONDS = 3600
 SCHEMA_VERSION = 2
 STATE_DIR = Path(__file__).resolve().parent / ".sunabar"
 sys.path.insert(0, str(Path(__file__).resolve().parent / "pymysql_vendor.zip"))
@@ -286,6 +290,21 @@ def _decode(token, prefix, allow_expired=False):
     return claims
 
 
+def _write_rate_records(state, records):
+    temp = STATE_DIR / (".rate-" + secrets.token_hex(8))
+    temp_fd = os.open(str(temp), os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        payload = json.dumps(records, separators=(",", ":")).encode("utf-8")
+        written = 0
+        while written < len(payload):
+            written += os.write(temp_fd, payload[written:])
+        os.fsync(temp_fd)
+    finally:
+        os.close(temp_fd)
+    os.replace(str(temp), str(state))
+    os.chmod(state, 0o600)
+
+
 def _limited(name, limit, window):
     now = int(time.time())
     key = hashlib.sha256(name.encode("utf-8")).hexdigest()
@@ -310,23 +329,22 @@ def _limited(name, limit, window):
                 records = {}
             except (OSError, ValueError):
                 raise RuntimeError("invalid_rate_state") from None
+            # Prune expired entries before checking the limit so stale callers
+            # cannot make this file grow forever.
+            records = {k: kept for k, vals in records.items() if isinstance(vals, list)
+                       and (kept := [int(item) for item in vals if now - int(item) < RATE_RETENTION_SECONDS])}
             values = [int(item) for item in records.get(key, []) if now - int(item) < window]
             if len(values) >= limit:
                 return False
+            # Fail closed for new identities when full. Evicting active keys
+            # here would let an attacker bypass their rate limits by churn.
+            if key not in records and len(records) >= RATE_MAX_IDENTITIES:
+                # Persist expiration pruning so an idle full file can recover.
+                _write_rate_records(state, records)
+                return False
             values.append(now)
-            records = {k: [int(item) for item in vals if now - int(item) < 86400]
-                       for k, vals in records.items() if isinstance(vals, list)}
             records[key] = values
-            temp = STATE_DIR / (".rate-" + secrets.token_hex(8))
-            temp_fd = os.open(str(temp), os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0), 0o600)
-            try:
-                payload = json.dumps(records, separators=(",", ":")).encode("utf-8")
-                os.write(temp_fd, payload)
-                os.fsync(temp_fd)
-            finally:
-                os.close(temp_fd)
-            os.replace(str(temp), str(state))
-            os.chmod(state, 0o600)
+            _write_rate_records(state, records)
             return True
     finally:
         os.close(fd)

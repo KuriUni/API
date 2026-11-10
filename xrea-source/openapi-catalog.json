@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "2415.jp API (V8 independent product-key issuance)",
-    "version": "1.18.0",
-    "description": "ライセンス認証API v4にセッション照会とV4専用の署名付きオフラインチケットを追加。V2/V3との互換性を維持します。"
+    "version": "1.19.0",
+    "description": "License API V4にV2セッションからの端末鍵移行を追加。V2/V3との互換性を維持します。"
   },
   "paths": {
     "/api/baas/v1/service.php": {
@@ -4872,7 +4872,8 @@
                   "purpose": {
                     "type": "string",
                     "enum": [
-                      "activate"
+                      "activate",
+                      "migrate"
                     ],
                     "default": "activate"
                   }
@@ -5407,7 +5408,8 @@
                   "purpose": {
                     "type": "string",
                     "enum": [
-                      "activate"
+                      "activate",
+                      "migrate"
                     ],
                     "default": "activate"
                   }
@@ -6264,6 +6266,158 @@
           },
           "503": {
             "description": "Signing key unavailable."
+          }
+        }
+      }
+    },
+    "/api/v4/migrate.php": {
+      "post": {
+        "summary": "V2の保存済みセッションを端末鍵署名でV4へ移行",
+        "tags": [
+          "ライセンス認証v4"
+        ],
+        "security": [],
+        "description": "有効なV2 access_tokenと一致する端末Fingerprint、120秒チャレンジ、ECDSA端末鍵署名を要求します。V4発行後のV2失効はクライアントが確認応答を保存してから実施します。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "access_token",
+                  "device_fingerprint",
+                  "device_public_key",
+                  "challenge_id",
+                  "nonce",
+                  "signature"
+                ],
+                "properties": {
+                  "access_token": {
+                    "type": "string"
+                  },
+                  "device_fingerprint": {
+                    "type": "string",
+                    "pattern": "^[a-fA-F0-9]{64}$"
+                  },
+                  "device_public_key": {
+                    "type": "string"
+                  },
+                  "challenge_id": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{32}$"
+                  },
+                  "nonce": {
+                    "type": "string"
+                  },
+                  "signature": {
+                    "type": "string"
+                  },
+                  "device_label": {
+                    "type": "string"
+                  },
+                  "app_version": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "V2セッションからV4端末鍵セッションへの移行成功。"
+          },
+          "400": {
+            "description": "要求形式が正しくありません。"
+          },
+          "401": {
+            "description": "V2セッション、端末一致または署名が無効です。"
+          },
+          "403": {
+            "description": "ライセンスが無効または期限切れです。"
+          },
+          "409": {
+            "description": "端末上限または再利用を検知しました。"
+          },
+          "503": {
+            "description": "サービスまたはHA書込みノードを利用できません。Retry-After: 2"
+          }
+        }
+      }
+    },
+    "/license/api/v4/migrate.php": {
+      "post": {
+        "summary": "V2の保存済みセッションを端末鍵署名でV4へ移行",
+        "tags": [
+          "ライセンス認証v4"
+        ],
+        "security": [],
+        "description": "有効なV2 access_tokenと一致する端末Fingerprint、120秒チャレンジ、ECDSA端末鍵署名を要求します。V4発行後のV2失効はクライアントが確認応答を保存してから実施します。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "access_token",
+                  "device_fingerprint",
+                  "device_public_key",
+                  "challenge_id",
+                  "nonce",
+                  "signature"
+                ],
+                "properties": {
+                  "access_token": {
+                    "type": "string"
+                  },
+                  "device_fingerprint": {
+                    "type": "string",
+                    "pattern": "^[a-fA-F0-9]{64}$"
+                  },
+                  "device_public_key": {
+                    "type": "string"
+                  },
+                  "challenge_id": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{32}$"
+                  },
+                  "nonce": {
+                    "type": "string"
+                  },
+                  "signature": {
+                    "type": "string"
+                  },
+                  "device_label": {
+                    "type": "string"
+                  },
+                  "app_version": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "V2セッションからV4端末鍵セッションへの移行成功。"
+          },
+          "400": {
+            "description": "要求形式が正しくありません。"
+          },
+          "401": {
+            "description": "V2セッション、端末一致または署名が無効です。"
+          },
+          "403": {
+            "description": "ライセンスが無効または期限切れです。"
+          },
+          "409": {
+            "description": "端末上限または再利用を検知しました。"
+          },
+          "503": {
+            "description": "サービスまたはHA書込みノードを利用できません。Retry-After: 2"
           }
         }
       }

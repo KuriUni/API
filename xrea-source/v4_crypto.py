@@ -33,6 +33,11 @@ def activation_message(data, challenge_id, nonce, thumbprint):
                       str(challenge_id), str(nonce), str(thumbprint), body_hash(data, True)))
 
 
+def migration_message(data, challenge_id, nonce, thumbprint):
+    return '\n'.join(('TUTI-LICENSE-V4', 'MIGRATE', 'POST', PUBLIC_PREFIX + 'migrate.php',
+                      str(challenge_id), str(nonce), str(thumbprint), body_hash(data, True)))
+
+
 def request_message(method, path, session_id, timestamp, nonce, data, credential_hash):
     return '\n'.join(('TUTI-LICENSE-V4', str(method).upper(), str(path), str(session_id),
                       str(int(timestamp)), str(nonce), body_hash(data), str(credential_hash)))

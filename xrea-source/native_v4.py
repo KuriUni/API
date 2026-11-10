@@ -22,7 +22,7 @@ from http_utils import RequestError
 from starlette.concurrency import run_in_threadpool
 
 API_VERSION = v4_crypto.API_VERSION
-ROUTES = ('index', 'challenge', 'activate', 'verify', 'introspect', 'refresh', 'reauth', 'revoke', 'offline-ticket', 'offline-public-key')
+ROUTES = ('index', 'challenge', 'activate', 'migrate', 'verify', 'introspect', 'refresh', 'reauth', 'revoke', 'offline-ticket', 'offline-public-key')
 PROOF_HEADERS = ('x-license-session', 'x-license-timestamp', 'x-license-nonce', 'x-license-proof')
 REQUIRED_TABLES = ('license_v4_challenges', 'license_v4_devices', 'license_v4_sessions',
                    'license_v4_proofs', 'license_v4_refresh_history', 'license_v4_offline_tickets')
@@ -110,6 +110,8 @@ def _consume_challenge(connection, purpose, data, public_key):
         raise RuntimeError('challenge_key_mismatch')
     if purpose == 'activate':
         message = v4_crypto.activation_message(data, challenge_id, nonce, public_key['thumbprint'])
+    elif purpose == 'migrate':
+        message = v4_crypto.migration_message(data, challenge_id, nonce, public_key['thumbprint'])
     else:
         raise domain.V3Error(400, 'CHALLENGE_PURPOSE_INVALID', 'この用途のチャレンジは発行できません。')
     if not v3_crypto.verify_signature(public_key['pem'], message, signature):
@@ -247,8 +249,8 @@ def _verify_pop(connection, session, action, data, headers, token):
 
 def _issue_challenge(data, remote_addr, rid):
     purpose = str(data.get('purpose', 'activate')).strip().lower()
-    if purpose != 'activate':
-        raise domain.V3Error(400, 'CHALLENGE_PURPOSE_INVALID', 'purposeはactivateを指定してください。')
+    if purpose not in ('activate', 'migrate'):
+        raise domain.V3Error(400, 'CHALLENGE_PURPOSE_INVALID', 'purposeはactivateまたはmigrateを指定してください。')
     public_key = v3_crypto.normalize_public_key(data.get('device_public_key', ''))
     connection = _connect(begin=True)
     try:
@@ -303,6 +305,57 @@ def _activate(data, remote_addr, rid):
         connection.commit()
         return {'message': 'License API v4 device-bound session issued.',
                 'license': domain._license_payload(license_row), 'product_code': product,
+                'device': {'device_id': int(device['id']), 'device_ref': device_reference(fingerprint_hash),
+                           'key_thumbprint': public_key['thumbprint'], 'key_algorithm': public_key['algorithm']},
+                'session': session}
+    except Exception:
+        domain._rollback_connection(connection)
+        raise
+    finally:
+        domain._close_connection(connection)
+
+
+def _migrate_v2(data, remote_addr, rid):
+    config = domain._config()
+    access_token = str(data.get('access_token', '')).strip()
+    fingerprint = normalize_device_fingerprint(data.get('device_fingerprint', ''))
+    if not access_token or len(access_token) > 8192:
+        raise domain.V3Error(400, 'V2_SESSION_REQUIRED', '有効なV2アクセストークンが必要です。')
+    if not is_valid_device_fingerprint(fingerprint):
+        raise domain.V3Error(400, 'DEVICE_FINGERPRINT_INVALID', 'device_fingerprintはSHA-256 hex形式で指定してください。')
+    public_key = v3_crypto.normalize_public_key(data.get('device_public_key', ''))
+    connection = _connect(begin=True)
+    try:
+        _consume_challenge(connection, 'migrate', data, public_key)
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT d.*,l.active,l.expires_at,l.revoked_at AS license_revoked_at,l.deleted_at,l.max_devices,l.tenant_id,l.product_id,l.label AS license_label FROM license_devices d JOIN licenses l ON l.id=d.license_id WHERE d.access_token_hash=%s AND l.deleted_at IS NULL LIMIT 1 FOR UPDATE',
+                           (token_hash(config, access_token),))
+            legacy = cursor.fetchone()
+        if not legacy or legacy.get('revoked_at'):
+            raise domain.V3Error(401, 'V2_SESSION_INVALID', '保存済みV2セッションが無効または失効しています。')
+        fingerprint_hash = device_hash(config, fingerprint)
+        if not hmac.compare_digest(str(legacy.get('device_hash') or ''), fingerprint_hash):
+            raise domain.V3Error(401, 'V2_DEVICE_MISMATCH', 'V2セッションとこの端末の情報が一致しません。')
+        now = datetime.now(timezone.utc)
+        for field in ('access_expires_at', 'refresh_expires_at'):
+            expiry = legacy.get(field)
+            if not expiry or domain._as_utc(expiry) <= now:
+                raise domain.V3Error(401, 'V2_SESSION_EXPIRED', 'V2セッションの期限が切れています。先にオンライン再確認を実行してください。')
+        license_row = domain._lock_license(connection, int(legacy['license_id']))
+        if not license_row:
+            raise domain.V3Error(401, 'V2_LICENSE_UNAVAILABLE', 'V2ライセンスが見つかりません。')
+        domain._active_license(license_row)
+        domain._guard_capacity(connection, license_row, fingerprint_hash)
+        device = _upsert_device(connection, license_row, fingerprint_hash, public_key,
+                                data.get('device_label', legacy.get('device_label', '')),
+                                data.get('app_version', ''))
+        session = _new_tokens(connection, license_row, device)
+        with connection.cursor() as cursor:
+            cursor.execute('UPDATE licenses SET last_activated_at=UTC_TIMESTAMP(),last_seen_at=UTC_TIMESTAMP() WHERE id=%s', (int(license_row['id']),))
+        connection.commit()
+        return {'message': 'License API v2 session migrated to a device-bound v4 session.',
+                'migration': {'from_api_version': 2, 'to_api_version': 4},
+                'license': domain._license_payload(license_row),
                 'device': {'device_id': int(device['id']), 'device_ref': device_reference(fingerprint_hash),
                            'key_thumbprint': public_key['thumbprint'], 'key_algorithm': public_key['algorithm']},
                 'session': session}
@@ -395,6 +448,8 @@ def execute(action, data, headers, remote_addr, rid):
             payload = _issue_challenge(data, remote_addr, rid)
         elif action == 'activate':
             payload = _activate(data, remote_addr, rid)
+        elif action == 'migrate':
+            payload = _migrate_v2(data, remote_addr, rid)
         else:
             payload = _session_action(action, data, headers, remote_addr, rid)
         return reply(payload, rid)

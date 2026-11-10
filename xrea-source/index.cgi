@@ -73,7 +73,12 @@ try:
         environ['PATH_INFO']=path[len('/license'):] if path=='/license' or path.startswith('/license/') else path
         environ['PATH_INFO']=environ['PATH_INFO'] or '/'
         length=int(environ.get('CONTENT_LENGTH') or '0')
-        if length<0 or length>50*1024*1024:
+        # Most API calls are capped at 1 MiB at the CGI boundary. Only the
+        # authenticated HA snapshot transfer endpoints need the larger body.
+        # Keep their own validation and authorization checks as the final gate.
+        request_path=environ.get('PATH_INFO','/')
+        max_body=50*1024*1024 if request_path in {'/ha/import.php','/ha/sync.php'} else 1024*1024
+        if length<0 or length>max_body:
             metrics.status=413
             print('Status: 413 Content Too Large\r\nContent-Type: application/json\r\n\r\n{"ok":false,"error":"request_too_large"}')
             sys.exit(0)

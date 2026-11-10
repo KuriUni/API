@@ -40,4 +40,8 @@ $env:BUSINESS_OPS_SESSION_KEY = '<random-secret-at-least-32-characters>'
 py -m uvicorn main:app --host 127.0.0.1 --port 8765
 ```
 
+`requirements.txt` pins the complete runtime dependency set. The Windows
+launcher records its SHA-256 under `.venv` and reapplies the pinned set when
+the dependency file changes, including for an existing virtual environment.
+
 認証設定がない状態ではログインを開始できません。実際のコールバックURLはSSO Coreに登録した値と完全一致させてください。

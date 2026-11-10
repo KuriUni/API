@@ -1,0 +1,25 @@
+Options -Indexes
+Options +ExecCGI
+AcceptPathInfo On
+CGIPassAuth On
+AddHandler cgi-script .cgi
+DirectoryIndex oidc.cgi
+RewriteEngine On
+# TUTI-HTTPS-ENFORCEMENT-BEGIN
+RewriteCond %{HTTPS} !=on
+RewriteCond %{HTTP:CF-Visitor} !https [NC]
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L,NE]
+<IfModule mod_headers.c>
+Header always set Strict-Transport-Security "max-age=31536000"
+</IfModule>
+# TUTI-HTTPS-ENFORCEMENT-END
+
+RewriteRule ^(\.well-known/openid-configuration|authorize|login(?:/begin|/totp)?|account(?:/onboarding/complete)?|acount\.php|account\.php|session/introspect|token|userinfo|jwks|logout|healthz|recover(?:/(?:start|verify|finish))?|account/recovery-email/(?:start|verify)|account/recovery-key/(?:begin|finish)|account/passkey/add/(?:begin|verify|finish)|account/totp/(?:begin|verify-passkey|enable|disable)|recover/passkey-check|recover/totp-verify|recover/allow-reset|recover/send-otp|recover/passkey-begin|admin/identity(?:/(?:search|resolve|list-members|delete))?|contractor/(?:invite|register(?:/start)?|setup|verify|finish))/?$ oidc.cgi/$1 [QSA,L]
+RewriteRule ^mnsl-signing/(public-key|sign)/?$ oidc.cgi/mnsl-signing/$1 [QSA,L]
+<FilesMatch "(?i)^(?:server\.py|manage\.py|README\.md|requirements\.txt|.*\.(?:py|pyc|sqlite|sqlite3|pem|key|log|bak))$">
+    Require all denied
+</FilesMatch>
+
+<FilesMatch "(?i)^(?:\.htaccess|\.gitignore)$">
+    Require all denied
+</FilesMatch>

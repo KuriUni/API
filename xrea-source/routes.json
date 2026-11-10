@@ -689,7 +689,9 @@
     },
     {
       "path": "/api/v4/offline-public-key.php",
-      "methods": ["GET"],
+      "methods": [
+        "GET"
+      ],
       "access": "endpoint_or_include",
       "native_only": true
     },
@@ -1077,7 +1079,9 @@
     },
     {
       "path": "/license/api/v4/offline-public-key.php",
-      "methods": ["GET"],
+      "methods": [
+        "GET"
+      ],
       "access": "endpoint_or_include",
       "native_only": true
     },
@@ -1123,6 +1127,16 @@
       "source": "phone_activate.php",
       "source_sha256": "7939f04db2d10b2a175a26cf28322f5dbeb066075055ee36934500af3a056c54",
       "access": "endpoint_or_include"
+    },
+    {
+      "path": "/api/v4/migrate.php",
+      "access": "endpoint_or_include",
+      "native_only": true
+    },
+    {
+      "path": "/license/api/v4/migrate.php",
+      "access": "endpoint_or_include",
+      "native_only": true
     }
   ]
 }

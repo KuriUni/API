@@ -164,7 +164,7 @@ foreach ($destination in $targets) {
             $v2Body = $v2.Content|ConvertFrom-Json
             if (-not $v2.Headers['X-Request-ID'] -or ([int]$v2.StatusCode -ne 400 -and -not ([int]$v2.StatusCode -eq 503 -and $v2Body.error -eq 'server_not_writable'))) { throw 'V2 authentication protection failed.' }
             $catalog = Invoke-RestMethod -Uri "https://$domain/license/api-catalog/index.php?document=openapi.json" -TimeoutSec 30
-            $expectedCatalogVersion = if ($Profile -eq 'LicenseV4') { '1.18.0' } else { '1.16.0' }
+            $expectedCatalogVersion = if ($Profile -eq 'LicenseV4') { '1.19.0' } else { '1.16.0' }
             if ($catalog.info.version -ne $expectedCatalogVersion) { throw 'License API specification not updated.' }
             if ($Profile -eq 'LicenseV4') {
                 $guide = Invoke-WebRequest -Uri "https://$domain/license/api/v4/activate.php" -TimeoutSec 30 -SkipHttpErrorCheck
@@ -240,4 +240,3 @@ foreach ($destination in $targets) {
 Write-Host "Code backups: $backupRoot"
 Write-Host "Database snapshots (Windows current-user DPAPI): $privateRoot"
 & (Join-Path $PSScriptRoot '..\Prune-DeployBackups.ps1')
-

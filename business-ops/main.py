@@ -123,7 +123,16 @@ def verify_id_token(token, nonce):
     public.verify(b64d(parts[2]), (parts[0] + "." + parts[1]).encode("ascii"), padding.PKCS1v15(), hashes.SHA256())
     now = int(time.time())
     aud = claims.get("aud")
-    if claims.get("iss") != ISSUER or not (CLIENT_ID in aud if isinstance(aud, list) else aud == CLIENT_ID):
+    if isinstance(aud, str):
+        audience_ok = aud == CLIENT_ID
+    elif isinstance(aud, list):
+        # This client has no trusted secondary audiences. Reject tokens that
+        # name another client/resource even when our client_id is also present.
+        audience_ok = bool(aud) and all(isinstance(item, str) and item == CLIENT_ID for item in aud)
+    else:
+        audience_ok = False
+    authorized_party_ok = "azp" not in claims or claims.get("azp") == CLIENT_ID
+    if claims.get("iss") != ISSUER or not audience_ok or not authorized_party_ok:
         raise ValueError("token_audience_or_issuer_invalid")
     if int(claims.get("exp", 0)) <= now or int(claims.get("iat", 0)) > now + 60 or claims.get("nonce") != nonce:
         raise ValueError("token_expired_or_nonce_invalid")

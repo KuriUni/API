@@ -27,10 +27,18 @@ ErrorDocument 504 /license/error.php
 
 <IfModule mod_rewrite.c>
     RewriteEngine On
+    # CF-Visitor is trusted only from Cloudflare's published proxy ranges.
+    # Keep these CIDRs synchronized with https://www.cloudflare.com/ips-v4
+    # and https://www.cloudflare.com/ips-v6; direct-origin clients cannot
+    # suppress the HTTPS redirect by forging the request header.
+    RewriteCond %{HTTP_HOST} ^(?:2415\.jp|backup\.2415\.jp|main\.2415\.jp)(?::[0-9]+)?$ [NC]
+    RewriteCond %{HTTPS} !=on
+    RewriteCond expr "(%{REMOTE_ADDR} -ipmatch '173.245.48.0/20' || %{REMOTE_ADDR} -ipmatch '103.21.244.0/22' || %{REMOTE_ADDR} -ipmatch '103.22.200.0/22' || %{REMOTE_ADDR} -ipmatch '103.31.4.0/22' || %{REMOTE_ADDR} -ipmatch '141.101.64.0/18' || %{REMOTE_ADDR} -ipmatch '108.162.192.0/18' || %{REMOTE_ADDR} -ipmatch '190.93.240.0/20' || %{REMOTE_ADDR} -ipmatch '188.114.96.0/20' || %{REMOTE_ADDR} -ipmatch '197.234.240.0/22' || %{REMOTE_ADDR} -ipmatch '198.41.128.0/17' || %{REMOTE_ADDR} -ipmatch '162.158.0.0/15' || %{REMOTE_ADDR} -ipmatch '104.16.0.0/13' || %{REMOTE_ADDR} -ipmatch '104.24.0.0/14' || %{REMOTE_ADDR} -ipmatch '172.64.0.0/13' || %{REMOTE_ADDR} -ipmatch '131.0.72.0/22' || %{REMOTE_ADDR} -ipmatch '2400:cb00::/32' || %{REMOTE_ADDR} -ipmatch '2606:4700::/32' || %{REMOTE_ADDR} -ipmatch '2803:f800::/32' || %{REMOTE_ADDR} -ipmatch '2405:b500::/32' || %{REMOTE_ADDR} -ipmatch '2405:8100::/32' || %{REMOTE_ADDR} -ipmatch '2a06:98c0::/29' || %{REMOTE_ADDR} -ipmatch '2c0f:f248::/32') && %{HTTP:CF-Visitor} =~ /https/i"
+    RewriteRule ^ - [E=TUTI_TRUSTED_CF_HTTPS:1]
     # BEGIN TUTI ROOT FASTAPI
     RewriteCond %{HTTP_HOST} ^(?:2415\.jp|backup\.2415\.jp|main\.2415\.jp)(?::[0-9]+)?$ [NC]
     RewriteCond %{HTTPS} !=on
-    RewriteCond %{HTTP:CF-Visitor} !https [NC]
+    RewriteCond %{ENV:TUTI_TRUSTED_CF_HTTPS} !=1
     RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L,NE]
     RewriteCond %{HTTP_HOST} ^(?:2415\.jp|backup\.2415\.jp|main\.2415\.jp)(?::[0-9]+)?$ [NC]
     RewriteRule ^(?:config(?:\.example)?\.php|ha/role\.php)$ - [R=404,L]
@@ -50,7 +58,7 @@ ErrorDocument 504 /license/error.php
     # BEGIN TUTI FULL NATIVE 20261027T165820Z-abee004f
     RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
     RewriteCond %{HTTPS} !=on
-    RewriteCond %{HTTP:CF-Visitor} !https [NC]
+    RewriteCond %{ENV:TUTI_TRUSTED_CF_HTTPS} !=1
     RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L,NE]
     RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
     RewriteRule ^python-(?:migration|production(?:-[A-Za-z0-9]+)*)(?:/|$) - [L]
@@ -71,8 +79,9 @@ ErrorDocument 504 /license/error.php
     # END TUTI FULL NATIVE
 
     # BEGIN TUTI PYTHON PRODUCTION 20261026T110652Z-39224254
+    RewriteCond %{HTTP_HOST} ^(?:2415\.jp|backup\.2415\.jp|main\.2415\.jp)(?::[0-9]+)?$ [NC]
     RewriteCond %{HTTPS} !=on
-    RewriteCond %{HTTP:CF-Visitor} !https [NC]
+    RewriteCond %{ENV:TUTI_TRUSTED_CF_HTTPS} !=1
     RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L,NE]
     RewriteCond %{HTTP_HOST} ^2415\.jp(?::[0-9]+)?$ [NC]
     RewriteRule ^python-(?:migration|production(?:-[A-Za-z0-9]+)*)(?:/|$) - [L]
@@ -95,11 +104,11 @@ ErrorDocument 504 /license/error.php
     # END TUTI PYTHON PRODUCTION
 
 
-    # Enforce TLS while respecting HTTPS terminated by a reverse proxy. The
-    # CF-Visitor condition avoids redirect loops when Cloudflare uses Flexible
-    # TLS between the edge and this origin.
+    # Redirect HTTP only for this application's known hosts. This also avoids
+    # creating a redirect from an attacker-controlled Host header.
+    RewriteCond %{HTTP_HOST} ^(?:2415\.jp|backup\.2415\.jp|main\.2415\.jp)(?::[0-9]+)?$ [NC]
     RewriteCond %{HTTPS} !=on
-    RewriteCond %{HTTP:CF-Visitor} !https [NC]
+    RewriteCond %{ENV:TUTI_TRUSTED_CF_HTTPS} !=1
     RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L,NE]
 
     # Application roots supported by the release targets: /license and /.
