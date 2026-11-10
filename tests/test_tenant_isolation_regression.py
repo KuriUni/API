@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "xrea-source"))
 
 from native_http import HttpContext
+import baas_handlers as v1
 import baas_issuance_handlers as v6
 import baas_v8_handlers as v8
 
@@ -157,6 +158,61 @@ class V8CrossTenantEndpointTests(unittest.TestCase):
             call.args[0] for call in self.connection.cursor.return_value.__enter__.return_value.execute.call_args_list
         ]
         self.assertFalse(any("UPDATE product_key_v8_jobs" in sql for sql in executed))
+
+
+class V1CrossTenantEndpointTests(unittest.TestCase):
+    def setUp(self):
+        self.connection = _connection()
+        self.auth = patch.object(
+            v1, "_authorize_key",
+            return_value=(TENANT_A_CLIENT, [], "test-ip-hash"),
+        )
+        self.auth.start()
+        self.addCleanup(self.auth.stop)
+        self.db = patch("database.connect", return_value=self.connection)
+        self.db.start()
+        self.addCleanup(self.db.stop)
+        self.usage = patch.object(v1, "_usage")
+        self.usage.start()
+        self.addCleanup(self.usage.stop)
+
+    def test_license_list_cannot_select_another_tenants_license(self):
+        cursor = self.connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = []
+        response = v1.licenses(
+            HttpContext(method="GET", query="license_id=987654")
+        )
+        self.assertEqual(response.status_code, 200)
+        body = json.loads(response.body)
+        self.assertEqual(body["licenses"], [])
+        sql, params = cursor.execute.call_args_list[0].args
+        self.assertIn("l.tenant_id=%s", sql)
+        self.assertIn("l.id=%s", sql)
+        self.assertEqual(params[:2], (TENANT_A, 987654))
+
+    def test_license_delete_cannot_delete_another_tenants_license(self):
+        cursor = self.connection.cursor.return_value.__enter__.return_value
+        cursor.fetchone.return_value = None
+        with patch.object(v1, "_baas_json_input", return_value={
+            "license_id": 987654,
+            "idempotency_key": "tenantA-delete-request-0001",
+        }), patch.object(v1, "_assert_write_fence"):
+            response = v1.licenses(HttpContext(method="DELETE"))
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(json.loads(response.body)["error"], "license_not_found")
+        statements = [call.args[0] for call in cursor.execute.call_args_list]
+        self.assertTrue(any("SELECT id FROM licenses WHERE id=%s AND tenant_id=%s" in sql for sql in statements))
+        self.assertFalse(any("UPDATE licenses SET" in sql for sql in statements))
+
+    def test_batch_status_is_tenant_scoped(self):
+        cursor = self.connection.cursor.return_value.__enter__.return_value
+        cursor.fetchone.return_value = None
+        response = v1.batch(HttpContext(method="GET", query="job_id=987654"))
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(json.loads(response.body)["error"], "batch_not_found")
+        sql, params = cursor.execute.call_args.args
+        self.assertIn("id=%s AND tenant_id=%s", sql)
+        self.assertEqual(params, (987654, TENANT_A))
 
 
 if __name__ == "__main__":
