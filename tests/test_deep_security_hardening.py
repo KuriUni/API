@@ -107,7 +107,7 @@ class AdminCsrfOriginTests(unittest.TestCase):
 class ApacheDatabaseFileProtectionTests(unittest.TestCase):
     def test_database_files_and_sqlite_sidecars_are_denied(self):
         rules = (ROOT / "xrea-source" / ".htaccess").read_text(encoding="utf-8")
-        self.assertGreaterEqual(rules.count("sqlite3?|db)(?:-(?:wal|shm))?"), 3)
+        self.assertGreaterEqual(rules.count("(?:sqlite3?|db)(?:-(?:wal|shm))?"), 3)
 
 
 if __name__ == "__main__":
