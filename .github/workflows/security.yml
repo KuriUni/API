@@ -53,8 +53,18 @@ jobs:
         with:
           fetch-depth: 0
       - name: Scan all fetched Git refs and history for secrets
-        run: >-
-          docker run --rm
-          -v "${{ github.workspace }}:/repo"
-          zricethezav/gitleaks:v8.24.3
-          detect --source /repo --log-opts="--all" --redact --exit-code=2
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm -v "${{ github.workspace }}:/repo" zricethezav/gitleaks:v8.24.3 \
+            detect --source /repo --log-opts="--all" --redact \
+            --report-format json --report-path /repo/gitleaks-report.json --exit-code=0
+          findings="$(jq 'length' gitleaks-report.json)"
+          if [ "$findings" -gt 0 ]; then
+            echo "Detected $findings historical secret candidates (values intentionally omitted):"
+            jq -r '.[] | [.RuleID, .File, (.StartLine|tostring), .Commit, .Description] | @tsv' gitleaks-report.json
+            rm -f gitleaks-report.json
+            exit 1
+          fi
+          rm -f gitleaks-report.json
+          echo "No historical secrets detected."
