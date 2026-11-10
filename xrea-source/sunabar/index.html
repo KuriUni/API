@@ -3,62 +3,365 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#101d31">
-  <meta name="description" content="専用APIキーで試せる、独立したSunabar APIエミュレーター。">
+  <meta name="theme-color" content="#101a2a">
+  <meta name="description" content="本番環境から分離されたSunabar API検証ワークベンチ。APIフローを再現し、応答と失敗を確認できます。">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>Sunabar — API Playground</title>
-  <link rel="stylesheet" href="sunabar.css?v=20261107-1">
-  <script src="sunabar.js?v=20261107-1" defer></script>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-fBx7zCdwA3Oy1EkYkIvNkv/v49Mh/9RvIKktm79CFqw='; style-src 'self' 'sha256-IoVLzsMwZXPE34GodauJOJr7SnMfdAh78EVoRg7AjUQ='; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Sunabar v2 — API Verification Workbench</title>
+  <style>
+:root{color-scheme:light;--ink:#142033;--muted:#66758b;--line:#dfe6ef;--paper:#fff;--canvas:#f3f6fa;--navy:#101a2a;--blue:#2458d3;--cyan:#52d9d0;--green:#16835d;--red:#b43a46;--amber:#a46509;--shadow:0 16px 44px #172a4210;font-family:Inter,"Noto Sans JP",system-ui,-apple-system,"Segoe UI",sans-serif}*{box-sizing:border-box}body{margin:0;background:var(--canvas);color:var(--ink);font-size:14px;line-height:1.65}button,input,textarea,select{font:inherit}button{cursor:pointer}.topbar{height:66px;background:var(--navy);color:white;display:flex;align-items:center;padding:0 max(calc((100% - 1440px)/2),24px);gap:26px}.brand{display:flex;align-items:center;gap:10px;color:white;text-decoration:none;font-weight:750;font-size:20px;letter-spacing:-.04em}.brand-symbol{display:grid;place-items:center;width:32px;height:32px;border-radius:10px;background:linear-gradient(135deg,#77e6dc,#3188df);color:#112139;font-weight:900}.brand-version{font-size:11px;color:var(--cyan);margin-left:5px;letter-spacing:0}.top-context{display:flex;align-items:center;gap:10px;color:#a8b8ce;font-size:10px;letter-spacing:.12em}.isolation-dot,.metric-dot{width:8px;height:8px;border-radius:50%;background:#32c595;box-shadow:0 0 0 4px #32c59520}.context-divider{height:14px;width:1px;background:#40516a}.top-actions{margin-left:auto;display:flex;align-items:center;gap:8px}.key-status{font-size:11px;color:#ffc87c;margin-right:5px}.key-status i,.session-chip i,.response-foot i{display:inline-block;width:7px;height:7px;border-radius:50%;background:#e8a53f;margin-right:6px}.key-status.key-ready{color:#8de0bc}.key-status.key-ready i{background:#42c892}.button{border:0;border-radius:9px;padding:10px 14px;font-weight:700;transition:.18s ease;display:inline-flex;align-items:center;justify-content:center;gap:8px}.button:hover{transform:translateY(-1px);filter:brightness(1.03)}.button:disabled{opacity:.55;cursor:wait;transform:none}.button-primary{background:var(--blue);color:white;box-shadow:0 6px 16px #2458d32b}.button-secondary{background:#142d4f;color:white}.button-outline{background:#ffffff12;border:1px solid #ffffff36;color:white}.button-quiet{background:transparent;color:#d4ddec}.button-light{background:#eaf0fb;color:#234a9f}.button-quiet-dark{background:#f0f2f5;color:#5b6472}.app-shell{max-width:1440px;margin:auto;padding:0 32px}.welcome{display:flex;align-items:center;justify-content:space-between;gap:30px;padding:38px 4px 30px}.eyebrow{margin:0 0 7px;color:#6c7d95;font-size:10px;letter-spacing:.14em;font-weight:800}.welcome .eyebrow{color:#4264a1}.welcome h1{font-size:clamp(30px,4vw,43px);line-height:1.2;letter-spacing:-.055em;margin:0 0 10px}.welcome h1 span{color:#3974dc}.welcome-copy>p:last-child{margin:0;color:var(--muted);max-width:740px}.welcome-state{display:flex;align-items:center;gap:13px;padding:14px 17px;border:1px solid #bfe9d8;background:#ebfaf3;border-radius:13px;min-width:310px}.welcome-state b,.welcome-state small{display:block}.welcome-state b{color:#126746;font-size:12px}.welcome-state small{color:#648577;font-size:11px}.state-icon{display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:#d2f3e5;color:#19805c;font-size:20px}.view-tabs{display:flex;align-items:center;gap:5px;border-bottom:1px solid var(--line);min-height:56px}.view-tab{height:56px;background:none;border:0;border-bottom:2px solid transparent;padding:0 17px;color:#718097;font-weight:700}.view-tab span{font:700 10px ui-monospace,monospace;color:#96a4b7;margin-right:9px}.view-tab.active{color:#193a79;border-bottom-color:#3974dc}.tab-spacer{flex:1}.session-chip{font-size:11px;color:#77869b;padding:7px 10px;border-radius:99px;background:#e9edf3}.session-chip i{background:#a8b4c3}.session-chip.session-active{background:#e4f6ee;color:#197653}.session-chip.session-active i{background:#2eb982}.view{padding:28px 0 36px}.view[hidden]{display:none}.section-heading,.catalog-heading{display:flex;justify-content:space-between;align-items:center;gap:20px;margin:0 0 20px}.section-heading h2,.catalog-heading h2{font-size:23px;letter-spacing:-.04em;margin:0}.section-heading p:not(.eyebrow){margin:4px 0 0;color:var(--muted)}.section-heading .button{flex:none}.metrics-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:19px}.metric-card{background:white;border:1px solid var(--line);border-radius:13px;padding:15px 17px;box-shadow:0 2px 8px #13243c05}.metric-label{color:#8190a5;font-size:9px;letter-spacing:.14em;font-weight:800}.metric-value{display:flex;align-items:center;gap:9px;margin:5px 0 1px;font-weight:750;font-size:18px}.metric-value .metric-dot{width:7px;height:7px;box-shadow:none}.metric-dot.neutral{background:#aab5c4}.metric-dot.error{background:#d84c58}.metric-card small{font-size:10px;color:#8491a3}.metric-unit{font-size:12px;color:#8491a3}.scenario-grid{display:grid;grid-template-columns:1fr 1fr 265px;gap:15px;align-items:stretch}.scenario-card,.side-card{background:white;border:1px solid var(--line);border-radius:15px;padding:19px;box-shadow:var(--shadow)}.scenario-primary{border-color:#bed0f3;box-shadow:0 12px 35px #3459a314}.scenario-top{display:flex;align-items:center;justify-content:space-between}.scenario-index{font-size:9px;letter-spacing:.12em;font-weight:850;color:#4671cf}.scenario-tag{font-size:10px;color:#77869a;background:#f0f3f8;padding:4px 8px;border-radius:99px}.scenario-icon{margin-top:15px;display:grid;place-items:center;width:36px;height:36px;border-radius:11px;background:#e9efff;color:#2458d3;font:800 12px ui-monospace,monospace}.session-icon{background:#e2f7f1;color:#15815b}.scenario-card h3,.side-card h3{font-size:17px;margin:9px 0 4px;letter-spacing:-.025em}.scenario-card>p,.side-card>p{font-size:12px;color:var(--muted);margin:0 0 15px;min-height:39px}.input-label{display:block;font-size:10px;font-weight:750;color:#53637a;margin-bottom:6px}.scenario-input-row{display:flex;gap:8px;margin-bottom:11px}.scenario-input-row input,.key-entry input{min-width:0;flex:1;border:1px solid var(--line);border-radius:8px;padding:9px 10px;background:#fbfcfe;color:var(--ink);outline:none}.scenario-input-row input:focus,.key-entry input:focus,.history-search input:focus,.operation-search input:focus,textarea:focus{border-color:#5b83e1;box-shadow:0 0 0 3px #356add16}.scenario-card>.button{width:100%;padding:11px}.flow-steps{display:flex;align-items:center;gap:8px;margin-top:11px;color:#75849a;font-size:10px}.flow-steps i{font-style:normal;color:#b3bdca}.scenario-side{display:flex;flex-direction:column;gap:13px}.side-card{padding:17px}.side-card h3{margin:2px 0 6px}.side-card>p{min-height:0;margin-bottom:12px}.side-card>.button{width:100%;font-size:11px}.side-card-tip{display:flex;gap:10px;align-items:flex-start;background:#fff9eb;border-color:#f0dfb9;box-shadow:none}.side-card-tip b{font-size:11px;color:#755117}.side-card-tip p{font-size:10px;color:#83775f;margin:2px 0 0}.tip-mark{flex:none;display:grid;place-items:center;width:20px;height:20px;background:#f4e3b7;color:#9b6b15;border-radius:50%;font-weight:800;font-size:11px}.flow-progress{margin-top:20px;background:#fff;border:1px solid #cbd8ef;border-radius:14px;padding:18px 20px;box-shadow:var(--shadow)}.flow-progress[hidden],.flow-summary[hidden]{display:none}.flow-progress-head{display:flex;justify-content:space-between;align-items:center}.flow-progress-head h3{margin:0;font-size:16px}.flow-counter{font:700 12px ui-monospace,monospace;color:#4269b3}.progress-track{height:5px;background:#e9eef7;border-radius:10px;margin:13px 0}.progress-track i{display:block;height:100%;width:0;background:linear-gradient(90deg,#3d72db,#48c4ac);border-radius:10px;transition:width .25s}.flow-log{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.flow-log li{padding:9px 10px;border-radius:9px;background:#f5f7fa;color:#718096;font-size:11px}.flow-log li.done{background:#eaf8f2;color:#187653}.flow-log li.failed{background:#fff0f0;color:#a83942}.flow-log li.running{background:#eef3ff;color:#315ab0}.flow-log li b{display:block;font-size:10px;margin-bottom:2px}.flow-summary{margin-top:10px;color:#64738a;font-size:12px}.operation-catalog{margin-top:30px}.catalog-heading{margin-bottom:12px}.catalog-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}.catalog-item{display:flex;align-items:center;gap:11px;text-align:left;padding:12px;background:#fff;border:1px solid var(--line);border-radius:11px;color:var(--ink);transition:.16s}.catalog-item:hover{border-color:#aabfe9;transform:translateY(-2px);box-shadow:var(--shadow)}.catalog-num{display:grid;place-items:center;width:30px;height:30px;flex:none;border-radius:9px;background:#edf2fb;color:#4269b3;font:750 10px ui-monospace,monospace}.catalog-item b,.catalog-item small{display:block}.catalog-item b{font-size:11px}.catalog-item small{font-size:9px;color:#8794a7}.text-button{border:0;background:none;color:#3463bb;font-size:11px;font-weight:750;padding:7px}.safety-note{margin-top:21px;padding:13px 15px;display:flex;gap:11px;background:#edf2f8;border-radius:11px;color:#63748b}.safety-note>span{display:grid;place-items:center;flex:none;width:20px;height:20px;border-radius:50%;background:#d6e1ef;color:#526d91;font-weight:800}.safety-note p{font-size:10px;margin:0}.safety-note b{color:#334964}.console-layout{display:grid;grid-template-columns:220px minmax(280px,1fr) minmax(310px,1fr);gap:14px;align-items:start}.operation-nav,.request-panel,.response-panel{min-width:0;background:white;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}.operation-nav{padding:15px}.operation-nav-head,.response-panel-head,.request-panel-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px}.operation-nav-head h2,.request-panel-head h2,.response-panel-head h2{margin:0;font-size:17px;letter-spacing:-.03em}.operation-nav-head>span{background:#edf2fb;color:#4e6ca8;padding:2px 7px;border-radius:20px;font-size:10px}.operation-search,.history-search{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:8px;padding:0 9px;color:#94a1b2}.operation-search{margin:12px 0}.operation-search input,.history-search input{border:0!important;outline:0;min-width:0;width:100%;padding:9px 0;background:transparent;box-shadow:none!important;font-size:11px}.operation-list{display:grid;gap:3px}.operation{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;border-radius:8px;background:transparent;padding:8px;color:#53637a;font-size:11px}.operation:hover{background:#f4f7fb}.operation.active{background:#eaf0fc;color:#234fba;font-weight:750}.operation .operation-method{font:750 8px ui-monospace,monospace;color:#6881aa;width:29px}.nav-help{margin-top:13px;border-top:1px solid #edf0f4;padding:11px 2px 0;color:#8a97a9;font-size:9px}.request-panel,.response-panel{padding:18px}.request-panel-head{min-height:56px}.request-panel-head>div>p:last-child{margin:4px 0 0;color:#738198;font-size:11px}.method-badge{font:800 9px ui-monospace,monospace;border-radius:6px;padding:5px 8px;background:#e8f5ee;color:#21805b}.method-badge.post{background:#edf1ff;color:#4565bf}.endpoint-bar{display:flex;align-items:center;gap:8px;margin:13px 0 11px;padding:9px 10px;background:#f3f6fa;border:1px solid #e7ecf3;border-radius:8px;font:10px ui-monospace,monospace;min-width:0}.endpoint-host{color:#75849a}.endpoint-path{min-width:0;overflow-wrap:anywhere;color:#315584}.icon-button{width:30px;height:30px;display:grid;place-items:center;border:1px solid var(--line);background:white;color:#64748b;border-radius:8px;flex:none}.icon-button:disabled{opacity:.4;cursor:default}.endpoint-bar .icon-button{margin-left:auto}.request-controls{display:flex;align-items:center;gap:7px;margin:0 0 12px}.auth-chip,.risk-chip{font-size:9px;border-radius:20px;padding:4px 8px;background:#f0f3f8;color:#6f7e92}.risk-chip{background:#e9f7ef;color:#247752}.risk-chip.mutation{background:#fff2df;color:#936116}.request-controls .text-button{margin-left:auto}.editor-label{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;color:#6b7a91;font:750 9px ui-monospace,monospace;letter-spacing:.08em}.editor-label span{font:10px system-ui;letter-spacing:0;color:#9aa5b4}textarea{display:block;width:100%;height:205px;resize:vertical;border:1px solid #dce3ed;border-radius:9px;background:#111c2c;color:#d5e2f4;padding:13px;font:11px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace;outline:none;tab-size:2}.request-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px}.request-actions p{font-size:10px;color:#8592a4;margin:0}.request-actions .button{padding:9px 12px;font-size:11px}.form-error{font-size:11px;color:#b33c48;margin:5px 0}.response-panel-head{align-items:center}.response-metrics{display:flex;align-items:center;gap:14px;padding:11px 0;border-bottom:1px solid #edf0f4;color:#8592a4;font:10px ui-monospace,monospace}.status-pill{font-weight:800;color:#17825b}.status-pill.error{color:#bb3b49}.status-empty{color:#8a97a9}.diagnostic{margin:10px 0;padding:10px;border-radius:8px;background:#fff3df;color:#815712;font-size:10px}.diagnostic[hidden],.product-key-result[hidden]{display:none}.diagnostic b{display:block;margin-bottom:3px}.product-key-result{display:flex;align-items:center;gap:10px;margin:10px 0;padding:10px;background:#eaf8f1;border:1px solid #ccebdc;border-radius:9px}.product-key-result>div{flex:none}.product-key-result b,.product-key-result small{display:block}.product-key-result b{color:#1c714f;font-size:10px}.product-key-result small{font-size:8px;color:#6e9583}.product-key-result code{min-width:0;overflow:hidden;text-overflow:ellipsis;color:#365a49;font-size:9px}.product-key-result button{margin-left:auto;padding:6px 9px;font-size:9px}.response-json{height:340px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:13px;margin:11px 0;background:#111c2c;color:#d5e2f4;border-radius:9px;font:10px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace}.json-placeholder{color:#8392a8}.response-foot{display:flex;justify-content:space-between;align-items:center;color:#8c99aa;font-size:9px}.response-foot i{width:6px;height:6px;background:#38ad82;margin-right:5px}.history-actions{display:flex;gap:7px}.history-actions .button{font-size:10px;padding:8px 11px}.history-toolbar{display:flex;align-items:center;gap:9px;margin-bottom:12px}.history-search{flex:1;max-width:500px}.history-toolbar select{border:1px solid var(--line);border-radius:8px;background:white;padding:9px;color:#53637a;font-size:11px}.history-count{color:#8290a3;font-size:10px}.history-table-wrap{overflow:auto;background:white;border:1px solid var(--line);border-radius:12px}.history-table{width:100%;border-collapse:collapse;min-width:740px}.history-table th,.history-table td{text-align:left;padding:11px 12px;border-bottom:1px solid #edf0f4;font-size:10px}.history-table th{background:#f7f9fb;color:#77869a;font-weight:750}.history-table td{color:#57677e}.history-table tr:last-child td{border-bottom:0}.history-table .history-empty td{text-align:center;color:#929eae;padding:40px}.history-operation b{display:block;color:#33445c;font-size:10px}.history-operation code{font-size:9px;color:#8290a3}.history-status{font:750 9px ui-monospace,monospace;color:#188059}.history-status.error{color:#b13d4a}.history-open{border:0;background:#edf2fb;color:#4564a2;border-radius:7px;padding:5px 8px;font-size:9px}.history-disclaimer{display:flex;align-items:center;gap:10px;margin-top:15px;color:#738197;background:#edf2f7;padding:12px 14px;border-radius:9px}.history-disclaimer>span{display:grid;place-items:center;width:19px;height:19px;flex:none;border-radius:50%;background:#dbe4ee;color:#637d9b;font-size:10px;font-weight:800}.history-disclaimer p{margin:0;font-size:10px}.app-footer{display:flex;justify-content:space-between;gap:15px;border-top:1px solid var(--line);padding:17px 0 23px;color:#8b97a8;font-size:9px;letter-spacing:.04em}.app-footer a{color:#526a91;text-decoration:none}.key-dialog{width:min(480px,calc(100% - 28px));padding:22px;border:1px solid var(--line);border-radius:16px;box-shadow:0 24px 80px #111a2b40;color:var(--ink)}.key-dialog::backdrop{background:#101a2a88;backdrop-filter:blur(3px)}.dialog-head{display:flex;justify-content:space-between;align-items:center}.dialog-head h2{margin:0;font-size:22px}.key-dialog>p{color:#718096;font-size:12px}.key-entry{display:flex;gap:6px}.key-entry .button{padding:8px 10px;font-size:10px}.key-expiry{font-size:10px!important;color:#8c98a8!important}.key-dialog>#issue-api-key{width:100%;margin-top:8px}.key-dialog .form-error{min-height:18px}.operation[hidden]{display:none}
+@media(max-width:1080px){.scenario-grid{grid-template-columns:1fr 1fr}.scenario-side{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr}.console-layout{grid-template-columns:190px minmax(250px,1fr)}.response-panel{grid-column:2}.operation-nav{grid-row:span 2}.catalog-grid{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:720px){.topbar{height:auto;min-height:60px;padding:10px 15px;gap:10px;flex-wrap:wrap}.top-context{display:none}.top-actions{gap:5px}.key-status{font-size:9px}.button-outline,.button-quiet{font-size:10px;padding:7px 9px}.app-shell{padding:0 15px}.welcome{padding:27px 0 21px;display:block}.welcome h1{font-size:31px}.welcome-state{margin-top:17px;min-width:0}.view-tabs{overflow:auto;white-space:nowrap}.view-tab{padding:0 12px;font-size:11px}.session-chip{font-size:9px;white-space:nowrap}.view{padding-top:20px}.section-heading{align-items:flex-start}.section-heading h2,.catalog-heading h2{font-size:20px}.section-heading> .button{font-size:9px;padding:8px}.metrics-grid{grid-template-columns:1fr 1fr;gap:8px}.metric-card{padding:12px}.metric-value{font-size:15px}.metric-card small{font-size:9px}.scenario-grid{grid-template-columns:1fr}.scenario-side{grid-column:auto;grid-template-columns:1fr}.scenario-card{padding:16px}.flow-log{grid-template-columns:1fr 1fr}.catalog-grid{grid-template-columns:1fr 1fr;gap:7px}.catalog-item{padding:9px;gap:8px}.catalog-item b{font-size:10px}.console-layout{grid-template-columns:1fr}.operation-nav{grid-row:auto}.operation-list{grid-template-columns:1fr 1fr}.operation{font-size:10px}.request-panel,.response-panel{padding:14px}.response-panel{grid-column:auto}.response-json{height:280px}.history-toolbar{flex-wrap:wrap}.history-search{min-width:100%;max-width:none}.history-actions{flex-wrap:wrap}.app-footer{flex-wrap:wrap;line-height:1.4}.product-key-result{flex-wrap:wrap}.product-key-result code{flex:1}.product-key-result button{margin-left:auto}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
+</style>
+
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="./" aria-label="Sunabar home"><span class="brand-mark">S</span><span>sunabar<span class="brand-light">.playground</span></span></a>
-    <div class="top-status"><span id="key-status" class="local-indicator"><i></i> API KEY REQUIRED</span><button id="open-key" class="button button-key" type="button">専用APIキー</button><button id="reset" class="button button-quiet" type="button">リセット</button></div>
+    <a class="brand" href="./" aria-label="Sunabar v2 ホーム"><span class="brand-symbol">S</span><span>sunabar<span class="brand-version">v2</span></span></a>
+    <div class="top-context"><span class="isolation-dot"></span><span>ISOLATED ENVIRONMENT</span><span class="context-divider"></span><span>API VERIFICATION WORKBENCH</span></div>
+    <div class="top-actions"><span id="key-status" class="key-status"><i></i>キー未発行</span><button id="open-key" class="button button-outline" type="button">専用キー</button><button id="reset" class="button button-quiet" type="button" title="このタブのキーと一時データを消去">リセット</button></div>
   </header>
-  <main class="shell">
-    <section class="hero">
-      <div class="hero-copy"><p class="eyebrow">SUNABAR · API EMULATOR</p><h1>本番に触れずに、<br><span>API連携を試す。</span></h1><p>稼働確認から、デモキー発行・端末認証・トークン更新まで一連のAPIフローを試せます。発行したキーやセッション情報はこのタブ内で次の操作に引き継ぎます。</p><div class="hero-tags"><span>登録不要</span><span>24時間有効</span><span>本番データに非接続</span></div></div>
-      <div class="hero-console" aria-hidden="true"><div class="console-head"><span></span><span></span><span></span><b>request.js</b></div><pre><span class="code-muted">// Sunabar APIを呼び出す</span>
-<span class="code-purple">const</span> response = <span class="code-purple">await</span> fetch(
-  <span class="code-green">'/license/api/sunabar/v1/licenses.php'</span>, {
-  method: <span class="code-green">'POST'</span>,
-  headers: { <span class="code-green">'X-Sunabar-API-Key'</span>: apiKey,
-    <span class="code-green">'Content-Type'</span>: <span class="code-green">'application/json'</span> },
-  body: JSON.stringify({ product_id: <span class="code-number">101</span> })
-});
-<span class="code-purple">const</span> result = <span class="code-purple">await</span> response.json();</pre></div>
+
+  <main class="app-shell">
+    <section class="welcome">
+      <div class="welcome-copy"><p class="eyebrow">SUNABAR · API EMULATOR · V2</p><h1>APIを試す。<span>流れを確かめる。</span></h1><p>キー発行からライセンス・端末セッションまで、実際のAPI要求を安全なデモ環境でつなげて検証できます。</p></div>
+      <div class="welcome-state"><span class="state-icon">↗</span><div><b>本番データには接続しません</b><small>デモ用キーとライセンスは実製品では使えません</small></div></div>
     </section>
-    <div class="notice"><span class="notice-icon">i</span><div><b>Sunabar専用のエミュレーターです</b><p>実BaaS API、Sandbox API、本番データには接続しません。発行されたデモライセンスは実ソフトで使えません。</p></div><span class="notice-lock">ISOLATED API</span></div>
-    <section class="workspace-grid">
-      <aside class="sidebar"><div class="side-title">PLAYGROUND <span>10 OPERATIONS</span></div>
-        <button class="operation active" data-operation="health"><span class="operation-icon">●</span><span><b>稼働状態</b><small>GET · 認証不要</small></span><span class="chevron">›</span></button>
-        <button class="operation" data-operation="products"><span class="operation-icon">▦</span><span><b>製品一覧</b><small>GET · 製品データ取得</small></span><span class="chevron">›</span></button>
-        <button class="operation" data-operation="issue"><span class="operation-icon">＋</span><span><b>ライセンス発行</b><small>POST · デモキー作成</small></span><span class="chevron">›</span></button>
-        <button class="operation" data-operation="verify"><span class="operation-icon">✓</span><span><b>ライセンス検証</b><small>POST · デモキー確認</small></span><span class="chevron">›</span></button>
-        <button class="operation" data-operation="list"><span class="operation-icon">≡</span><span><b>ライセンス一覧</b><small>GET · 発行済みを確認</small></span><span class="chevron">›</span></button>
-        <button class="operation" data-operation="revoke"><span class="operation-icon">×</span><span><b>ライセンス失効</b><small>POST · デモキーを失効</small></span><span class="chevron">›</span></button>
-        <button class="operation" data-operation="activate"><span class="operation-icon">▶</span><span><b>端末を認証</b><small>POST · セッション発行</small></span><span class="chevron">›</span></button>
-        <button class="operation" data-operation="check"><span class="operation-icon">✓</span><span><b>セッション確認</b><small>POST · Access token</small></span><span class="chevron">›</span></button>
-        <button class="operation" data-operation="refresh"><span class="operation-icon">↻</span><span><b>セッション更新</b><small>POST · Refresh token</small></span><span class="chevron">›</span></button>
-        <button class="operation" data-operation="deactivate"><span class="operation-icon">■</span><span><b>セッション終了</b><small>POST · 端末を無効化</small></span><span class="chevron">›</span></button>
-        <div class="side-foot"><span class="storage-dot"></span><span>SESSION STORAGE<br><b>タブを閉じるとキーを破棄</b></span></div>
-      </aside>
-      <section class="request-panel" aria-labelledby="operation-title"><div class="panel-heading"><div><p class="eyebrow">REQUEST BUILDER</p><h2 id="operation-title">製品一覧を取得</h2></div><span id="method-badge" class="method-badge get">GET</span></div>
-        <p id="operation-description" class="panel-description">利用可能な製品をAPIから取得します。</p>
-        <div class="endpoint-bar"><span class="endpoint-host" id="endpoint-host">suna.2415.jp</span><span class="endpoint-path" id="endpoint-path">/suna/api/v1/products</span><button id="copy-path" class="copy-button" type="button" title="パスをコピー">⧉</button></div>
-        <div class="request-fields" id="request-fields"></div><div class="body-heading"><label for="request-body">REQUEST BODY</label><button id="reset-body" type="button" class="text-button">サンプルに戻す</button></div>
-        <div class="editor-wrap"><div class="line-number">1<br>2<br>3<br>4<br>5</div><textarea id="request-body" spellcheck="false" aria-label="JSONリクエスト本文"></textarea></div>
-        <div class="request-actions"><span class="auth-note"><span>⌑</span> X-Sunabar-API-Key <b id="auth-state">未設定</b></span><button id="send" class="button button-primary" type="button"><span>▶</span> APIを呼び出す</button></div><p id="form-error" class="form-error" role="alert"></p>
-      </section>
-      <section class="response-panel" aria-labelledby="response-title"><div class="response-heading"><div><p class="eyebrow">RESPONSE</p><h2 id="response-title">結果</h2></div><button id="copy-response" class="copy-button" type="button" title="レスポンスをコピー" disabled>⧉</button></div>
-        <div id="product-key-result" class="product-key-result" hidden><b>デモ用プロダクトキー</b><code id="product-key-value"></code><button id="copy-product-key" class="button button-secondary" type="button">キーをコピー</button><span id="product-key-message" role="status"></span></div><div class="response-meta"><span id="response-status" class="status-empty">未実行</span><span id="response-time">— ms</span><span class="response-tab active">JSON</span></div><pre id="response-json" class="response-json"><span class="json-placeholder">操作を選んでAPIを呼び出してください。</span></pre><div class="response-footer"><span><i></i> simulated response</span><span id="response-size">—</span></div>
-        <div class="history-block"><div class="history-title"><b>このセッションの履歴</b><button id="clear-history" class="text-button" type="button">消去</button></div><div id="history-list" class="history-list"><p class="empty-history">まだリクエストはありません。</p></div></div>
-      </section>
+
+    <nav class="view-tabs" aria-label="メイン画面">
+      <button class="view-tab active" type="button" data-view="overview"><span>01</span>フロー実行</button>
+      <button class="view-tab" type="button" data-view="console"><span>02</span>APIコンソール</button>
+      <button class="view-tab" type="button" data-view="history"><span>03</span>履歴・診断</button>
+      <span class="tab-spacer"></span><span id="session-state" class="session-chip"><i></i>セッション未開始</span>
+    </nav>
+
+    <section id="view-overview" class="view active" aria-labelledby="overview-title">
+      <div class="section-heading"><div><p class="eyebrow">RUN A SCENARIO</p><h2 id="overview-title">実習フロー</h2><p>単発のAPI呼び出しではなく、前の応答を次の要求へ引き継いで一連の処理を確認します。</p></div><button id="health-check" class="button button-light" type="button"><span>↻</span>稼働状態を確認</button></div>
+      <div class="metrics-grid">
+        <article class="metric-card"><div class="metric-label">API RELAY</div><div class="metric-value"><span id="relay-indicator" class="metric-dot neutral"></span><span id="relay-status">未確認</span></div><small id="relay-detail">確認するとSunabarの稼働状態を表示します</small></article>
+        <article class="metric-card"><div class="metric-label">DEMO LICENSE</div><div class="metric-value"><span id="license-indicator" class="metric-dot neutral"></span><span id="license-status">未作成</span></div><small id="license-detail">このタブで発行したデモライセンス</small></article>
+        <article class="metric-card"><div class="metric-label">DEVICE SESSION</div><div class="metric-value"><span id="device-indicator" class="metric-dot neutral"></span><span id="device-status">未認証</span></div><small id="device-detail">アクセストークンと更新トークンはメモリー内</small></article>
+        <article class="metric-card"><div class="metric-label">REQUESTS</div><div class="metric-value"><span id="request-count">0</span><span class="metric-unit">件</span></div><small>このタブで実行したAPI要求</small></article>
+      </div>
+
+      <div class="scenario-grid">
+        <article class="scenario-card scenario-primary">
+          <div class="scenario-top"><span class="scenario-index">FLOW 01</span><span class="scenario-tag">約1分 · 3 API要求</span></div>
+          <div class="scenario-icon license-icon">01</div><h3>デモライセンスを発行して検証</h3><p>製品一覧 → デモ発行 → キー検証までを連続実行。発行キーをこのタブの状態へ安全に引き継ぎます。</p>
+          <label class="input-label" for="flow-product-id">製品ID</label><div class="scenario-input-row"><input id="flow-product-id" value="101" inputmode="numeric" aria-label="製品ID"><input id="flow-label" value="Sunabar v2 practice" maxlength="80" aria-label="デモライセンスのラベル"></div>
+          <button id="run-license-flow" class="button button-primary" type="button">デモ発行フローを実行 <span>→</span></button>
+          <div class="flow-steps" aria-label="フローの段階"><span>製品一覧</span><i>›</i><span>発行</span><i>›</i><span>検証</span></div>
+        </article>
+        <article class="scenario-card">
+          <div class="scenario-top"><span class="scenario-index">FLOW 02</span><span class="scenario-tag">約1分 · 4 API要求</span></div>
+          <div class="scenario-icon session-icon">02</div><h3>端末セッションを最後まで確認</h3><p>端末認証 → セッション確認 → トークン更新 → セッション終了。更新後の新しいトークンを使う動きも確認します。</p>
+          <label class="input-label" for="flow-device-id">端末ID</label><div class="scenario-input-row"><input id="flow-device-id" value="sunabar-v2-device-01" maxlength="128" aria-label="端末ID"></div>
+          <button id="run-session-flow" class="button button-secondary" type="button">セッションフローを実行 <span>→</span></button>
+          <div class="flow-steps" aria-label="フローの段階"><span>認証</span><i>›</i><span>確認</span><i>›</i><span>更新</span><i>›</i><span>終了</span></div>
+        </article>
+        <aside class="scenario-side">
+          <div class="side-card"><p class="eyebrow">QUICK ACTION</p><h3>単独のAPIを試す</h3><p>要求本文を編集して、特定のエラーや入力条件を確認できます。</p><button id="open-console" class="button button-light" type="button">APIコンソールを開く <span>↗</span></button></div>
+          <div class="side-card side-card-tip"><span class="tip-mark">i</span><div><b>まず稼働確認から</b><p>healthチェックはAPIキー不要です。キー発行後、残りの操作を試せます。</p></div></div>
+        </aside>
+      </div>
+
+      <section id="flow-progress" class="flow-progress" hidden aria-live="polite"><div class="flow-progress-head"><div><p class="eyebrow">FLOW RUNNER</p><h3 id="flow-title">実行中</h3></div><span id="flow-counter" class="flow-counter">0 / 0</span></div><div class="progress-track"><i id="flow-progress-bar"></i></div><ol id="flow-log" class="flow-log"></ol><div id="flow-summary" class="flow-summary" hidden></div></section>
+
+      <section class="operation-catalog"><div class="catalog-heading"><div><p class="eyebrow">10 AVAILABLE OPERATIONS</p><h2>操作カタログ</h2></div><button class="text-button" data-go-view="console" type="button">一覧から選ぶ <span>→</span></button></div><div class="catalog-grid" id="catalog-grid"></div></section>
+      <div class="safety-note"><span>!</span><p><b>デモ環境の範囲</b><br>Sunabar専用DBと専用キーを使います。デモキーは実ソフトの認証に使えず、本番BaaS・Sandbox・契約情報には接続しません。セッションをリセットすると、このタブのキーと一時データが消えます。</p></div>
     </section>
-    <section class="how-section"><div><p class="eyebrow">HOW SUNABAR WORKS</p><h2>APIの一連の流れを試せます。</h2><p>ライセンス発行後は検証・端末認証へ、端末認証後はセッション確認・更新・終了へ値を自動で引き継ぎます。キーやトークンはサーバーへ保存されず、ブラウザーのメモリー内だけで扱います。</p></div><div class="steps"><article><span>01</span><b>専用キーを発行</b><p>この画面専用のキーです。</p></article><article><span>02</span><b>操作を連続実行</b><p>発行した値を次のAPIへ自動入力。</p></article><article><span>03</span><b>結果を確認</b><p>HTTP状態・応答時間・JSONを表示。</p></article></div></section>
-    <footer><span>Sunabar · API Emulator</span><span>ISOLATED KEY · PRODUCTION API IS NEVER CALLED</span></footer>
+
+    <section id="view-console" class="view" aria-labelledby="console-title" hidden>
+      <div class="console-layout">
+        <aside class="operation-nav"><div class="operation-nav-head"><div><p class="eyebrow">API EXPLORER</p><h2>操作</h2></div><span>10</span></div><label class="operation-search"><span>⌕</span><input id="operation-search" type="search" placeholder="操作を検索" aria-label="API操作を検索"></label><div id="operation-list" class="operation-list"></div><div class="nav-help">キーとトークンはブラウザーのタブ内で扱います。</div></aside>
+        <section class="request-panel" aria-labelledby="operation-title"><div class="request-panel-head"><div><p class="eyebrow" id="operation-category">LICENSE</p><h2 id="operation-title">稼働状態</h2><p id="operation-description"></p></div><span id="method-badge" class="method-badge get">GET</span></div>
+          <div class="endpoint-bar"><span id="endpoint-host" class="endpoint-host">2415.jp</span><span id="endpoint-path" class="endpoint-path">/license/api/sunabar/v1/health.php</span><button id="copy-path" class="icon-button" type="button" title="URLをコピー" aria-label="URLをコピー">⧉</button></div>
+          <div class="request-controls"><span id="auth-state" class="auth-chip">認証不要</span><span id="operation-risk" class="risk-chip">READ ONLY</span><button id="reset-body" class="text-button" type="button">例を戻す</button></div>
+          <div class="editor-label"><label for="request-body">REQUEST BODY</label><span>JSON · Ctrl/⌘ + Enterで実行</span></div><textarea id="request-body" spellcheck="false" aria-label="JSONリクエスト本文"></textarea>
+          <p id="form-error" class="form-error" role="alert"></p><div class="request-actions"><p id="request-hint">この操作は状態を変更しません。</p><button id="send" class="button button-primary" type="button"><span>▶</span>要求を送る</button></div>
+        </section>
+        <section class="response-panel" aria-labelledby="response-title"><div class="response-panel-head"><div><p class="eyebrow">LIVE RESPONSE</p><h2 id="response-title">応答インスペクター</h2></div><button id="copy-response" class="icon-button" type="button" title="応答をコピー" aria-label="応答をコピー" disabled>⧉</button></div>
+          <div class="response-metrics"><span id="response-status" class="status-empty">未実行</span><span id="response-time">— ms</span><span id="response-size">— bytes</span></div>
+          <div id="response-diagnostic" class="diagnostic" hidden></div>
+          <div id="product-key-result" class="product-key-result" hidden><div><b>デモ用プロダクトキー</b><small>実ソフトの認証には使用できません</small></div><code id="product-key-value"></code><button id="copy-product-key" class="button button-light" type="button">コピー</button><span id="product-key-message" aria-live="polite"></span></div>
+          <pre id="response-json" class="response-json"><span class="json-placeholder">要求を送ると、HTTP状態・応答・診断情報がここに表示されます。</span></pre>
+          <div class="response-foot"><span><i></i> same-origin relay · no external API target</span><span id="response-request-id">Request ID —</span><button id="open-history" class="text-button" type="button">履歴を見る <span>→</span></button></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="view-history" class="view" aria-labelledby="history-title" hidden>
+      <div class="section-heading"><div><p class="eyebrow">SESSION ACTIVITY</p><h2 id="history-title">履歴・診断</h2><p>このタブ内での要求を最大50件表示します。履歴に含めるキーやトークンは伏字にします。</p></div><div class="history-actions"><button id="export-history" class="button button-light" type="button">JSONを書き出す</button><button id="clear-history" class="button button-quiet-dark" type="button">履歴を消去</button></div></div>
+      <div class="history-toolbar"><label class="history-search"><span>⌕</span><input id="history-search" type="search" placeholder="パス・HTTP状態・request_idで検索"></label><select id="history-filter" aria-label="履歴の絞り込み"><option value="all">すべて</option><option value="success">成功</option><option value="error">エラー</option></select><span id="history-count" class="history-count">0 件</span></div>
+      <div class="history-table-wrap"><table class="history-table"><thead><tr><th>時刻</th><th>操作 / endpoint</th><th>結果</th><th>時間</th><th>Request ID</th><th></th></tr></thead><tbody id="history-rows"><tr class="history-empty"><td colspan="6">まだ履歴がありません。フロー実行かAPIコンソールから要求を送ってください。</td></tr></tbody></table></div>
+      <div class="history-disclaimer"><span>i</span><p>履歴はメモリー内だけに保持し、キーやトークンを伏せて表示・書き出します。リセットまたはタブを閉じると、履歴とセッション状態が消えます。</p></div>
+    </section>
+
+    <footer class="app-footer"><span>Sunabar v2 · API Emulator</span><span>DEMO DATA ONLY · PRODUCTION API IS NEVER CALLED</span><span><a href="https://github.com/KuriUni/API/blob/main/docs/SUNABAR.md" target="_blank" rel="noopener">API仕様 ↗</a></span></footer>
   </main>
-  <dialog id="key-dialog" class="key-dialog"><div class="key-dialog-head"><div><p class="eyebrow">SUNABAR API ACCESS</p><h2>専用APIキー</h2></div><button id="close-key" class="copy-button" type="button" aria-label="閉じる">×</button></div><p class="key-dialog-copy">このキーはSunabar専用で、24時間後に期限切れになります。実BaaS APIでは使えません。キーはこのタブのセッション内だけに保存されます。</p><label class="key-label" for="api-key-value">X-Sunabar-API-Key</label><div class="key-row"><input id="api-key-value" type="password" readonly autocomplete="off" spellcheck="false" placeholder="キーはまだありません"><button id="toggle-key" type="button" class="button button-quiet">表示</button><button id="copy-key" type="button" class="button button-secondary" disabled>コピー</button></div><p id="key-expiry" class="key-expiry"></p><p id="key-message" class="form-error" role="status"></p><button id="issue-api-key" class="button button-primary key-issue" type="button">専用キーを発行</button></dialog>
+
+  <dialog id="key-dialog" class="key-dialog"><div class="dialog-head"><div><p class="eyebrow">SUNABAR API ACCESS</p><h2>専用APIキー</h2></div><button id="close-key" class="icon-button" type="button" aria-label="閉じる">×</button></div><p>このキーはSunabar専用で24時間有効です。このタブのsessionStorageに保存され、タブを閉じるかリセットすると消えます。</p><label for="api-key-value" class="input-label">X-Sunabar-API-Key</label><div class="key-entry"><input id="api-key-value" type="password" readonly autocomplete="off" spellcheck="false" placeholder="キーはまだありません"><button id="toggle-key" class="button button-light" type="button">表示</button><button id="copy-key" class="button button-light" type="button" disabled>コピー</button></div><p id="key-expiry" class="key-expiry"></p><p id="key-message" class="form-error" role="status"></p><button id="issue-api-key" class="button button-primary" type="button">専用キーを発行</button></dialog>
+  <script>
+(() => {
+  'use strict';
+  const API = '/license/api/sunabar/v1/';
+  const KEY_SLOT = 'sunabar-api-key-v1';
+  const TIMEOUT = 20000;
+  const $ = (id) => document.getElementById(id);
+  const specs = {
+    health: { title: '稼働状態', group: 'SYSTEM', method: 'GET', endpoint: 'health.php', body: {}, key: false, risk: 'READ ONLY', description: '中継先APIとデータベースの準備状態を確認します。' },
+    products: { title: '製品一覧', group: 'LICENSE', method: 'GET', endpoint: 'products.php', body: {}, risk: 'READ ONLY', description: 'このエミュレーターで利用できる製品を取得します。' },
+    issue: { title: 'デモライセンス発行', group: 'LICENSE', method: 'POST', endpoint: 'licenses.php', body: { product_id: 101, license_mode: 'single', label: 'Sunabar practice' }, risk: 'CREATE', description: 'Sunabar専用のデモライセンスを発行します。' },
+    verify: { title: 'ライセンス検証', group: 'LICENSE', method: 'POST', endpoint: 'verify.php', body: { license_key: '', product_id: 101 }, risk: 'READ ONLY', description: 'ライセンスキーと製品IDの組み合わせを検証します。' },
+    list: { title: 'ライセンス一覧', group: 'LICENSE', method: 'GET', endpoint: 'license-list.php', body: {}, risk: 'READ ONLY', description: 'この専用キーで作成したライセンスを取得します。' },
+    revoke: { title: 'ライセンス失効', group: 'LICENSE', method: 'POST', endpoint: 'license-revoke.php', body: { license_id: '' }, risk: 'CHANGE STATE', description: '指定ライセンスを失効します。端末セッションも無効になります。' },
+    activate: { title: '端末認証', group: 'DEVICE SESSION', method: 'POST', endpoint: 'activate.php', body: { license_key: '', device_id: 'sunabar-v2-device-01' }, risk: 'CREATE SESSION', description: 'デモライセンスを使って端末セッションを開始します。' },
+    check: { title: 'セッション確認', group: 'DEVICE SESSION', method: 'POST', endpoint: 'session-check.php', body: { access_token: '', device_id: 'sunabar-v2-device-01' }, risk: 'READ ONLY', description: 'アクセストークンが有効か確認します。' },
+    refresh: { title: 'セッション更新', group: 'DEVICE SESSION', method: 'POST', endpoint: 'session-refresh.php', body: { refresh_token: '', device_id: 'sunabar-v2-device-01' }, risk: 'ROTATES TOKENS', description: 'トークンを更新します。成功後は前のトークンを使えません。' },
+    deactivate: { title: 'セッション終了', group: 'DEVICE SESSION', method: 'POST', endpoint: 'session-deactivate.php', body: { refresh_token: '', device_id: 'sunabar-v2-device-01' }, risk: 'END SESSION', description: '端末セッションを終了します。' },
+  };
+  const errors = {
+    invalid_api_key: ['APIキーを確認', 'キーが無効か、発行元のワークスペースが異なります。専用キーを再発行してください。'],
+    expired_token: ['APIキーの期限切れ', '専用キーは24時間で期限切れになります。新しいキーを発行してください。'],
+    invalid_license: ['ライセンスを確認', 'キー、製品ID、状態、有効期限を確認してください。'],
+    license_unavailable: ['ライセンスを利用できません', 'デモライセンスが失効・期限切れ、または製品IDが一致していない可能性があります。'],
+    invalid_session_token: ['セッション情報を確認', '更新操作後は古いトークンを使えません。最新の応答にあるトークンを使ってください。'],
+    device_limit_reached: ['端末数の上限', 'このライセンスで登録できる端末数の上限に達しています。'],
+    license_issue_limit: ['発行上限', '時間をおいてから再試行してください。'],
+    invalid_device_id: ['端末IDを確認', '端末IDは空欄にできません。入力内容を確認してください。'],
+    sunabar_upstream_unavailable: ['中継先を利用できません', '稼働状態を確認し、少し時間をおいて再試行してください。'],
+    network_error: ['接続を確認', 'ブラウザーから同一サイトのAPI中継先へ接続できませんでした。'],
+  };
+  let current = 'health';
+  let busy = false;
+  let lastResponse = null;
+  let lastLicense = null;
+  let lastSession = null;
+  let requestCount = 0;
+  let history = [];
+  let flowRunning = false;
+  const drafts = {};
+
+  function readKey() {
+    try {
+      const value = JSON.parse(sessionStorage.getItem(KEY_SLOT) || 'null');
+      if (value?.key && Number(value.expires_at) * 1000 > Date.now()) return value;
+      sessionStorage.removeItem(KEY_SLOT);
+    } catch { /* session storage may be disabled */ }
+    return null;
+  }
+  function path(name) { return `${API}${specs[name].endpoint}`; }
+  function json(value) { return JSON.stringify(value, null, 2); }
+  function safeText(value) { return typeof value === 'string' ? value : JSON.stringify(value); }
+  function buildCatalog() {
+    const cat = $('catalog-grid'); const nav = $('operation-list');
+    Object.entries(specs).forEach(([name, op], index) => {
+      const tile = document.createElement('button'); tile.type = 'button'; tile.className = 'catalog-item';
+      const num = document.createElement('span'); num.className = 'catalog-num'; num.textContent = String(index + 1).padStart(2, '0');
+      const label = document.createElement('span'); const title = document.createElement('b'); title.textContent = op.title; const meta = document.createElement('small'); meta.textContent = `${op.method} · ${op.group}`; label.append(title, meta); tile.append(num, label); tile.addEventListener('click', () => openOperation(name)); cat.append(tile);
+      const item = document.createElement('button'); item.type = 'button'; item.className = 'operation'; item.dataset.operation = name;
+      const method = document.createElement('span'); method.className = 'operation-method'; method.textContent = op.method;
+      const text = document.createElement('span'); text.textContent = op.title; item.append(method, text); item.addEventListener('click', () => openOperation(name)); nav.append(item);
+    });
+  }
+  function updateKeyState() {
+    const hasKey = Boolean(readKey()); const status = $('key-status');
+    status.replaceChildren(); const dot = document.createElement('i'); status.append(dot, document.createTextNode(hasKey ? 'APIキー準備済み' : 'キー未発行')); status.classList.toggle('key-ready', hasKey);
+    $('auth-state').textContent = specs[current].key === false ? '認証不要' : (hasKey ? 'キー設定済み' : 'キーが必要');
+    const key = readKey(); $('api-key-value').value = key?.key || ''; $('api-key-value').type = 'password'; $('copy-key').disabled = !key;
+    $('key-expiry').textContent = key ? `有効期限 ${new Date(key.expires_at * 1000).toLocaleString('ja-JP')}` : '';
+    $('issue-api-key').textContent = key ? '新しいキーを発行' : '専用キーを発行';
+  }
+  function openOperation(name, save = true) {
+    if (!specs[name]) return;
+    if (save && $('request-body')) drafts[current] = $('request-body').value;
+    current = name; const op = specs[name];
+    document.querySelectorAll('.operation').forEach((el) => el.classList.toggle('active', el.dataset.operation === name));
+    $('operation-title').textContent = op.title; $('operation-category').textContent = op.group; $('operation-description').textContent = op.description;
+    $('method-badge').textContent = op.method; $('method-badge').className = `method-badge ${op.method.toLowerCase()}`;
+    $('endpoint-host').textContent = location.host || '同一サイト'; $('endpoint-path').textContent = `${API}${op.endpoint}`;
+    $('request-body').value = drafts[name] ?? json(op.body); $('form-error').textContent = '';
+    const risk = $('operation-risk'); risk.textContent = op.risk; risk.classList.toggle('mutation', /CHANGE|ROTATES|CREATE|END/.test(op.risk));
+    $('request-hint').textContent = op.key === false ? 'APIキー不要の読み取り操作です。' : (hasKeyHint());
+    updateKeyState();
+  }
+  function hasKeyHint() { return readKey() ? '同一タブのSunabar専用キーを使用します。' : '実行前にSunabar専用キーが必要です。'; }
+  function switchView(view) {
+    document.querySelectorAll('.view-tab').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+    document.querySelectorAll('.view').forEach((v) => { const active = v.id === `view-${view}`; v.hidden = !active; v.classList.toggle('active', active); });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  function responseDiagnostic(result) {
+    const box = $('response-diagnostic'); const code = result.body?.error || result.body?.code;
+    if (result.status > 0 && result.status < 400 && result.body?.ok !== false) { box.hidden = true; box.replaceChildren(); return; }
+    const detail = errors[code] || [result.status ? `HTTP ${result.status} を確認` : '接続エラー', result.body?.message || result.body?.detail || 'JSON本文、キー、要求方法、サーバー状態を確認してください。'];
+    box.hidden = false; box.replaceChildren(); const title = document.createElement('b'); title.textContent = `${detail[0]}${code ? ` · ${code}` : ''}`; const body = document.createElement('span'); body.textContent = detail[1]; box.append(title, body);
+  }
+  function showResponse(result) {
+    lastResponse = result;
+    $('response-status').textContent = result.status ? `HTTP ${result.status}` : '接続エラー';
+    $('response-status').className = `status-pill ${result.status >= 400 || !result.status ? 'error' : ''}`;
+    $('response-time').textContent = `${result.duration.toFixed(1)} ms`;
+    const bodyText = json(result.body); $('response-size').textContent = `${new Blob([bodyText]).size} bytes`;
+    $('response-request-id').textContent = `Request ID ${result.request_id || result.body?.request_id || result.body?.data?.request_id || '—'}`;
+    $('response-json').textContent = bodyText; $('copy-response').disabled = false; responseDiagnostic(result);
+    const license = result.body?.data?.license; const key = license?.product_key || license?.license_key || '';
+    $('product-key-result').hidden = !key; $('product-key-value').textContent = key;
+    if (key) $('product-key-message').textContent = '';
+    const sess = lastSession; $('session-state').classList.toggle('session-active', Boolean(sess)); $('session-state').innerHTML = sess ? '<i></i>セッション準備済み' : '<i></i>セッション未開始';
+    $('device-indicator').className = `metric-dot ${sess ? '' : 'neutral'}`; $('device-status').textContent = sess ? '端末認証済み' : '未認証';
+    $('device-detail').textContent = sess ? `端末ID: ${sess.device_id}` : 'アクセストークンと更新トークンはメモリー内';
+  }
+  function redact(value, key = '') {
+    if (/api.?key|access.?token|refresh.?token|license.?key|product.?key|authorization|password|secret/i.test(key)) return value ? '[REDACTED]' : value;
+    if (Array.isArray(value)) return value.map((v) => redact(v));
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redact(v, k)]));
+    return value;
+  }
+  function addHistory(name, result, body) {
+    const entry = { id: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`, at: new Date().toISOString(), name, method: specs[name].method, path: path(name), status: result.status, duration: result.duration, request_id: result.request_id || result.body?.request_id || result.body?.data?.request_id || '', request: redact(body), response: redact(result.body) };
+    history.unshift(entry); history = history.slice(0, 50); renderHistory();
+  }
+  function renderHistory() {
+    const body = $('history-rows'); const search = $('history-search').value.trim().toLowerCase(); const filter = $('history-filter').value;
+    const rows = history.filter((r) => (filter === 'all' || (filter === 'success' ? r.status >= 200 && r.status < 400 : r.status < 200 || r.status >= 400)) && `${r.method} ${r.path} ${r.status} ${r.request_id} ${JSON.stringify(r.response)}`.toLowerCase().includes(search));
+    $('history-count').textContent = `${rows.length} 件`;
+    if (!rows.length) { const tr = document.createElement('tr'); tr.className = 'history-empty'; const td = document.createElement('td'); td.colSpan = 6; td.textContent = history.length ? '条件に一致する履歴がありません。' : 'まだ履歴がありません。フロー実行かAPIコンソールから要求を送ってください。'; tr.append(td); body.replaceChildren(tr); return; }
+    body.replaceChildren(...rows.map((entry) => {
+      const tr = document.createElement('tr'); const time = document.createElement('td'); time.textContent = new Date(entry.at).toLocaleTimeString('ja-JP');
+      const opCell = document.createElement('td'); opCell.className = 'history-operation'; const title = document.createElement('b'); title.textContent = specs[entry.name].title; const endpoint = document.createElement('code'); endpoint.textContent = `${entry.method} ${entry.path}`; opCell.append(title, endpoint);
+      const status = document.createElement('td'); status.className = `history-status ${entry.status < 200 || entry.status >= 400 ? 'error' : ''}`; status.textContent = entry.status || 'ERR';
+      const duration = document.createElement('td'); duration.textContent = `${entry.duration.toFixed(0)} ms`; const rid = document.createElement('td'); rid.textContent = entry.request_id || '—';
+      const action = document.createElement('td'); const open = document.createElement('button'); open.type = 'button'; open.className = 'history-open'; open.textContent = '再表示'; open.addEventListener('click', () => { openOperation(entry.name); drafts[entry.name] = json(entry.request); $('request-body').value = drafts[entry.name]; showResponse({ status: entry.status, body: entry.response, duration: entry.duration }); switchView('console'); }); action.append(open); tr.append(time, opCell, status, duration, rid, action); return tr;
+    }));
+  }
+  function updateKeyFromResponse(name, request, result) {
+    const data = result.body?.data;
+    if (name === 'issue' && data?.license) {
+      lastLicense = data.license;
+      drafts.verify = json({ license_key: data.license.license_key || data.license.product_key, product_id: data.license.product_id ?? request.product_id });
+      drafts.activate = json({ license_key: data.license.license_key || data.license.product_key, device_id: request.device_id || 'sunabar-v2-device-01' });
+      drafts.revoke = json({ license_id: data.license.license_id });
+      $('license-indicator').className = 'metric-dot'; $('license-status').textContent = '発行済み'; $('license-detail').textContent = `ライセンスID: ${data.license.license_id || '取得済み'}`;
+      if (current !== name) drafts[current] = $('request-body').value;
+    }
+    if ((name === 'activate' || name === 'refresh') && data?.session) {
+      lastSession = { ...data.session, device_id: request.device_id || lastSession?.device_id, license_id: data.license_id || lastSession?.license_id };
+      drafts.check = json({ access_token: lastSession.access_token, device_id: lastSession.device_id });
+      drafts.refresh = json({ refresh_token: lastSession.refresh_token, device_id: lastSession.device_id });
+      drafts.deactivate = json({ refresh_token: lastSession.refresh_token, device_id: lastSession.device_id });
+    }
+    if (name === 'deactivate' && result.body?.data?.status === 'deactivated') lastSession = null;
+    if (name === 'revoke' && result.body?.ok) { lastSession = null; }
+  }
+  async function request(name, body, { fromFlow = false } = {}) {
+    if (busy) throw new Error('別の要求を実行中です。');
+    const op = specs[name]; const key = readKey();
+    if (op.key !== false && !key) { if (!fromFlow) { $('key-dialog').showModal(); $('key-message').textContent = '先に専用APIキーを発行してください。'; } throw new Error('専用APIキーがありません。発行してから再開してください。'); }
+    busy = true; $('send').disabled = true;
+    const started = performance.now(); let result;
+    try {
+      const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), TIMEOUT);
+      try {
+        const response = await fetch(path(name), { method: op.method, cache: 'no-store', credentials: 'omit', signal: controller.signal, headers: { Accept: 'application/json', ...(op.key !== false && key ? { 'X-Sunabar-API-Key': key.key } : {}), ...(op.method === 'POST' ? { 'Content-Type': 'application/json' } : {}) }, ...(op.method === 'POST' ? { body: json(body || {}) } : {}) });
+        const responseBody = await response.json().catch(() => ({ ok: false, error: 'invalid_server_response', message: 'JSON以外の応答を受信しました。' }));
+        result = { status: response.status, body: responseBody, request_id: response.headers.get('X-Request-ID') || responseBody.request_id || '', duration: performance.now() - started };
+        if (response.status === 401 && ['expired_token', 'invalid_api_key'].includes(responseBody.error)) { sessionStorage.removeItem(KEY_SLOT); updateKeyState(); }
+      } finally { clearTimeout(timer); }
+    } catch (err) { result = { status: 0, body: { ok: false, error: 'network_error', message: err.name === 'AbortError' ? '20秒以内に応答がありませんでした。' : err.message }, duration: performance.now() - started }; }
+    busy = false; $('send').disabled = false; requestCount++; $('request-count').textContent = String(requestCount);
+    if (result.status >= 200 && result.status < 300 && result.body?.ok) updateKeyFromResponse(name, body || {}, result);
+    showResponse(result); addHistory(name, result, body || {}); return result;
+  }
+  function recordFlow(title, steps) {
+    $('flow-progress').hidden = false; $('flow-title').textContent = title; $('flow-summary').hidden = true;
+    $('flow-log').replaceChildren(...steps.map((step) => { const li = document.createElement('li'); li.dataset.name = step.name; const b = document.createElement('b'); b.textContent = specs[step.name].method; const span = document.createElement('span'); span.textContent = specs[step.name].title; li.append(b, span); return li; }));
+    $('flow-counter').textContent = `0 / ${steps.length}`; $('flow-progress-bar').style.width = '0%';
+  }
+  function setFlowStep(index, state, steps) {
+    const li = $('flow-log').children[index]; if (li) li.className = state;
+    $('flow-counter').textContent = `${Math.min(index + (state === 'done' || state === 'failed' ? 1 : 0), steps.length)} / ${steps.length}`;
+    $('flow-progress-bar').style.width = `${Math.round((index + (state === 'done' ? 1 : 0)) / steps.length * 100)}%`;
+  }
+  async function runFlow(title, steps) {
+    if (flowRunning || busy) return; flowRunning = true; recordFlow(title, steps);
+    $('run-license-flow').disabled = true; $('run-session-flow').disabled = true;
+    const summary = $('flow-summary'); let failed = false;
+    try {
+      for (let i = 0; i < steps.length; i++) {
+        setFlowStep(i, 'running', steps);
+        const step = steps[i]; const body = typeof step.body === 'function' ? step.body() : step.body;
+        const result = await request(step.name, body, { fromFlow: true });
+        if (result.status < 200 || result.status >= 300 || !result.body?.ok) { setFlowStep(i, 'failed', steps); failed = true; summary.textContent = `「${specs[step.name].title}」で停止しました。応答の診断を確認し、修正してから個別に再実行してください。`; break; }
+        setFlowStep(i, 'done', steps);
+      }
+      if (!failed) summary.textContent = '全ステップが完了しました。各要求の応答と履歴から、入力と出力のつながりを確認できます。';
+    } catch (error) { failed = true; summary.textContent = error.message; }
+    summary.hidden = false; if (failed) summary.style.color = '#aa3b46'; else summary.style.color = '#187653';
+    $('run-license-flow').disabled = false; $('run-session-flow').disabled = false; flowRunning = false;
+  }
+  async function issueKey() {
+    const button = $('issue-api-key'); button.disabled = true; button.textContent = '発行中…'; $('key-message').textContent = '';
+    try {
+      const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), TIMEOUT);
+      let response; try { response = await fetch(`${API}key.php`, { method: 'POST', cache: 'no-store', credentials: 'omit', signal: ctl.signal, headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: '{}' }); } finally { clearTimeout(timer); }
+      const body = await response.json().catch(() => ({})); if (!response.ok || !body.ok || !body.data?.api_key) throw new Error(body.message || body.error || `HTTP ${response.status}`);
+      sessionStorage.setItem(KEY_SLOT, JSON.stringify({ key: body.data.api_key, expires_at: body.data.expires_at })); lastLicense = null; lastSession = null; updateKeyState(); $('api-key-value').type = 'text'; $('key-message').textContent = 'キーを発行しました。このタブの間だけ利用できます。'; $('license-indicator').className = 'metric-dot neutral'; $('license-status').textContent = '未作成'; $('license-detail').textContent = 'このタブで発行したデモライセンス';
+    } catch (err) { $('key-message').textContent = `発行できませんでした: ${err.message}`; }
+    finally { button.disabled = false; button.textContent = readKey() ? '新しいキーを発行' : '専用キーを発行'; }
+  }
+  function downloadJson(filename, data) {
+    const blob = new Blob([json(data)], { type: 'application/json;charset=utf-8' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  function resetAll() {
+    if (busy) return; sessionStorage.removeItem(KEY_SLOT); lastResponse = null; lastLicense = null; lastSession = null; history = []; requestCount = 0; $('request-count').textContent = '0'; Object.keys(drafts).forEach((k) => delete drafts[k]);
+    $('license-indicator').className = 'metric-dot neutral'; $('license-status').textContent = '未作成'; $('license-detail').textContent = 'このタブで発行したデモライセンス'; $('device-indicator').className = 'metric-dot neutral'; $('device-status').textContent = '未認証'; $('device-detail').textContent = 'アクセストークンと更新トークンはメモリー内';
+    $('response-status').textContent = '未実行'; $('response-status').className = 'status-empty'; $('response-time').textContent = '— ms'; $('response-size').textContent = '— bytes'; $('response-request-id').textContent = 'Request ID —'; $('response-json').textContent = '要求を送ると、HTTP状態・応答・診断情報がここに表示されます。'; $('copy-response').disabled = true; $('response-diagnostic').hidden = true; $('product-key-result').hidden = true; $('flow-progress').hidden = true; renderHistory(); updateKeyState(); openOperation('health', false);
+  }
+  document.querySelectorAll('.view-tab').forEach((b) => b.addEventListener('click', () => switchView(b.dataset.view)));
+  document.querySelectorAll('[data-go-view]').forEach((b) => b.addEventListener('click', () => switchView(b.dataset.goView)));
+  $('open-console').addEventListener('click', () => switchView('console')); $('open-history').addEventListener('click', () => switchView('history'));
+  $('health-check').addEventListener('click', async () => { openOperation('health'); const r = await request('health', {}); $('relay-indicator').className = `metric-dot ${r.status >= 200 && r.status < 300 && r.body?.ok ? '' : 'error'}`; $('relay-status').textContent = r.status >= 200 && r.status < 300 && r.body?.ok ? '稼働中' : '確認が必要'; $('relay-detail').textContent = r.status ? `HTTP ${r.status} · ${r.duration.toFixed(0)} ms` : 'APIへの接続を確認してください。'; switchView('console'); });
+  $('run-license-flow').addEventListener('click', () => {
+    const id = Number($('flow-product-id').value); const label = $('flow-label').value.trim();
+    if (!Number.isInteger(id) || id < 1) { $('flow-progress').hidden = false; $('flow-summary').hidden = false; $('flow-summary').textContent = '製品IDは1以上の整数で入力してください。'; $('flow-summary').style.color = '#aa3b46'; return; }
+    if (!readKey()) { $('key-dialog').showModal(); $('key-message').textContent = 'この実習を始める前に専用キーを発行してください。発行後、もう一度フローを実行します。'; return; }
+    runFlow('デモライセンス発行・検証', [{ name: 'products', body: {} }, { name: 'issue', body: { product_id: id, license_mode: 'single', label: label || 'Sunabar practice' } }, { name: 'verify', body: () => ({ license_key: lastLicense?.license_key || lastLicense?.product_key || '', product_id: id }) }]);
+  });
+  $('run-session-flow').addEventListener('click', () => {
+    if (!readKey()) { $('key-dialog').showModal(); $('key-message').textContent = 'この実習を始める前に専用キーを発行してください。'; return; }
+    const device = $('flow-device-id').value.trim(); if (!device) { $('flow-progress').hidden = false; $('flow-summary').hidden = false; $('flow-summary').textContent = '端末IDを入力してください。'; $('flow-summary').style.color = '#aa3b46'; return; }
+    if (!lastLicense?.license_key && !lastLicense?.product_key) { switchView('console'); openOperation('issue'); $('form-error').textContent = '先にデモライセンスを発行してください。発行後にセッションフローを実行できます。'; return; }
+    runFlow('端末セッションの開始・更新・終了', [
+      { name: 'activate', body: () => ({ license_key: lastLicense.license_key || lastLicense.product_key, device_id: device }) },
+      { name: 'check', body: () => ({ access_token: lastSession?.access_token || '', device_id: device }) },
+      { name: 'refresh', body: () => ({ refresh_token: lastSession?.refresh_token || '', device_id: device }) },
+      { name: 'deactivate', body: () => ({ refresh_token: lastSession?.refresh_token || '', device_id: device }) },
+    ]);
+  });
+  $('send').addEventListener('click', async () => {
+    $('form-error').textContent = ''; let body;
+    try { body = JSON.parse($('request-body').value || '{}'); if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('JSONのトップレベルはオブジェクトにしてください。'); }
+    catch (err) { $('form-error').textContent = err.message; return; }
+    if (current === 'revoke' && !window.confirm('指定したデモライセンスを失効しますか？この操作は元に戻せません。')) return;
+    await request(current, body);
+  });
+  $('request-body').addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') $('send').click(); });
+  $('reset-body').addEventListener('click', () => { drafts[current] = json(specs[current].body); $('request-body').value = drafts[current]; $('form-error').textContent = ''; });
+  $('operation-search').addEventListener('input', (e) => { const q = e.target.value.toLowerCase(); document.querySelectorAll('.operation').forEach((b) => { b.hidden = !`${b.textContent} ${specs[b.dataset.operation].group} ${specs[b.dataset.operation].endpoint}`.toLowerCase().includes(q); }); });
+  $('history-search').addEventListener('input', renderHistory); $('history-filter').addEventListener('change', renderHistory);
+  $('export-history').addEventListener('click', () => downloadJson(`sunabar-v2-history-${new Date().toISOString().slice(0, 10)}.json`, { exported_at: new Date().toISOString(), redacted: true, entries: history }));
+  $('clear-history').addEventListener('click', () => { history = []; renderHistory(); });
+  $('reset').addEventListener('click', resetAll);
+  $('open-key').addEventListener('click', () => { updateKeyState(); $('key-dialog').showModal(); }); $('close-key').addEventListener('click', () => $('key-dialog').close()); $('issue-api-key').addEventListener('click', issueKey);
+  $('toggle-key').addEventListener('click', () => { $('api-key-value').type = $('api-key-value').type === 'password' ? 'text' : 'password'; });
+  $('copy-key').addEventListener('click', async () => { try { await navigator.clipboard.writeText($('api-key-value').value); $('key-message').textContent = 'コピーしました。'; } catch { $('key-message').textContent = 'コピーに失敗しました。キーを選択してコピーしてください。'; } });
+  $('copy-path').addEventListener('click', async () => { try { await navigator.clipboard.writeText(`${location.origin}${$('endpoint-path').textContent}`); } catch { /* clipboard may not be available */ } });
+  $('copy-response').addEventListener('click', async () => { if (lastResponse) try { await navigator.clipboard.writeText(json(lastResponse.body)); } catch { /* clipboard may not be available */ } });
+  $('copy-product-key').addEventListener('click', async () => { try { await navigator.clipboard.writeText($('product-key-value').textContent); $('product-key-message').textContent = 'コピーしました。'; } catch { $('product-key-message').textContent = 'キーを選択してコピーしてください。'; } });
+  buildCatalog(); updateKeyState(); openOperation('health', false); renderHistory();
+})();
+</script>
 </body>
 </html>
