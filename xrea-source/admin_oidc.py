@@ -185,6 +185,15 @@ def _jwks(force_refresh=False):
         _JWKS_CACHE_EXPIRES = now + JWKS_CACHE_TTL_SECONDS
         return _JWKS_CACHE
 
+def _json_object_no_duplicates(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('oidc_duplicate_json_claim')
+        result[key] = value
+    return result
+
+
 def _verify_id_token(token, nonce, expected_client_id=CLIENT_ID):
     if not isinstance(token, str) or len(token) > 65536:
         raise RuntimeError('oidc_bad_token')
@@ -192,8 +201,8 @@ def _verify_id_token(token, nonce, expected_client_id=CLIENT_ID):
     if len(pieces) != 3:
         raise RuntimeError('oidc_bad_token')
     try:
-        header = json.loads(_b64d(pieces[0]).decode('utf-8'))
-        claims = json.loads(_b64d(pieces[1]).decode('utf-8'))
+        header = json.loads(_b64d(pieces[0]).decode('utf-8'), object_pairs_hook=_json_object_no_duplicates)
+        claims = json.loads(_b64d(pieces[1]).decode('utf-8'), object_pairs_hook=_json_object_no_duplicates)
     except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RuntimeError('oidc_bad_token') from exc
     if not isinstance(header, dict) or not isinstance(claims, dict) or header.get('alg') != 'RS256' or (not isinstance(header.get('kid'), str)) or len(header.get('kid', '')) > 256:
@@ -220,7 +229,8 @@ def _verify_id_token(token, nonce, expected_client_id=CLIENT_ID):
     now = int(time.time())
     try:
         issued, expires = (int(claims.get('iat', 0)), int(claims.get('exp', 0)))
-    except (TypeError, ValueError) as exc:
+        not_before = int(claims['nbf']) if 'nbf' in claims else None
+    except (TypeError, ValueError, OverflowError) as exc:
         raise RuntimeError('oidc_claims_invalid') from exc
     aud = claims.get('aud')
     audience_ok = expected_client_id in aud if isinstance(aud, list) else aud == expected_client_id
@@ -228,7 +238,14 @@ def _verify_id_token(token, nonce, expected_client_id=CLIENT_ID):
         audience_ok = False
     if 'azp' in claims and claims.get('azp') != expected_client_id:
         audience_ok = False
-    if claims.get('iss') != ISSUER or not audience_ok or issued < 1 or (issued > now + 60) or (expires <= now) or (expires - issued > 600) or (not hmac.compare_digest(str(claims.get('nonce', '')), nonce)) or (not isinstance(claims.get('sub'), str)) or (len(claims['sub']) < 16) or (not re.fullmatch('[a-f0-9]{64}', str(claims.get('sid', '')))):
+    if (claims.get('iss') != ISSUER or not audience_ok
+            or issued < 1 or issued > now + 60 or expires <= now
+            or expires <= issued or expires - issued > 600
+            or (not_before is not None and (not_before < 1 or not_before > now + 60))
+            or not hmac.compare_digest(str(claims.get('nonce', '')), nonce)
+            or not isinstance(claims.get('sub'), str)
+            or not 16 <= len(claims['sub']) <= 255
+            or not re.fullmatch('[a-f0-9]{64}', str(claims.get('sid', '')))):
         raise RuntimeError('oidc_claims_invalid')
     if 'tenant_id' in claims and (type(claims['tenant_id']) is not int or not 0 < claims['tenant_id'] < 2**63):
         raise RuntimeError('oidc_claims_invalid')
