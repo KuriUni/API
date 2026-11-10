@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import re
 import secrets
 import threading
@@ -228,8 +229,14 @@ def _verify_id_token(token, nonce, expected_client_id=CLIENT_ID):
         raise RuntimeError('oidc_signature_invalid') from exc
     now = int(time.time())
     try:
-        issued, expires = (int(claims.get('iat', 0)), int(claims.get('exp', 0)))
-        not_before = int(claims['nbf']) if 'nbf' in claims else None
+        raw_issued, raw_expires = claims.get('iat'), claims.get('exp')
+        raw_not_before = claims.get('nbf') if 'nbf' in claims else None
+        numeric_dates = [raw_issued, raw_expires] + ([raw_not_before] if 'nbf' in claims else [])
+        if any(isinstance(value, bool) or not isinstance(value, (int, float))
+               or not math.isfinite(value) for value in numeric_dates):
+            raise ValueError('oidc_numeric_date_invalid')
+        issued, expires = int(raw_issued), int(raw_expires)
+        not_before = int(raw_not_before) if raw_not_before is not None else None
     except (TypeError, ValueError, OverflowError) as exc:
         raise RuntimeError('oidc_claims_invalid') from exc
     aud = claims.get('aud')
