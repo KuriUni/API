@@ -131,9 +131,15 @@ def _authorize(request_context, data, scope):
     if not _ha_authorized_scope(request_context, scope):
         return (None, '403 Forbidden', 'この操作を行う権限がありません。')
     if from_cookie and request_context.get('method', 'GET') == 'POST':
-        host = str(request_context.get('header:host', '2415.jp')).lower().split(':', 1)[0]
-        origin = str(request_context.get('header:origin', ''))
-        allowed = 'https://' + host
+        # Do not construct a trusted Origin from the incoming Host header.
+        # Accept only the deployment's explicitly configured canonical hosts.
+        origin_hosts = {
+            'https://2415.jp': {'2415.jp', '2415.jp:443'},
+            'https://main.2415.jp': {'main.2415.jp', 'main.2415.jp:443'},
+            'https://backup.2415.jp': {'backup.2415.jp', 'backup.2415.jp:443'},
+        }
+        host = str(request_context.get('header:host', '')).strip().lower()
+        origin = str(request_context.get('header:origin', '')).strip()
         cookies = SimpleCookie()
         try:
             cookies.load(request_context.get('header:cookie', ''))
@@ -141,7 +147,7 @@ def _authorize(request_context, data, scope):
         except Exception:
             csrf_cookie = ''
         csrf = str(request_context.get('header:x-csrf-token', '') or data.get('csrf', ''))
-        if origin != allowed or not csrf_cookie or (not hmac.compare_digest(csrf, csrf_cookie)):
+        if host not in origin_hosts.get(origin, set()) or not csrf_cookie or not hmac.compare_digest(csrf, csrf_cookie):
             return (None, '403 Forbidden', 'CSRF validation failed.')
     return (claims, None, None)
 

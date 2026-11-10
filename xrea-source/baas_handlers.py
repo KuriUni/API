@@ -860,19 +860,42 @@ def export_tenant(request_context):
             connection.close()
 
 def _webhook_url_allowed(url):
+    """Validate webhook URL syntax before dispatch-time DNS/IP enforcement."""
+    if not isinstance(url, str) or not url or len(url) > 2048:
+        return False
+    if any(ord(char) <= 32 or ord(char) == 127 or char == chr(92) for char in url):
+        return False
     try:
         parts = urlsplit(url)
         host = (parts.hostname or '').lower()
-        if parts.scheme.lower() != 'https' or not host or parts.username is not None or (parts.password is not None) or parts.fragment:
+        port = parts.port
+        if (parts.scheme.lower() != 'https' or not host
+                or parts.username is not None or parts.password is not None
+                or parts.fragment or port not in (None, 443)):
             return False
-        if host == 'localhost' or host.endswith('.local'):
+        if host.endswith('.') or host in {'localhost', 'localhost.localdomain'}:
+            return False
+        if host.endswith(('.local', '.localhost', '.internal', '.test', '.invalid', '.example')):
             return False
         try:
             address = ipaddress.ip_address(host)
-            return address.is_global
+            # The dispatcher pins connections to globally-routable IPv4 only.
+            return address.version == 4 and address.is_global
         except ValueError:
-            return re.fullmatch('[a-z0-9.-]+', host) is not None
-    except ValueError:
+            pass
+        try:
+            host.encode('ascii')
+        except UnicodeEncodeError:
+            return False
+        if len(host) > 253:
+            return False
+        labels = host.split('.')
+        if len(labels) < 2:
+            return False
+        label_pattern = re.compile(r'^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$')
+        return all(1 <= len(label) <= 63 and label_pattern.fullmatch(label)
+                   for label in labels)
+    except (TypeError, ValueError):
         return False
 
 @legacy_compatible(callback_index=None, request_index=0)
