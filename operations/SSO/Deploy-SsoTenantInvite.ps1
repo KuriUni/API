@@ -16,12 +16,28 @@ $files = @(
 )
 
 foreach ($file in $files) { if (-not (Test-Path -LiteralPath $file.Local -PathType Leaf)) { throw "SSO source missing: $($file.Name)" } }
-$dll = @(
-    (Join-Path $env:LOCALAPPDATA 'Programs\WinSCP\WinSCPnet.dll'),
-    (Join-Path $env:ProgramFiles 'WinSCP\WinSCPnet.dll'),
-    (Join-Path ${env:ProgramFiles(x86)} 'WinSCP\WinSCPnet.dll')
-) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
+$dllCandidates = @(
+    (Join-Path $env:LOCALAPPDATA 'Programs/WinSCP/WinSCPnet.dll'),
+    (Join-Path $env:ProgramFiles 'WinSCP/WinSCPnet.dll'),
+    (Join-Path ${env:ProgramFiles(x86)} 'WinSCP/WinSCPnet.dll')
+)
+if ($PSVersionTable.PSEdition -eq 'Core') {
+    $dllCandidates = @(
+        (Join-Path $env:LOCALAPPDATA 'Programs/WinSCP/netstandard2.0/WinSCPnet.dll'),
+        (Join-Path $env:ProgramFiles 'WinSCP/netstandard2.0/WinSCPnet.dll'),
+        (Join-Path ${env:ProgramFiles(x86)} 'WinSCP/netstandard2.0/WinSCPnet.dll')
+    ) + $dllCandidates
+}
+$dll = $dllCandidates | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
 if (-not $dll) { throw 'WinSCP .NET library was not found.' }
+$winscpExe = @(
+    (Join-Path $env:LOCALAPPDATA 'Programs/WinSCP/WinSCP.exe'),
+    (Join-Path $env:ProgramFiles 'WinSCP/WinSCP.exe'),
+    (Join-Path ${env:ProgramFiles(x86)} 'WinSCP/WinSCP.exe'),
+    (Join-Path (Split-Path -Parent $dll) 'WinSCP.exe'),
+    (Join-Path (Split-Path -Parent (Split-Path -Parent $dll)) 'WinSCP.exe')
+) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
+if (-not $winscpExe) { throw 'WinSCP.exe was not found.' }
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -Path $dll
@@ -72,6 +88,7 @@ New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
 $sourceHashes = @{}
 foreach ($file in $files) { $sourceHashes[$file.Name] = (Get-FileHash -LiteralPath $file.Local -Algorithm SHA256).Hash.ToLowerInvariant() }
 $session = New-Object WinSCP.Session
+$session.ExecutablePath = $winscpExe
 $backups = @{}
 $uploaded = [System.Collections.Generic.List[object]]::new()
 try {

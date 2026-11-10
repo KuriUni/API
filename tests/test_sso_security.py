@@ -100,3 +100,40 @@ class RecoveryPrimitiveTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SecurityHeaderTests(unittest.TestCase):
+    def _headers(self, body=b'{"ok":true}', content_type="application/json; charset=utf-8"):
+        captured = {}
+
+        def start_response(status, headers):
+            captured["status"] = status
+            captured["headers"] = dict(headers)
+
+        sso.response(start_response, "200 OK", body, content_type)
+        return captured["headers"]
+
+    def test_transport_and_framing_headers(self):
+        headers = self._headers()
+        self.assertEqual(headers["Strict-Transport-Security"], "max-age=31536000; includeSubDomains")
+        self.assertEqual(headers["Cross-Origin-Opener-Policy"], "same-origin-allow-popups")
+        self.assertEqual(headers["X-Frame-Options"], "DENY")
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertIn("payment=()", headers["Permissions-Policy"])
+        self.assertIn("usb=()", headers["Permissions-Policy"])
+
+    def test_csp_blocks_frames_and_inline_scripts(self):
+        headers = self._headers()
+        csp = headers["Content-Security-Policy"]
+        self.assertIn("default-src 'none'", csp)
+        self.assertIn("script-src 'none'", csp)
+        self.assertIn("frame-ancestors 'none'", csp)
+
+    def test_html_script_uses_a_nonce(self):
+        headers = self._headers(b"<html><script>1</script></html>", "text/html; charset=utf-8")
+        self.assertIn("script-src 'nonce-", headers["Content-Security-Policy"])
+
+    def test_global_auth_budget_is_bounded(self):
+        self.assertGreaterEqual(sso.GLOBAL_AUTH_RATE_LIMIT, 120)
+        self.assertLessEqual(sso.GLOBAL_AUTH_RATE_LIMIT, 1000)
+        self.assertLessEqual(sso.GLOBAL_AUTH_RATE_WINDOW, 900)

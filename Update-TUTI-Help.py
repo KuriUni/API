@@ -21,6 +21,7 @@ ARTICLES = [
     ("docs/LICENSE-AUTHENTICATION-OPERATIONS.md", "BaaS-Contractor", "authentication"),
     ("docs/MNSL-SSO-ISSUE-HELP.md", "MyNumberSmartLogin", "operations"),
     ("docs/BILLING-STRIPE-SANDBOX.md", "BaaS-Operator", "billing"),
+    ("docs/SSO-SECURITY-HARDENING.md", "sso-service", "security"),
 ]
 
 
@@ -31,6 +32,8 @@ def load_articles() -> list[dict[str, object]]:
         if not source.is_file():
             raise SystemExit(f"Markdown source not found: {source}")
         content = source.read_text(encoding="utf-8-sig")
+        if re.search(r"\?{4,}", content):
+            raise SystemExit(f"Suspected mojibake (????) in {relative_path}; fix the source text before rebuilding the help page.")
         heading = re.search(r"^#\s+(.+?)\s*$", content, re.MULTILINE)
         if not heading:
             raise SystemExit(f"Markdown has no top-level heading: {source}")

@@ -1,0 +1,22 @@
+# Python bytecode and local environments
+__pycache__/
+*.py[cod]
+.venv/
+business-ops/data/
+
+# Logs and deploy staging
+*.log
+.tuti-deploy-backup-*
+.tuti-deploy-stage-*
+deploy-backups/**/winscp.log
+
+# Local-only secrets and tool installs
+Key/
+
+# Build output (rebuild with Build-Rust.ps1 / cargo build)
+XreaOperationsDesktop/bin/
+XreaOperationsDesktop/obj/
+XreaOperationsDesktop/rust/target/
+
+# Local deployment history (kept on disk, not in Git)
+deploy-backups/

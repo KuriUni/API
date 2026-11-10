@@ -47,6 +47,8 @@ ADMIN_CLIENT_ID = "tuti-admin-portal"
 TENANT_CLIENT_ID = "tuti-tenant-portal"
 PASSKEY_RP_ID = "sso.2415.jp"
 SSO_DATABASE_SCHEMA_VERSION = 5
+GLOBAL_AUTH_RATE_LIMIT = 240
+GLOBAL_AUTH_RATE_WINDOW = 300
 
 
 def b64u(value):
@@ -565,9 +567,11 @@ def response(start_response, status: str, body: bytes, content_type: str = "appl
         body = body.replace(b"<script>", (f'<script nonce="{script_nonce}">'.encode("ascii")))
     script_policy = f"'nonce-{script_nonce}'" if script_nonce else "'none'"
     base = [("Content-Type", content_type), ("Cache-Control", "no-store"),
+            ("Strict-Transport-Security", "max-age=31536000; includeSubDomains"),
             ("X-Content-Type-Options", "nosniff"), ("Referrer-Policy", "no-referrer"),
             ("X-Frame-Options", "DENY"),
-            ("Permissions-Policy", "camera=(), microphone=(), geolocation=()"),
+            ("Cross-Origin-Opener-Policy", "same-origin-allow-popups"),
+            ("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()"),
             ("X-Permitted-Cross-Domain-Policies", "none"),
             ("Content-Security-Policy", f"default-src 'none'; script-src {script_policy}; style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")]
     start_response(status, base + list(headers))
@@ -1155,9 +1159,13 @@ def _app_impl(environ, start_response):
         "/account/totp/verify-passkey": (12, 300), "/account/totp/enable": (12, 300),
         "/account/totp/disable": (12, 300),
     }
+    remote = str(environ.get("REMOTE_ADDR", "unknown"))[:128] or "unknown"
+    auth_surface = (method == "POST" and path in rate_policy) or (method == "GET" and path == "/authorize")
+    if auth_surface and not consume_security_rate_limit(
+            security_rate_key("ip:auth-surface", remote), GLOBAL_AUTH_RATE_LIMIT, GLOBAL_AUTH_RATE_WINDOW):
+        return json_response(start_response, "429 Too Many Requests", {"error": "rate_limited", "message": "試行回数が上限に達しました。時間をおいて再度お試しください。"}, headers=[("Retry-After", "60")])
     if method == "POST" and path in rate_policy:
         maximum, window_seconds = rate_policy[path]
-        remote = str(environ.get("REMOTE_ADDR", "unknown"))[:128] or "unknown"
         rate_key = security_rate_key("ip:" + path, remote)
         if not consume_security_rate_limit(rate_key, maximum, window_seconds):
             return json_response(start_response, "429 Too Many Requests", {"error": "rate_limited", "message": "試行回数が上限に達しました。時間をおいて再度お試しください。"}, headers=[("Retry-After", "60")])
@@ -2100,7 +2108,8 @@ def _app_impl(environ, start_response):
         state = params.get("state", "")
         if return_to in allowed_returns and re.fullmatch(r"[A-Za-z0-9._~-]{1,512}", state):
             location = append_query(location, {"state": state})
-        return response(start_response, "303 See Other", b"", headers=[expire_session_cookie(), ("Location", location)])
+        return response(start_response, "303 See Other", b"", headers=[expire_session_cookie(),
+            ("Clear-Site-Data", '"cache", "cookies", "storage"'), ("Location", location)])
     if path == "/account/passkey/add/begin" and method == "POST":
         if environ.get("HTTP_ORIGIN", "") != ISSUER:
             return json_response(start_response, "403 Forbidden", {"error": "origin_rejected"})

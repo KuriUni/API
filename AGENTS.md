@@ -15,7 +15,7 @@
 | `docs/` | SSO・ライセンス・OIDC・Sunabar の運用手順書 |
 | `tools/` | 運用スクリプトの一覧ドキュメント |
 | `tests/` | Python / Node のテスト |
-| `deploy-backups/` | 配備時の自動バックアップ（履歴。削除は `operations/Prune-DeployBackups.ps1` で行う） |
+| `deploy-backups/` | 配備時の自動バックアップ（ローカルのみ・Git管理外。削除は `operations/Prune-DeployBackups.ps1` で行う） |
 | `TUTI-Help.html` | ヘルプページ本体。編集後は `Update-TUTI-Help.py` と `operations/Xrea/Deploy-TUTI-Help.ps1` を使う |
 
 ## 開発・検証

@@ -11,16 +11,35 @@ $userName = 'main@sso.2415.jp'
 # /home/.../public_html path is therefore exposed as / within this FTP session.
 $remoteRoot = '/'
 $fingerprint = '20:9c:38:e5:92:50:52:0f:d1:9b:6c:69:e3:2d:5f:cb:b6:14:28:ed:bf:5f:34:f3:74:93:69:8d:46:a1:b3:f4'
-$assemblyCandidates = @(
-    (Join-Path $env:LOCALAPPDATA 'Programs\WinSCP\WinSCPnet.dll'),
-    (Join-Path $env:ProgramFiles 'WinSCP\WinSCPnet.dll'),
-    (Join-Path ${env:ProgramFiles(x86)} 'WinSCP\WinSCPnet.dll')
-) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) }
-if (-not $assemblyCandidates) {
+$dllCandidates = @(
+    (Join-Path $env:LOCALAPPDATA 'Programs/WinSCP/WinSCPnet.dll'),
+    (Join-Path $env:ProgramFiles 'WinSCP/WinSCPnet.dll'),
+    (Join-Path ${env:ProgramFiles(x86)} 'WinSCP/WinSCPnet.dll')
+)
+if ($PSVersionTable.PSEdition -eq 'Core') {
+    $dllCandidates = @(
+        (Join-Path $env:LOCALAPPDATA 'Programs/WinSCP/netstandard2.0/WinSCPnet.dll'),
+        (Join-Path $env:ProgramFiles 'WinSCP/netstandard2.0/WinSCPnet.dll'),
+        (Join-Path ${env:ProgramFiles(x86)} 'WinSCP/netstandard2.0/WinSCPnet.dll')
+    ) + $dllCandidates
+}
+$dll = $dllCandidates | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
+if (-not $dll) {
     [void][System.Windows.Forms.MessageBox]::Show('WinSCP .NET library was not found.', 'SSO FTP', 'OK', 'Error')
     exit 1
 }
-Add-Type -Path ($assemblyCandidates | Select-Object -First 1)
+$winscpExe = @(
+    (Join-Path $env:LOCALAPPDATA 'Programs/WinSCP/WinSCP.exe'),
+    (Join-Path $env:ProgramFiles 'WinSCP/WinSCP.exe'),
+    (Join-Path ${env:ProgramFiles(x86)} 'WinSCP/WinSCP.exe'),
+    (Join-Path (Split-Path -Parent $dll) 'WinSCP.exe'),
+    (Join-Path (Split-Path -Parent (Split-Path -Parent $dll)) 'WinSCP.exe')
+) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
+if (-not $winscpExe) {
+    [void][System.Windows.Forms.MessageBox]::Show('WinSCP.exe was not found.', 'SSO FTP', 'OK', 'Error')
+    exit 1
+}
+Add-Type -Path $dll
 
 $credentialForm = New-Object System.Windows.Forms.Form
 $credentialForm.Text = 'SSO FTP connection'
@@ -119,6 +138,7 @@ $statusForm.Show()
 [System.Windows.Forms.Application]::DoEvents()
 
 $session = New-Object WinSCP.Session
+$session.ExecutablePath = $winscpExe
 $downloaded = 0
 $maxFiles = 5000
 $skipDirectories = @('.git', 'vendor', 'node_modules', 'storage', 'data', 'uploads', 'logs', 'backup', 'cache', 'sessions', 'private', 'secrets')
