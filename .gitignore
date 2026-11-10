@@ -20,3 +20,19 @@ XreaOperationsDesktop/rust/target/
 
 # Local deployment history (kept on disk, not in Git)
 deploy-backups/
+
+# Runtime databases and SQLite sidecar files must never be committed
+*.sqlite
+*.sqlite3
+*.db
+*-wal
+*-shm
+business-ops/data/*
+
+# Local environment and runtime secret/config files
+.env
+.env.*
+!.env.example
+**/runtime-secrets.json
+**/database-config.json
+**/signing.key
