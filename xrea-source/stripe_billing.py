@@ -224,15 +224,16 @@ def _return_base():
 
 
 def _portal_base(request_context):
+    """Return a trusted, configured portal URL; never derive it from Host.
+
+    Host and forwarded-host headers are attacker-controlled unless a trusted
+    proxy validates them. Stripe redirect URLs must therefore use an explicit
+    HTTPS base URL or the canonical production origin.
+    """
     explicit = _return_base()
     if explicit:
         return explicit
-    host = str(request_context.get('header:host') or request_context.get('server_name') or '2415.jp').strip()
-    if re.fullmatch(r'[A-Za-z0-9.:-]{1,255}', host) is None:
-        host = '2415.jp'
-    secure = str(request_context.get('https', '')).lower() in ('on', '1', 'true', 'https')
-    scheme = 'https' if secure or host not in ('localhost', '127.0.0.1', '::1') else 'http'
-    return '%s://%s%s' % (scheme, host, site_url('/license/python-migration'))
+    return 'https://2415.jp' + site_url('/license/python-migration')
 
 
 def _payment_row(row):
