@@ -17,6 +17,7 @@ import time
 from email.parser import BytesParser
 from email.policy import default as default_email_policy
 from datetime import datetime, timezone
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import quote
 from path_utils import is_relative_to
@@ -53,7 +54,14 @@ def _private_dir():
     if root == docroot or is_relative_to(root, docroot):
         raise RuntimeError('private_runtime_directory_inside_webroot')
     path = root / 'runtime'
+    # A pre-existing symlink could redirect credentials and recovery material
+    # outside the configured private directory.
+    if path.is_symlink():
+        raise RuntimeError('unsafe_private_runtime_directory')
     path.mkdir(mode=448, parents=True, exist_ok=True)
+    resolved = path.resolve(strict=True)
+    if resolved != path or not is_relative_to(resolved, root):
+        raise RuntimeError('unsafe_private_runtime_directory')
     try:
         path.chmod(448)
     except OSError:
@@ -70,6 +78,26 @@ def _entry_not_expired(row, now):
 
 def _store_path():
     return _private_dir() / 'passkey-store.json'
+
+
+@contextmanager
+def _passkey_store_lock():
+    path = _store_path()
+    lock_path = path.with_name('passkey-store.lock')
+    if lock_path.is_symlink():
+        raise RuntimeError('unsafe_passkey_store_lock')
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0)
+    fd = os.open(str(lock_path), flags, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, 'a+b', closefd=False) as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                yield path
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 def _read_store(path):
     try:
@@ -356,17 +384,10 @@ def passkey_api(request_context):
         body_action = data.get('action', '')
         action = str('' if body_action is None else body_action)
     try:
-        path = _store_path()
-        lock_path = path.with_name('passkey-store.lock')
-        with open(lock_path, 'a+b') as lock:
-            os.chmod(lock_path, 384)
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        with _passkey_store_lock() as path:
             store = _read_store(path)
-            try:
-                result = _dispatch(request_context, method, query, data, action, store, path)
-                return _json(result[0], result[1])
-            finally:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+            result = _dispatch(request_context, method, query, data, action, store, path)
+            return _json(result[0], result[1])
     except Exception as error:
         request_id = secrets.token_hex(8)
         _audit(request_context, 'passkey_operation_failed', {'request_id': request_id, 'action': action})

@@ -50,54 +50,71 @@ def _cipher():
 def _store():
     path = _path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.with_suffix('.lock').open('a+b') as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        try:
-            if path.exists():
-                # Bound the read itself. Checking the size after read_bytes()
-                # still lets a damaged or unexpectedly large file exhaust memory.
-                with path.open('rb') as source:
-                    raw = source.read(2_000_001)
-            else:
-                raw = b'{}'
-            if len(raw) > 2_000_000:
-                raise RuntimeError('grant_store_too_large')
-            original = json.loads(raw)
-            if not isinstance(original, dict):
-                raise RuntimeError('invalid_grant_store')
-            now = int(time.time())
-            # Ignore malformed individual entries so one damaged row does not
-            # take the entire SSO login service offline.
-            rows = {}
-            for key, row in original.items():
-                if not isinstance(key, str) or not isinstance(row, dict):
-                    continue
-                try:
-                    expires = int(row.get('expires', 0))
-                except (TypeError, ValueError, OverflowError):
-                    continue
-                if expires > now:
-                    # Keep the comparison snapshot independent: mutating a row
-                    # in-place must be detected and written back to disk.
-                    rows[key] = copy.deepcopy(row)
-            yield rows
-            # Poll requests that only observe a pending login do not mutate the
-            # store; avoid rewriting and fsyncing the whole file on every poll.
-            if rows == original:
-                return
-            temporary = path.with_name(path.name + '.' + secrets.token_hex(8))
+    lock_path = path.with_suffix('.lock')
+    # The runtime directory is private, but still fail closed if a local
+    # misconfiguration or filesystem change replaces either path with a link.
+    if path.is_symlink() or lock_path.is_symlink():
+        raise RuntimeError('unsafe_app_sso_store_path')
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0)
+    fd = os.open(str(lock_path), flags, 0o600)
+    os.fchmod(fd, 0o600)
+    try:
+        with os.fdopen(fd, 'a+b', closefd=False) as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             try:
-                with temporary.open('x', encoding='utf-8') as output:
-                    os.chmod(temporary, 0o600)
-                    json.dump(rows, output, separators=(',', ':'))
-                    output.flush()
-                    os.fsync(output.fileno())
-                os.replace(temporary, path)
+                if path.is_symlink():
+                    raise RuntimeError('unsafe_app_sso_store_path')
+                if path.exists():
+                    read_fd = os.open(str(path), os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+                    with os.fdopen(read_fd, 'rb') as source:
+                        raw = source.read(2_000_001)
+                else:
+                    raw = b'{}'
+                if len(raw) > 2_000_000:
+                    raise RuntimeError('grant_store_too_large')
+                original = json.loads(raw)
+                if not isinstance(original, dict):
+                    raise RuntimeError('invalid_grant_store')
+                now = int(time.time())
+                # Ignore malformed individual entries so one damaged row does not
+                # take the entire SSO login service offline.
+                rows = {}
+                for key, row in original.items():
+                    if not isinstance(key, str) or not isinstance(row, dict):
+                        continue
+                    try:
+                        expires = int(row.get('expires', 0))
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                    if expires > now:
+                        rows[key] = copy.deepcopy(row)
+                yield rows
+                # Poll requests that only observe a pending login do not mutate the
+                # store; avoid rewriting and fsyncing the whole file on every poll.
+                if rows == original:
+                    return
+                temporary = path.with_name(path.name + '.' + secrets.token_hex(8))
+                try:
+                    with temporary.open('x', encoding='utf-8') as output:
+                        os.chmod(temporary, 0o600)
+                        json.dump(rows, output, separators=(',', ':'))
+                        output.flush()
+                        os.fsync(output.fileno())
+                    os.replace(temporary, path)
+                    try:
+                        directory_fd = os.open(str(path.parent), os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+                        try:
+                            os.fsync(directory_fd)
+                        finally:
+                            os.close(directory_fd)
+                    except OSError:
+                        pass
+                finally:
+                    temporary.unlink(missing_ok=True)
             finally:
-                temporary.unlink(missing_ok=True)
-        finally:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
-
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 def _host(context):
     host = str(context.get('header:host', '')).lower()

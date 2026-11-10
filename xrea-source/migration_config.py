@@ -40,7 +40,16 @@ def runtime_secrets():
             public_html = Path(*document_root.parts[:index + 1])
         if is_relative_to(directory, document_root) or is_relative_to(directory, public_html):
             return {}
-        path = (directory / "runtime" / "runtime-secrets.json").resolve(strict=True)
+        runtime_dir = directory / "runtime"
+        if runtime_dir.is_symlink():
+            return {}
+        runtime_real = runtime_dir.resolve(strict=True)
+        if runtime_real != runtime_dir or not is_relative_to(runtime_real, directory):
+            return {}
+        candidate = runtime_dir / "runtime-secrets.json"
+        if candidate.is_symlink():
+            return {}
+        path = candidate.resolve(strict=True)
         if not is_relative_to(path, directory) or not path.is_file():
             return {}
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -78,7 +87,12 @@ def update_runtime_secrets(values):
     if root == docroot or is_relative_to(root, docroot) or is_relative_to(root, public_html):
         raise RuntimeError("private_runtime_directory_inside_webroot")
     runtime = root / "runtime"
+    if runtime.is_symlink():
+        raise RuntimeError("unsafe_runtime_secret_path")
     runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
+    runtime_real = runtime.resolve(strict=True)
+    if runtime_real != runtime or not is_relative_to(runtime_real, root):
+        raise RuntimeError("unsafe_runtime_secret_path")
     runtime.chmod(0o700)
     path = runtime / "runtime-secrets.json"
     lock_path = runtime / "runtime-secrets.lock"
