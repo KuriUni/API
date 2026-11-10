@@ -164,13 +164,18 @@ class StripeApiTests(unittest.TestCase):
                 stripe_billing._api('GET', 'checkout/sessions/cs_1', config={'secret_key': 'sk_test_abc'})
         self.assertIn('stripe_unreachable', str(caught.exception))
 
-    def test_redirect_base_url_comes_from_request_host(self):
-        with mock.patch.dict(os.environ, {'PYTHON_MIGRATION_STRIPE_RETURN_BASE_URL': ''}):
-            base = stripe_billing._portal_base({'header:host': '2415.jp', 'https': 'on'})
-        self.assertTrue(base.startswith('https://2415.jp/'))
-        self.assertFalse(base.endswith('/'))
-        explicit = stripe_billing._portal_base({'header:host': 'evil.example'})
-        self.assertTrue(explicit.startswith('https://evil.example/'))
+    def test_redirect_base_url_ignores_untrusted_request_host(self):
+        with mock.patch.dict(os.environ, {'PYTHON_MIGRATION_STRIPE_RETURN_BASE_URL': ''}), \
+                mock.patch.object(stripe_billing, 'secret_value', _secret({})):
+            expected = 'https://2415.jp' + stripe_billing.site_url('/license/python-migration')
+            for context in (
+                {'header:host': '2415.jp', 'https': 'on'},
+                {'header:host': 'evil.example', 'https': 'on'},
+                {'header:host': '2415.jp.evil.example', 'https': 'on'},
+                {'header:host': 'evil.example:443', 'https': 'on'},
+                {'server_name': 'evil.example'},
+            ):
+                self.assertEqual(stripe_billing._portal_base(context), expected)
 
     def test_runtime_secret_return_base_url_is_used(self):
         with mock.patch.object(stripe_billing, 'secret_value',
