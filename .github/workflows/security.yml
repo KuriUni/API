@@ -62,7 +62,7 @@ jobs:
           findings="$(jq 'length' gitleaks-report.json)"
           if [ "$findings" -gt 0 ]; then
             echo "Detected $findings historical secret candidates (values intentionally omitted):"
-            jq -r '.[] | [.RuleID, .File, (.StartLine|tostring), .Commit, .Description] | @tsv' gitleaks-report.json
+            jq -r '.[] | [.Fingerprint, .RuleID, .File, (.StartLine|tostring), .Commit, .Description] | @tsv' gitleaks-report.json
             rm -f gitleaks-report.json
             exit 1
           fi
