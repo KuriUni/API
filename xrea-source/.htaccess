@@ -45,7 +45,7 @@ ErrorDocument 504 /license/error.php
     RewriteCond %{HTTP_HOST} ^(?:2415\.jp|backup\.2415\.jp|main\.2415\.jp)(?::[0-9]+)?$ [NC]
     RewriteRule ^(?:_fastapi(?:/|$)|\.well-known/openid-configuration$) /license/index.cgi [QSA,L]
     RewriteCond %{HTTP_HOST} ^(?:2415\.jp|backup\.2415\.jp|main\.2415\.jp)(?::[0-9]+)?$ [NC]
-    RewriteRule ^(?:.*\.(?:py|pyc|pyo|json|sql|pem|key|xml|log|bak|old|md|zip)|\..*)$ - [R=404,L,NC]
+    RewriteRule ^(?:.*\.(?:py|pyc|pyo|json|sql|sqlite3?|db)(?:-(?:wal|shm))?|pem|key|xml|log|bak|old|md|zip|\..*)$ - [R=404,L,NC]
     # Legacy .php-shaped URLs are compatibility routes handled by Python CGI, never PHP.
     RewriteCond %{HTTP_HOST} ^(?:2415\.jp|backup\.2415\.jp|main\.2415\.jp)(?::[0-9]+)?$ [NC]
     RewriteRule \.(?:php[0-9]?|phtml|phar)(?:/|$) /license/index.cgi [QSA,L,NC]
@@ -127,7 +127,7 @@ ErrorDocument 504 /license/error.php
     RewriteRule ^admin_api(?:/|$) - [R=404,L,NC]
     RewriteRule ^api/v2/(?!activate\.php$|phone_activate\.php$|boot_activate\.php$|reissue\.php$) - [R=404,L,NC]
     RewriteRule ^\.well-known/openid-configuration$ api/baas/v1/common-id-sso.php?action=discovery [L,QSA]
-    RewriteRule ^(?:.*\.(?:py|pyc|pyo|spec|docx|sql|pem|xml|json|log|bak|old|orig|save|md)|.*~)$ - [R=404,L,NC]
+    RewriteRule ^(?:.*\.(?:py|pyc|pyo|spec|docx|sql|sqlite3?|db)(?:-(?:wal|shm))?|pem|xml|json|log|bak|old|orig|save|md|.*~)$ - [R=404,L,NC]
 </IfModule>
 
 <IfModule mod_headers.c>
@@ -143,7 +143,7 @@ ErrorDocument 504 /license/error.php
     Require all denied
 </FilesMatch>
 
-<FilesMatch "(?i)^(?:\..*|.*\.(?:zip|sql|pem|xml|json|log|bak|old|orig|save))$">
+<FilesMatch "(?i)^(?:\..*|.*\.(?:zip|sql|sqlite3?|db)(?:-(?:wal|shm))?|pem|xml|json|log|bak|old|orig|save)$">
     Require all denied
 </FilesMatch>
 
