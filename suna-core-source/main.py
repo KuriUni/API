@@ -395,9 +395,7 @@ def _response(status, payload, headers=(), request_id=None):
     body = b"" if status == 204 else json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     lines = ["Status: %d %s\r\n" % (status, phrases.get(status, "Error")),
              "Content-Type: application/json; charset=utf-8\r\n", "Cache-Control: no-store\r\n",
-             "X-Content-Type-Options: nosniff\r\n", "Access-Control-Allow-Origin: *\r\n",
-             "Access-Control-Allow-Headers: X-Sunabar-API-Key, Authorization, Content-Type\r\n",
-             "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"]
+             "X-Content-Type-Options: nosniff\r\n"]
     if request_id:
         lines.append("X-Request-ID: %s\r\n" % request_id)
     if status == 429 and not any(key.lower() == "retry-after" for key, _ in headers):
