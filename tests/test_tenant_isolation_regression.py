@@ -106,7 +106,7 @@ class V6CrossTenantEndpointTests(unittest.TestCase):
 
     def test_cancel_does_not_mutate_another_tenants_job(self):
         with patch.object(v6, "_job", return_value=None), \
-             patch("v3_handlers._assert_write_fence"):
+             patch.object(v6, "_assert_write_fence"):
             response = v6.issuance_cancel(_cancel_context(TENANT_B_JOB), "v6")
         self.assertEqual(response.status_code, 404)
         self.assertEqual(json.loads(response.body)["error"], "v6_job_not_found")
