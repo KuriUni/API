@@ -299,7 +299,7 @@ def _reissue_key(connection, client, data, request_context):
                 context = f'TUTI-PORTAL-KEY-REISSUE-V1|{tenant_id}|{passkey_id}|{request_hash}'
                 key = ('baas_sandbox_' if env == 'sandbox' else 'baas_prod_') + _b64e(__import__('hmac').new(secret, context.encode(), hashlib.sha256).digest())
                 key_hash = __import__('hmac').new(pepper, key.encode(), hashlib.sha256).hexdigest()
-                cursor.execute('INSERT INTO tenant_api_clients(tenant_id,name,key_prefix,key_hash,scopes_json,rate_limit_per_minute,expires_at) VALUES(%s,%s,%s,%s,%s,%s,%s)', (tenant_id, str(old['name'])[:120], key[:12], key_hash, json.dumps(old_scopes), old['rate_limit_per_minute'], old.get('expires_at')))
+                cursor.execute('INSERT INTO tenant_api_clients(tenant_id,name,key_prefix,key_hash,scopes_json,rate_limit_per_minute,expires_at) VALUES(%s,%s,%s,%s,%s,%s,%s)', (tenant_id, str(old['name'])[:120], key[:12], key_hash, json.dumps(old_scopes), min(600, int(old['rate_limit_per_minute'])), old.get('expires_at')))
                 new_id = cursor.lastrowid
                 cursor.execute("UPDATE tenant_api_clients SET status='retiring',replacement_client_id=%s,grace_expires_at=%s WHERE id=%s AND tenant_id=%s", (new_id, grace, source_id, tenant_id))
                 cursor.execute('INSERT INTO tenant_portal_key_reissues(tenant_id,account_tenant_id,passkey_id,request_hash,source_client_id,new_client_id,amount_units,billing_period,grace_expires_at,response_expires_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)', (tenant_id, account_id, passkey_id, request_hash, source_id, new_id, REISSUE_FEE_UNITS, bill_period, grace, retry_until))

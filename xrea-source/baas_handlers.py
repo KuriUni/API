@@ -21,6 +21,8 @@ from core import key_pepper, parse_utc_datetime
 from http_utils import RequestError, json_response
 from migration_config import secret_value
 from v3_handlers import _assert_write_fence
+_MAX_CLIENT_REQUESTS_PER_MINUTE = 600
+_MAX_TENANT_REQUESTS_PER_MINUTE = 3000
 
 class BaaSError(Exception):
 
@@ -282,7 +284,7 @@ def _authorize_sso_session(connection, request_context, scope, operation, ip_has
     return (client, response_headers)
 
 @legacy_compatible(callback_index=None, request_index=1)
-def _authorize_key(connection, request_context, scope, operation, request_id):
+def _authorize_key(connection, request_context, scope, operation, request_id, monthly_charge_units=None):
     ip_hash = _client_ip_hash(request_context)
     with connection.cursor() as cursor:
         cursor.execute('SELECT COUNT(*) AS n FROM tenant_api_attempts WHERE ip_hash=%s AND attempted_at>=UTC_TIMESTAMP()-INTERVAL 1 MINUTE', (ip_hash,))
@@ -327,19 +329,21 @@ def _authorize_key(connection, request_context, scope, operation, request_id):
     issuance_session = str(request_context.get('header:x-baas-issuance-session', '')).strip().lower()
     if re.fullmatch('[0-9a-f]{32}', issuance_session) is None:
         issuance_session = ''
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT COUNT(*) AS n FROM (SELECT CASE WHEN issuance_session_id IS NULL OR issuance_session_id='' THEN CONCAT('r:',id) ELSE CONCAT('s:',issuance_session_id) END bucket FROM tenant_api_attempts WHERE client_id=%s AND attempted_at>=UTC_TIMESTAMP()-INTERVAL 1 MINUTE GROUP BY bucket) rate_buckets", (int(client['id']),))
-            rate_count = int(_column_value(cursor.fetchone()) or 0)
-    except Exception:
-        connection.rollback()
-        with connection.cursor() as cursor:
-            cursor.execute('SELECT COUNT(*) AS n FROM tenant_api_attempts WHERE client_id=%s AND attempted_at>=UTC_TIMESTAMP()-INTERVAL 1 MINUTE', (int(client['id']),))
-            rate_count = int(_column_value(cursor.fetchone()) or 0)
-    limit = int(client.get('rate_limit_per_minute') or 0)
+    # Count every HTTP request. Grouping by the caller-supplied issuance session
+    # let a key reuse one session ID to evade the configured request limit.
+    with connection.cursor() as cursor:
+        cursor.execute('SELECT COUNT(*) AS n FROM tenant_api_attempts WHERE client_id=%s AND attempted_at>=UTC_TIMESTAMP()-INTERVAL 1 MINUTE', (int(client['id']),))
+        rate_count = int(_column_value(cursor.fetchone()) or 0)
+        cursor.execute('SELECT COUNT(*) AS n FROM tenant_api_attempts WHERE tenant_id=%s AND attempted_at>=UTC_TIMESTAMP()-INTERVAL 1 MINUTE', (int(client['tenant_id']),))
+        tenant_rate_count = int(_column_value(cursor.fetchone()) or 0)
+    configured_limit = int(client.get('rate_limit_per_minute') or 0)
+    limit = min(_MAX_CLIENT_REQUESTS_PER_MINUTE, max(1, configured_limit))
+    if tenant_rate_count >= _MAX_TENANT_REQUESTS_PER_MINUTE:
+        # Do not persist each rejected request: the already-recorded requests
+        # keep the window closed and avoid turning a flood into log-table growth.
+        raise BaaSError(429, 'tenant_rate_limited', {'retry_after_seconds': 60})
     if rate_count >= limit:
-        _attempt(connection, client, prefix, operation, 'rate_limited', 429, ip_hash, issuance_session or None)
-        raise BaaSError(429, 'rate_limited')
+        raise BaaSError(429, 'rate_limited', {'retry_after_seconds': 60, 'rate_limit_per_minute': limit})
     try:
         scopes = json.loads(str(client.get('scopes_json') or '[]'))
     except (TypeError, json.JSONDecodeError):
@@ -371,6 +375,9 @@ def _authorize_key(connection, request_context, scope, operation, request_id):
         if route not in allowed_routes:
             _attempt(connection, client, prefix, operation, 'sample_sdk_route_not_allowed', 403, ip_hash, issuance_session or None)
             raise BaaSError(403, 'sample_sdk_route_not_allowed', {'key_class': 'sample_sdk', 'attempted_route': route})
+    from api_usage_limits import check_monthly_limit, request_charge_units
+    estimate = request_charge_units(operation, environment) if monthly_charge_units is None else int(monthly_charge_units)
+    check_monthly_limit(connection, int(client['tenant_id']), environment, estimate, request_id)
     _attempt(connection, client, prefix, operation, 'authorized', 200, ip_hash, issuance_session or None)
     with connection.cursor() as cursor:
         cursor.execute('UPDATE tenant_api_clients SET last_used_at=UTC_TIMESTAMP() WHERE id=%s', (int(client['id']),))
@@ -384,6 +391,11 @@ def _usage(connection, client, operation, status, request_id, ip_hash):
     try:
         with connection.cursor() as cursor:
             cursor.execute('INSERT INTO tenant_api_usage(tenant_id,client_id,operation,status_code,request_id,ip_hash) VALUES(%s,%s,%s,%s,%s,%s)', (int(client['tenant_id']), int(client['id']), operation, status, request_id, ip_hash))
+            try:
+                cursor.execute('DELETE FROM tenant_api_usage_reservations WHERE request_id=%s AND tenant_id=%s', (request_id, int(client['tenant_id'])))
+            except Exception as exc:
+                if not (getattr(exc, 'args', ()) and exc.args[0] == 1146):
+                    raise
         connection.commit()
     except Exception:
         connection.rollback()
@@ -1705,7 +1717,7 @@ def _sandbox_key_issue(connection, tenant_id, name, scopes, rate, expires):
         except ValueError:
             raise BaaSError(400, 'invalid_expires_at')
     with connection.cursor() as cursor:
-        cursor.execute('INSERT INTO tenant_api_clients(tenant_id,name,key_prefix,key_hash,scopes_json,rate_limit_per_minute,expires_at) VALUES(%s,%s,%s,%s,%s,%s,%s)', (tenant_id, name[:120], prefix, key_hash, json.dumps(scopes, separators=(',', ':')), max(10, min(10000, int(rate))), expires_at))
+        cursor.execute('INSERT INTO tenant_api_clients(tenant_id,name,key_prefix,key_hash,scopes_json,rate_limit_per_minute,expires_at) VALUES(%s,%s,%s,%s,%s,%s,%s)', (tenant_id, name[:120], prefix, key_hash, json.dumps(scopes, separators=(',', ':')), max(10, min(600, int(rate))), expires_at))
         client_id = int(cursor.lastrowid)
     return {'client_id': client_id, 'tenant_id': tenant_id, 'api_key': token, 'key_prefix': prefix, 'scopes': scopes}
 

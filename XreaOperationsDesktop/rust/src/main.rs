@@ -131,6 +131,7 @@ struct OperationsApp {
     tenant_plan: String,
     tenant_edit_name: String,
     tenant_edit_plan: String,
+    tenant_edit_monthly_api_limit: String,
     license_tenant: String,
     license_product: String,
     license_label: String,
@@ -189,6 +190,7 @@ impl OperationsApp {
             tenant_plan: "standard".into(),
             tenant_edit_name: String::new(),
             tenant_edit_plan: "standard".into(),
+            tenant_edit_monthly_api_limit: "0".into(),
             license_tenant: String::new(),
             license_product: String::new(),
             license_label: String::new(),
@@ -478,6 +480,10 @@ impl OperationsApp {
         self.selected_tenant = string_at(value, "id");
         self.tenant_edit_name = string_at(value, "name");
         self.tenant_edit_plan = string_at(value, "plan_code");
+        self.tenant_edit_monthly_api_limit = string_at(value, "monthly_api_limit_credits");
+        if self.tenant_edit_monthly_api_limit.is_empty() {
+            self.tenant_edit_monthly_api_limit = "0".into();
+        }
         self.key_tenant = self.selected_tenant.clone();
         if self.invite_tenant.is_empty() && string_at(value, "status") == "active" {
             self.invite_tenant = self.selected_tenant.clone();
@@ -821,6 +827,8 @@ impl OperationsApp {
                         self.selected_tenant = id.clone();
                         self.tenant_edit_name = name;
                         self.tenant_edit_plan = plan.clone();
+                        self.tenant_edit_monthly_api_limit = string_at(t, "monthly_api_limit_credits");
+                        if self.tenant_edit_monthly_api_limit.is_empty() { self.tenant_edit_monthly_api_limit = "0".into(); }
                         self.key_tenant = id.clone();
                         if status == "active" {
                             self.invite_tenant = id;
@@ -844,7 +852,8 @@ impl OperationsApp {
                     string_at(&t, "environment")
                 ));
                 ui.horizontal_wrapped(|ui| { ui.label("名称"); ui.text_edit_singleline(&mut self.tenant_edit_name); egui::ComboBox::from_id_salt("tenant-plan-edit").selected_text(&self.tenant_edit_plan).show_ui(ui,|ui| { for p in ["standard","trial","business","enterprise"] {ui.selectable_value(&mut self.tenant_edit_plan,p.into(),p);} });
-                    if ui.button("名称・プランを保存").clicked() { if self.selected_tenant.parse::<i64>().unwrap_or(0)>1 { let id=self.selected_tenant.parse::<i64>().unwrap_or_default(); self.tenant("update_tenant","POST",TENANT_API,json!({"action":"update_tenant","tenant_id":id,"name":self.tenant_edit_name.trim(),"plan_code":self.tenant_edit_plan}),Some("契約先情報を更新しますか？")); } }
+                    ui.label("月API上限（Cr、0=無制限）"); ui.add(TextEdit::singleline(&mut self.tenant_edit_monthly_api_limit).desired_width(130.0));
+                    if ui.button("契約情報・API上限を保存").clicked() { if self.selected_tenant.parse::<i64>().unwrap_or(0)>1 { let id=self.selected_tenant.parse::<i64>().unwrap_or_default(); let limit=self.tenant_edit_monthly_api_limit.trim(); let parts:Vec<&str>=limit.split('.').collect(); let valid=parts.len()<=2 && parts.first().map(|x|!x.is_empty() && x.chars().all(|c|c.is_ascii_digit())).unwrap_or(false) && parts.get(1).map(|x|x.len()<=3 && x.chars().all(|c|c.is_ascii_digit())).unwrap_or(true) && limit.parse::<f64>().map(|x|x.is_finite() && (0.0..=1_000_000_000.0).contains(&x)).unwrap_or(false); if !valid { self.set_status("月API上限は0〜1,000,000,000 Cr、小数第3位までで入力してください。0は無制限です。",true); } else { self.tenant("update_tenant","POST",TENANT_API,json!({"action":"update_tenant","tenant_id":id,"name":self.tenant_edit_name.trim(),"plan_code":self.tenant_edit_plan,"monthly_api_limit_credits":limit}),Some("契約先情報とAPI月間上限を更新しますか？")); } } }
                     let active=string_at(&t,"status")=="active"; if ui.button(if active {"契約を一時停止"}else{"契約を再開"}).clicked() { let id=self.selected_tenant.parse::<i64>().unwrap_or_default(); let action=if active{"suspend_tenant"}else{"resume_tenant"}; self.tenant(action,"POST",TENANT_API,json!({"action":action,"tenant_id":id}),Some(if active{"契約を停止し、APIキーも一時停止しますか？"}else{"契約を再開しますか？"})); }
                     let has_sandbox=self.tenants.iter().any(|x|string_at(x,"parent_tenant_id")==self.selected_tenant); if string_at(&t,"environment")=="production" && active && !has_sandbox && ui.button("検証sandboxを作成").clicked() { let id=self.selected_tenant.parse::<i64>().unwrap_or_default(); self.tenant("ensure_sandbox","POST",TENANT_API,json!({"action":"ensure_sandbox","tenant_id":id}),Some("この契約先に検証sandboxを作成しますか？")); }
                 });

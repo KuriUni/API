@@ -1,7 +1,7 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param([ValidateSet('Both','Primary','Backup')][string] $Target = 'Both',
-      [ValidateSet('V8','License','LicenseV4')][string] $Profile = 'V8')
+      [ValidateSet('V8','License','LicenseV4','ApiUsage')][string] $Profile = 'V8')
 $ErrorActionPreference = 'Stop'
 $base = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $source = Join-Path $base 'xrea-source'
@@ -11,7 +11,7 @@ Add-Type -Path (Join-Path $install 'netstandard2.0\WinSCPnet.dll')
 Add-Type -AssemblyName System.Security.Cryptography.ProtectedData
 $credentials = Import-Clixml -LiteralPath (Join-Path $env:LOCALAPPDATA 'XreaDeploy\credentials.xml')
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$series = if ($Profile -eq 'LicenseV4') { 'license-v4-auth' } elseif ($Profile -eq 'License') { 'license-auth' } else { 'v8-cutover' }
+$series = if ($Profile -eq 'ApiUsage') { 'api-usage-limits' } elseif ($Profile -eq 'LicenseV4') { 'license-v4-auth' } elseif ($Profile -eq 'License') { 'license-auth' } else { 'v8-cutover' }
 $backupRoot = Join-Path $base "deploy-backups\$series-$stamp"
 $privateRoot = Join-Path $env:LOCALAPPDATA "XreaDeploy\private-backups\$series-$stamp"
 # Dependencies precede dispatchers and browser assets. Only these known paths are queried.
@@ -26,6 +26,11 @@ if ($Profile -eq 'LicenseV4') {
     $files = @('schema39_storage.py','v4_crypto.py','license_v4_storage.py','v3_handlers.py','native_v4.py','mnsl_app_sso.py','asgi.py',
         'native_routes.py','routes.json','ha_migrate.py','ha_export.py','ha_snapshot.py',
         'openapi-catalog.json','api-catalog/openapi.json','api/v4/activate.html')
+}
+if ($Profile -eq 'ApiUsage') {
+    $files = @('api_usage_limits.py','ha_migrate.py','ha_export.py','ha_snapshot.py','ha_handlers.py',
+        'baas_handlers.py','baas_issuance_handlers.py','baas_v7_handlers.py','baas_v8_handlers.py',
+        'ha_tenant_admin.py','tenant-portal/app.js','tenant-portal/index.html')
 }
 foreach ($file in $files) {
     if (-not (Test-Path -LiteralPath (Join-Path $source $file))) { throw "Missing source: $file" }
@@ -140,6 +145,13 @@ foreach ($destination in $targets) {
             }
             Write-Host "$($destination.Name): additive V4 schema installation completed."
         }
+        if ($Profile -eq 'ApiUsage') {
+            Write-Host "$($destination.Name): installing additive API usage limit tables."
+            $migration = Invoke-WebRequest -Uri "https://$domain/license/ha/migrate.php" -Method Post -Headers $headers -ContentType 'application/json' -Body '{"scope":"api_usage"}' -TimeoutSec 90 -SkipHttpErrorCheck
+            $result = $migration.Content | ConvertFrom-Json
+            if ([int]$migration.StatusCode -ne 200 -or -not $result.ok -or -not $result.monthly_api_limits) { throw 'API usage limit schema installation failed.' }
+            Write-Host "$($destination.Name): additive API usage limit schema installation completed."
+        }
 
         Write-Host "$($destination.Name): capturing post-migration database snapshot."
         $after = Save-PrivateSnapshot $exportUrl $headers (Join-Path $privateRoot ($destination.Name + '-after.dpapi'))
@@ -165,6 +177,19 @@ foreach ($destination in $targets) {
             }
             Write-Host "$($destination.Name): $($uploaded.Count) changed files hash-verified; license API contracts verified."
         } else {
+        if ($Profile -eq 'ApiUsage') {
+            foreach ($table in @('tenant_api_usage_limits','tenant_api_usage_reservations')) {
+                if ($table -notin $after.Tables) { throw "API usage limit table missing from HA snapshot: $table" }
+            }
+            $protected = Invoke-WebRequest -Uri "https://$domain/license/api/baas/v1/status.php" -TimeoutSec 30 -SkipHttpErrorCheck
+            if ([int]$protected.StatusCode -ne 401) { throw "BaaS endpoint protection failed: HTTP $($protected.StatusCode)" }
+            $portal = Invoke-WebRequest -Uri "https://$domain/license/tenant-portal/" -TimeoutSec 30
+            if (-not ([string]$portal.Content).Contains('20261110-api-limits-1')) { throw 'Tenant portal asset version not updated.' }
+            $asset = Invoke-WebRequest -Uri "https://$domain/license/tenant-portal/app.js?v=20261110-api-limits-1" -TimeoutSec 30
+            if (-not ([string]$asset.Content).Contains('api_monthly_limit_reached')) { throw 'Monthly API limit response message is not available.' }
+            Write-Host "$($destination.Name): $($uploaded.Count) changed files hash-verified; API usage limit schema and portal are ready."
+            continue
+        }
         foreach ($table in @('product_key_v8_jobs','product_key_v8_items')) {
             if ($table -notin $after.Tables) { throw "V8 table missing from HA snapshot: $table" }
         }

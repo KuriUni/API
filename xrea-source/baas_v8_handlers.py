@@ -616,6 +616,8 @@ def issuance(request_context):
                                     "request_id": rid, "job": _job_public(prior),
                                     "status_endpoint": "/api/baas/v8/issuance.php?job_id=" + str(prior["job_id"]),
                                     "results_endpoint": "/api/baas/v8/issuance-results.php?job_id=" + str(prior["job_id"])}, headers)
+            from api_usage_limits import check_monthly_limit, submit_charge_units
+            check_monthly_limit(connection, tenant_id, environment, submit_charge_units(8, count, environment), rid)
             cursor.execute("SELECT COUNT(*) AS n FROM licenses WHERE tenant_id=%s AND deleted_at IS NULL",
                            (tenant_id,))
             current = int((cursor.fetchone() or {}).get("n", 0))

@@ -13,4 +13,4 @@ try {
     Write-Host "Build complete: $(Join-Path $rustDir 'target\x86_64-pc-windows-msvc\release\TutiOperations.exe')"
 } finally {
     Pop-Location
-}\n
+}

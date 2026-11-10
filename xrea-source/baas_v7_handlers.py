@@ -120,6 +120,8 @@ def issuance(request_context):
             items = [{'item': int(row['item_no']), 'license_id': int(row['license_id']), 'product_key': _open(str(row['product_key_enc']), token, str(old['job_id']), int(row['item_no'])), 'key_fingerprint': str(row['key_fingerprint'])} for row in rows]
             _usage(connection, client, 'licenses.issue.v7.replay', 200, rid, ip_hash)
             return _reply(200, {'ok': True, 'api_version': API_VERSION, 'idempotent_replay': True, 'request_id': rid, 'job': _public_job(old), 'items': items}, headers)
+        from api_usage_limits import check_monthly_limit, submit_charge_units
+        check_monthly_limit(connection, tenant, environment, submit_charge_units(7, count, environment), rid)
         with connection.cursor() as cursor:
             cursor.execute("SELECT id FROM products WHERE id=%s AND tenant_id=%s AND status='active' LIMIT 1", (product, tenant))
             if not cursor.fetchone():

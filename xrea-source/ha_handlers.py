@@ -591,6 +591,8 @@ def ha_import(request_context):
     connection = None
     try:
         connection = connect()
+        from api_usage_limits import ensure_schema as ensure_api_usage_limits_schema
+        ensure_api_usage_limits_schema(connection)
         from phone_handlers import _ensure_phone_schema
         _ensure_phone_schema(connection)
         with connection.cursor() as cursor:
@@ -740,6 +742,8 @@ def ha_sync(request_context):
         if not isinstance(snapshot.get('passkey_recovery_codes', []), (dict, list)):
             return _response('503 Service Unavailable', b'{"ok":false,"error":"invalid_passkey_recovery_codes"}')
         connection = connect()
+        from api_usage_limits import ensure_schema as ensure_api_usage_limits_schema
+        ensure_api_usage_limits_schema(connection)
         with connection.cursor() as cursor:
             cursor.execute('CREATE TABLE IF NOT EXISTS idempotency_keys (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT, operation VARCHAR(40) NOT NULL, request_key VARCHAR(100) NOT NULL, response_json TEXT NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(id), UNIQUE KEY uq_idempotency_operation_key(operation,request_key)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci')
         local_schemas, _ignored = validate_local_schema(connection, snapshot)

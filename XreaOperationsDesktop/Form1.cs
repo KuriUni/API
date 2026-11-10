@@ -21,6 +21,7 @@ public sealed partial class Form1 : Form
     private readonly TextBox tenantSearch = new() { PlaceholderText = "名前・slug・IDで検索", Width = 230 };
     private readonly Label tenantOpsSummary = new() { Text = "テナントを選択すると運用操作が表示されます。", AutoSize = true, MaximumSize = new Size(1000, 0) };
     private readonly TextBox tenantEditName = new() { PlaceholderText = "契約者名", Width = 230, Enabled = false };
+    private readonly TextBox tenantEditMonthlyApiLimit = new() { PlaceholderText = "月API上限（Cr、0=無制限）", Width = 210, Enabled = false };
     private readonly ComboBox tenantEditPlan = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 150, Enabled = false };
     private readonly Button tenantSaveButton = new() { Text = "名称・プランを保存", AutoSize = true, Enabled = false };
     private readonly Button tenantStatusButton = new() { Text = "運用停止／再開", AutoSize = true, Enabled = false };
@@ -153,10 +154,11 @@ public sealed partial class Form1 : Form
         tenantsGrid.SelectionChanged += async (_, _) => { if (!loadingTenants) await SelectOperatingTenantAsync(); };
         bar.Controls.AddRange([tenantSearch, new Label { Text = "新規", AutoSize = true, Padding = new Padding(0, 8, 0, 0) }, tenantName, tenantSlug, tenantPlan, create, refresh]);
         tenantsGrid.Dock = DockStyle.Fill;
-        var ops = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 106, Padding = new Padding(10), WrapContents = true, BackColor = Color.White };
+        var ops = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 136, Padding = new Padding(10), WrapContents = true, BackColor = Color.White };
         ops.Controls.Add(tenantOpsSummary);
         ops.Controls.AddRange([new Label { Text = "運用変更:", AutoSize = true, Padding = new Padding(0, 8, 0, 0) }, tenantEditName,
             new Label { Text = "プラン", AutoSize = true, Padding = new Padding(0, 8, 0, 0) }, tenantEditPlan,
+            new Label { Text = "月API上限（Cr）", AutoSize = true, Padding = new Padding(0, 8, 0, 0) }, tenantEditMonthlyApiLimit,
             tenantSaveButton, tenantStatusButton, tenantSandboxButton]);
         page.Controls.Add(tenantsGrid);
         page.Controls.Add(ops);
@@ -410,7 +412,7 @@ public sealed partial class Form1 : Form
             var result = await TenantAdminAsync(HttpMethod.Get, "", null);
             currentTenants = result.GetProperty("tenants").EnumerateArray().Select(x => new TenantOpsRow(
                 Val(x, "id"), Val(x, "parent_tenant_id"), Val(x, "slug"), Val(x, "name"), Val(x, "status"), Val(x, "plan_code"), Val(x, "environment"),
-                Val(x, "products"), Val(x, "licenses"), Val(x, "active_api_clients"), Val(x, "max_products"), Val(x, "max_licenses"), Val(x, "created_at"), Val(x, "updated_at"))).ToArray();
+                Val(x, "products"), Val(x, "licenses"), Val(x, "active_api_clients"), Val(x, "max_products"), Val(x, "max_licenses"), Val(x, "monthly_api_limit_credits"), Val(x, "created_at"), Val(x, "updated_at"))).ToArray();
             ApplyTenantFilter();
             inviteTenant.DataSource = currentTenants.Where(x => x.Status == "active").Select(x => new TenantChoice(x.Id, $"{x.Name} (tenant ID {x.Id}, {x.Slug})")).ToArray();
             inviteTenant.DisplayMember = nameof(TenantChoice.Display);
@@ -432,7 +434,7 @@ public sealed partial class Form1 : Form
         SetGridHeaders(tenantsGrid, (nameof(TenantOpsRow.Id), "ID"), (nameof(TenantOpsRow.Name), "契約者"), (nameof(TenantOpsRow.Slug), "Slug"),
             (nameof(TenantOpsRow.Status), "状態"), (nameof(TenantOpsRow.Environment), "環境"), (nameof(TenantOpsRow.Plan), "プラン"),
             (nameof(TenantOpsRow.Products), "製品"), (nameof(TenantOpsRow.Licenses), "有効License"), (nameof(TenantOpsRow.ActiveApiClients), "稼働APIキー"),
-            (nameof(TenantOpsRow.MaxProducts), "製品上限"), (nameof(TenantOpsRow.MaxLicenses), "License上限"));
+            (nameof(TenantOpsRow.MaxProducts), "製品上限"), (nameof(TenantOpsRow.MaxLicenses), "License上限"), (nameof(TenantOpsRow.MonthlyApiLimitCredits), "月API上限（Cr）"));
         loadingTenants = false;
         if (tenantsGrid.CurrentRow?.DataBoundItem is not TenantOpsRow) { selectedTenant = null; _ = SelectOperatingTenantAsync(); }
     }
@@ -448,19 +450,20 @@ public sealed partial class Form1 : Form
         if (selectedTenant is null)
         {
             tenantOpsSummary.Text = "テナントを選択してください。";
-            tenantEditName.Enabled = tenantEditPlan.Enabled = tenantSaveButton.Enabled = tenantStatusButton.Enabled = tenantSandboxButton.Enabled = false;
+            tenantEditName.Enabled = tenantEditPlan.Enabled = tenantEditMonthlyApiLimit.Enabled = tenantSaveButton.Enabled = tenantStatusButton.Enabled = tenantSandboxButton.Enabled = false;
             return Task.CompletedTask;
         }
         var t = selectedTenant;
         keyTenant.Text = t.Id;
         tenantEditName.Text = t.Name;
         tenantEditPlan.SelectedItem = t.Plan;
-        tenantEditName.Enabled = tenantEditPlan.Enabled = tenantSaveButton.Enabled = int.TryParse(t.Id, out var id) && id > 1;
+        tenantEditMonthlyApiLimit.Text = t.MonthlyApiLimitCredits;
+        tenantEditName.Enabled = tenantEditPlan.Enabled = tenantEditMonthlyApiLimit.Enabled = tenantSaveButton.Enabled = int.TryParse(t.Id, out var id) && id > 1;
         tenantStatusButton.Enabled = int.TryParse(t.Id, out id) && id > 1;
         var hasSandbox = currentTenants.Any(x => x.ParentTenantId == t.Id || (t.Environment == "sandbox" && x.Id == t.Id));
         tenantSandboxButton.Enabled = t.Environment == "production" && t.Status == "active" && !hasSandbox;
         tenantStatusButton.Text = t.Status == "active" ? "契約を一時停止" : "契約を再開";
-        tenantOpsSummary.Text = $"#{t.Id}  {t.Name} ({t.Slug})　{(t.Status == "active" ? "運用中" : "停止中")}　環境 {t.Environment}{(t.ParentTenantId.Length > 0 ? " / 親 #" + t.ParentTenantId : "")}　製品 {t.Products}/{t.MaxProducts}　稼働ライセンス {t.Licenses}/{t.MaxLicenses}　稼働APIキー {t.ActiveApiClients}　作成 {t.CreatedAt}";
+        tenantOpsSummary.Text = $"#{t.Id}  {t.Name} ({t.Slug})　{(t.Status == "active" ? "運用中" : "停止中")}　環境 {t.Environment}{(t.ParentTenantId.Length > 0 ? " / 親 #" + t.ParentTenantId : "")}　製品 {t.Products}/{t.MaxProducts}　稼働ライセンス {t.Licenses}/{t.MaxLicenses}　稼働APIキー {t.ActiveApiClients}　月API上限 {(string.IsNullOrWhiteSpace(t.MonthlyApiLimitCredits) ? "無制限" : t.MonthlyApiLimitCredits + " Cr")}　作成 {t.CreatedAt}";
         return Task.CompletedTask;
     }
 
@@ -483,8 +486,10 @@ public sealed partial class Form1 : Form
         if (selectedTenant is null || !int.TryParse(selectedTenant.Id, out var id) || id <= 1) return;
         if (string.IsNullOrWhiteSpace(tenantEditName.Text)) { SetStatus("契約者名を入力してください。", true); return; }
         var plan = tenantEditPlan.SelectedItem?.ToString() ?? "standard";
-        if (MessageBox.Show($"契約者 #{id} の情報を更新しますか？\r\n名称: {tenantEditName.Text}\r\nプラン: {plan}\r\nプラン上限を超えている既存データは削除されませんが、新規作成が制限される場合があります。", "契約者情報の更新", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-        try { await TenantAdminAsync(HttpMethod.Post, "", new { action = "update_tenant", tenant_id = id, name = tenantEditName.Text.Trim(), plan_code = plan }); await LoadTenantsAsync(); SetStatus("契約者情報を更新しました。"); }
+        var monthlyLimit = string.IsNullOrWhiteSpace(tenantEditMonthlyApiLimit.Text) ? "0" : tenantEditMonthlyApiLimit.Text.Trim();
+        if (!decimal.TryParse(monthlyLimit, System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture, out var limit) || limit < 0 || limit > 1_000_000_000m || decimal.Round(limit, 3) != limit) { SetStatus("月API上限は0〜1,000,000,000 Cr、小数第3位までで入力してください。0は無制限です。", true); return; }
+        if (MessageBox.Show($"契約者 #{id} の情報を更新しますか？\r\n名称: {tenantEditName.Text}\r\nプラン: {plan}\r\n月API上限: {(limit == 0 ? "無制限" : limit.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + " Cr")}\r\n既存のAPI利用額が上限を超えていてもデータは削除されず、次のAPIアクセスが上限まで停止します。", "契約者情報の更新", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+        try { await TenantAdminAsync(HttpMethod.Post, "", new { action = "update_tenant", tenant_id = id, name = tenantEditName.Text.Trim(), plan_code = plan, monthly_api_limit_credits = monthlyLimit }); await LoadTenantsAsync(); SetStatus("契約者情報とAPI従量上限を更新しました。"); }
         catch (Exception ex) { SetStatus(ex.Message, true); }
     }
 
@@ -708,7 +713,7 @@ public sealed partial class Form1 : Form
     private void SetStatus(string text, bool error = false) { if (InvokeRequired) { BeginInvoke(() => SetStatus(text, error)); return; } status.Text = text; status.ForeColor = error ? Color.Firebrick : Color.DimGray; }
 
     private sealed record TenantChoice(string Id, string Display);
-    private sealed record TenantOpsRow(string Id, string ParentTenantId, string Slug, string Name, string Status, string Plan, string Environment, string Products, string Licenses, string ActiveApiClients, string MaxProducts, string MaxLicenses, string CreatedAt, string UpdatedAt);
+    private sealed record TenantOpsRow(string Id, string ParentTenantId, string Slug, string Name, string Status, string Plan, string Environment, string Products, string Licenses, string ActiveApiClients, string MaxProducts, string MaxLicenses, string MonthlyApiLimitCredits, string CreatedAt, string UpdatedAt);
     private sealed record LicenseRow(string Id, string TenantId, string Tenant, string ProductId, string Product, string Label, string State, string ActiveSessions, string ExpiresAt, string Active);
     private sealed record AuditRow(string CreatedAt, string Event, string TargetType, string TargetId, string Role, string Server, string ActorHash, string Change);
     private sealed record ApiKeyRow(string Id, string TenantId, string Tenant, string Name, string Prefix, string Scopes, string Status, string LastUsed, string ExpiresAt, string RevokedAt);

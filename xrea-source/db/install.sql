@@ -911,4 +911,22 @@ INSERT IGNORE INTO `schema_migrations`(version) VALUES('037_admin_error_diagnost
 
 INSERT IGNORE INTO `schema_migrations`(version) VALUES('038_canonical_schema_performance');
 
+CREATE TABLE IF NOT EXISTS `tenant_api_usage_limits` (
+  `tenant_id` bigint(20) unsigned NOT NULL,
+  `monthly_limit_units` bigint(20) unsigned DEFAULT NULL,
+  `updated_at` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`tenant_id`),
+  CONSTRAINT `fk_tenant_api_usage_limits_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `tenant_api_usage_reservations` (
+  `request_id` char(16) NOT NULL,
+  `tenant_id` bigint(20) unsigned NOT NULL,
+  `reserved_units` bigint(20) unsigned NOT NULL,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`request_id`),
+  KEY `idx_api_usage_reservations_tenant_time` (`tenant_id`,`created_at`),
+  CONSTRAINT `fk_tenant_api_usage_reservations_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 SET FOREIGN_KEY_CHECKS=1;

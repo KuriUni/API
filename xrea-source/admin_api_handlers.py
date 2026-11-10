@@ -1132,7 +1132,7 @@ def _admin_api_request(request_context):
                 raise database.DatabaseConfigurationError('test key pepper is not configured')
             secret = base64.urlsafe_b64encode(__import__('secrets').token_bytes(32)).decode().rstrip('=')
             api_key = ('baas_sandbox_' if environment == 'sandbox' else 'baas_prod_') + secret
-            rate = admin_request_int(data, 'rate_limit_per_minute', 120, 10, 10000)
+            rate = admin_request_int(data, 'rate_limit_per_minute', 120, 10, 600)
             expiry_text = admin_request_string(data, 'api_key_expires_at')
             expiry = None
             if expiry_text:
@@ -1206,7 +1206,7 @@ def _admin_api_request(request_context):
                 prefix = api_key[:12]
                 name = (str(old.get('name') or '') + ' rotated')[:120]
                 expiry_value = expiry.strftime('%Y-%m-%d %H:%M:%S')
-                rate = max(10, min(10000, int(old.get('rate_limit_per_minute') or 120)))
+                rate = max(10, min(600, int(old.get('rate_limit_per_minute') or 120)))
                 with connection.cursor() as cursor:
                     cursor.execute('INSERT INTO tenant_api_clients(tenant_id,name,key_prefix,key_hash,scopes_json,rate_limit_per_minute,expires_at) VALUES(%s,%s,%s,%s,%s,%s,%s)', (int(old['tenant_id']), name, prefix, hmac.new(pepper.encode(), api_key.encode(), hashlib.sha256).hexdigest(), json.dumps(scopes, separators=(',', ':')), rate, expiry_value))
                     new_client_id = int(getattr(cursor, 'lastrowid', 0) or 0)

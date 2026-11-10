@@ -172,7 +172,7 @@ def _issue_api_key(connection, data):
     token_hash = hmac.new(config['key_pepper'].encode(), token.encode(), hashlib.sha256).hexdigest()
     expiry = _normalize_expiry(data.get('expires_at'))
     with connection.cursor() as cursor:
-        cursor.execute('INSERT INTO tenant_api_clients(tenant_id,name,key_prefix,key_hash,scopes_json,rate_limit_per_minute,expires_at) VALUES(%s,%s,%s,%s,%s,%s,%s)', (tenant_id, name[:120], prefix, token_hash, json.dumps(scopes, separators=(',', ':')), max(10, min(10000, rate)), expiry))
+        cursor.execute('INSERT INTO tenant_api_clients(tenant_id,name,key_prefix,key_hash,scopes_json,rate_limit_per_minute,expires_at) VALUES(%s,%s,%s,%s,%s,%s,%s)', (tenant_id, name[:120], prefix, token_hash, json.dumps(scopes, separators=(',', ':')), max(10, min(600, rate)), expiry))
         client_id = int(cursor.lastrowid)
     return {'client_id': client_id, 'tenant_id': tenant_id, 'environment': environment, 'api_key': token, 'key_prefix': prefix, 'scopes': scopes, 'message': 'API key is shown once.'}
 
@@ -247,6 +247,8 @@ def tenant_admin(request_context):
     try:
         connection = database.connect()
         _assert_write_fence(connection)
+        from api_usage_limits import ensure_schema as ensure_api_usage_limits_schema
+        ensure_api_usage_limits_schema(connection)
         if method == 'GET':
             from urllib.parse import parse_qs
             parsed_query = parse_qs(str(request_context.get('query', '')), keep_blank_values=True)
@@ -261,8 +263,11 @@ def tenant_admin(request_context):
                 from ha_handlers import _json_value
                 return json_response('200 OK', {'ok': True, 'tenant_id': tenant_id, 'api_clients': _json_value(clients)})
             with connection.cursor() as cursor:
-                cursor.execute("SELECT t.id,t.slug,t.name,t.status,t.plan_code,CASE WHEN t.parent_tenant_id IS NOT NULL OR t.environment='sandbox' THEN 'sandbox' WHEN t.environment='production' THEN 'production' ELSE 'unknown' END environment,t.parent_tenant_id,t.max_products,t.max_licenses,t.created_at,t.updated_at,(SELECT COUNT(*) FROM products p WHERE p.tenant_id=t.id AND p.status<>'deleted') products,(SELECT COUNT(*) FROM licenses l WHERE l.tenant_id=t.id AND l.active=1 AND l.deleted_at IS NULL) licenses,(SELECT COUNT(*) FROM tenant_api_clients c WHERE c.tenant_id=t.id AND c.status='active' AND c.revoked_at IS NULL) active_api_clients FROM tenants t ORDER BY COALESCE(t.parent_tenant_id,t.id),CASE WHEN t.parent_tenant_id IS NOT NULL OR t.environment='sandbox' THEN 1 WHEN t.environment='production' THEN 0 ELSE 2 END,t.id")
+                cursor.execute("SELECT t.id,t.slug,t.name,t.status,t.plan_code,CASE WHEN t.parent_tenant_id IS NOT NULL OR t.environment='sandbox' THEN 'sandbox' WHEN t.environment='production' THEN 'production' ELSE 'unknown' END environment,t.parent_tenant_id,t.max_products,t.max_licenses,t.created_at,t.updated_at,lim.monthly_limit_units,(SELECT COUNT(*) FROM products p WHERE p.tenant_id=t.id AND p.status<>'deleted') products,(SELECT COUNT(*) FROM licenses l WHERE l.tenant_id=t.id AND l.active=1 AND l.deleted_at IS NULL) licenses,(SELECT COUNT(*) FROM tenant_api_clients c WHERE c.tenant_id=t.id AND c.status='active' AND c.revoked_at IS NULL) active_api_clients FROM tenants t LEFT JOIN tenant_api_usage_limits lim ON lim.tenant_id=t.id ORDER BY COALESCE(t.parent_tenant_id,t.id),CASE WHEN t.parent_tenant_id IS NOT NULL OR t.environment='sandbox' THEN 1 WHEN t.environment='production' THEN 0 ELSE 2 END,t.id")
                 rows = cursor.fetchall()
+            from api_usage_limits import units_to_credits
+            for row in rows:
+                row['monthly_api_limit_credits'] = units_to_credits(row['monthly_limit_units']) if row.get('monthly_limit_units') is not None else ''
             from ha_handlers import _json_value
             return json_response('200 OK', {'ok': True, 'tenants': _json_value(rows)})
         if method != 'POST':
@@ -430,13 +435,25 @@ def tenant_admin(request_context):
             plan = _plan(data.get('plan_code') if data.get('plan_code') is not None else 'standard')
             if tenant_id < 1 or not name:
                 raise ValueError('invalid_tenant')
+            from api_usage_limits import credits_to_units, get_limit_units, set_limit_units
+            monthly_limit_units = None
+            update_monthly_limit = 'monthly_api_limit_credits' in data
+            if update_monthly_limit:
+                monthly_limit_units = credits_to_units(data.get('monthly_api_limit_credits'))
+            else:
+                monthly_limit_units = get_limit_units(connection, tenant_id)
             with connection.cursor() as cursor:
+                cursor.execute('SELECT id FROM tenants WHERE id=%s LIMIT 1', (tenant_id,))
+                if not cursor.fetchone():
+                    raise ValueError('tenant_not_found')
                 cursor.execute('UPDATE tenants SET name=%s,plan_code=%s,max_products=%s,max_licenses=%s WHERE id=%s', (name[:160], plan['code'], plan['products'], plan['licenses'], tenant_id))
                 affected = int(cursor.rowcount or 0)
+                if update_monthly_limit:
+                    set_limit_units(connection, tenant_id, monthly_limit_units)
             connection.commit()
-            _append_ha_audit('tenant_updated', {'tenant_id': tenant_id, 'plan_code': plan['code']}, request_context)
+            _append_ha_audit('tenant_updated', {'tenant_id': tenant_id, 'plan_code': plan['code'], 'monthly_api_limit_units': monthly_limit_units}, request_context)
             ha_sync_peer('tenant_updated', request_context)
-            return json_response('200 OK', {'ok': True, 'tenant_id': tenant_id, 'affected': affected, 'plan_code': plan['code'], 'max_products': plan['products'], 'max_licenses': plan['licenses']})
+            return json_response('200 OK', {'ok': True, 'tenant_id': tenant_id, 'affected': affected, 'plan_code': plan['code'], 'max_products': plan['products'], 'max_licenses': plan['licenses'], 'monthly_api_limit_credits': units_to_credits(monthly_limit_units) if monthly_limit_units is not None else ''})
         if action == 'delete_tenant':
             try:
                 tenant_id = php_int_cast(data.get('tenant_id'))

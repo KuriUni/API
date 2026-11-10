@@ -16,7 +16,7 @@ def migrate(request_context):
     try:
         data = request_data(request_context)
         scope = data.get('scope', 'all') if isinstance(data, dict) else 'all'
-        if scope not in ('all', 'v8', 'license_v4'):
+        if scope not in ('all', 'v8', 'license_v4', 'api_usage'):
             return _response('400 Bad Request', b'{"ok":false,"error":"invalid_migration_scope"}')
         connection = database.connect()
         if scope == 'v8':
@@ -24,10 +24,14 @@ def migrate(request_context):
         elif scope == 'license_v4':
             from license_v4_storage import ensure_schema
             payload = {'ok': True, 'scope': 'license_v4', 'license_v4': ensure_schema(connection)}
+        elif scope == 'api_usage':
+            from api_usage_limits import ensure_schema
+            ensure_schema(connection)
+            payload = {'ok': True, 'scope': 'api_usage', 'monthly_api_limits': True}
         else:
             from schema39_storage import run_migrations as current_migrations
             payload = current_migrations(connection)
-        if scope != 'license_v4':
+        if scope not in ('license_v4', 'api_usage'):
             from product_key_v8_storage import ensure_schema as ensure_v8_issuance_schema
             payload['product_key_issuance_v8'] = ensure_v8_issuance_schema(connection)
         return _response('200 OK', json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
