@@ -1,6 +1,5 @@
 """Python equivalents of the shared PHP administrator passkey auth helpers."""
 import base64
-from file_locking import fcntl
 import hashlib
 import hmac
 import json
@@ -9,7 +8,7 @@ import re
 import secrets
 import time
 
-from passkey_handlers import _key, _read_store, _store_path, _write_store
+from passkey_handlers import _key, _read_store, _store_path, _write_store, _passkey_store_lock
 
 VALID_CLIENTS = {"admin_web", "admin_mobile", "generate_web"}
 ADMIN_SCOPES = ["license:read", "license:write", "license:manage", "phone:manage",
@@ -29,10 +28,7 @@ def consume_code(code, expected_client):
             or expected_client not in VALID_CLIENTS):
         return None
     try:
-        path = _store_path()
-        with open(path.with_name("passkey-store.lock"), "a+b") as lock:
-            os.chmod(lock.name, 0o600)
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        with _passkey_store_lock() as path:
             store = _read_store(path)
             row = store.get("codes", {}).get(code)
             if (not isinstance(row, dict) or int(row.get("expires", 0)) < int(time.time())
@@ -61,10 +57,7 @@ def issue_sso_session(credential_hash, role):
             or role not in {"viewer", "operator", "security-admin", "ha-admin"}):
         return None
     try:
-        path = _store_path()
-        with open(path.with_name("passkey-store.lock"), "a+b") as lock:
-            os.chmod(lock.name, 0o600)
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        with _passkey_store_lock() as path:
             store = _read_store(path)
             token = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
             created = int(time.time())
