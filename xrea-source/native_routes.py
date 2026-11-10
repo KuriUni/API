@@ -63,6 +63,7 @@ HANDLERS = {
     '/ha/offline-phone.php': ('offline_phone_handlers', 'offline_phone'),
     '/ha/offline-key.php': ('offline_key_handlers', 'offline_key'),
     '/ha/export.php': ('ha_export', 'export_snapshot'),
+    '/api/stripe/webhook.php': ('stripe_billing', 'webhook'),
 }
 for leaf, handler in (
     ('status', 'status'), ('products', 'products'), ('audit', 'audit'), ('billing', 'billing'),

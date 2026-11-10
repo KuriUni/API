@@ -19,6 +19,7 @@
 | `operations/Xrea/Deploy-Xrea.ps1` | XREA Primary/Backupへ差分アップロード | DPAPI資格情報があれば入力画面を省略。未保存時または認証失敗時だけ入力。既定は両方。ローカルSHA-256台帳と比較し、変更分だけ送信。完了後、削除済みローカルファイルの台帳項目を整理。FTP側の全体一覧は取得しない |
 | `operations/Xrea/Sync-XreaBackup.ps1` | Backupだけへ差分アップロード | ローカルSHA-256台帳と比較。ノード固有設定とローカルバックアップ類を除外し、リモートのみのファイルは保持。転送成功後に不要な台帳項目を整理 |
 | `operations/Xrea/Deploy-TUTI-Help.ps1` | ヘルプHTMLの配置 | 既存ページをローカルバックアップしてから更新 |
+| `operations/Xrea/Configure-StripeBilling.ps1` | Stripe請求の秘密情報をGUIで設定 | 対象ノードの非公開 `runtime-secrets.json` にAPIキー・Webhook署名シークレット・本番有効化を追記。保存前にStripeへ接続確認し、旧設定はDPAPIで暗号化保存。`scope=stripe` のテーブル初期化も任意で実行 |
 | `operations/Xrea/Deploy-V8Cutover.ps1` | V8移行をPrimary/Backupへ配備 | PowerShell 7・保存済みDPAPI資格情報を使用。既知の対象ファイルだけを比較・差分送信し、SHA-256照合。DBスナップショットは公開領域外にDPAPI暗号化保存。必要ならV8専用の追加移行を実行。失敗時は配備ファイルを復元し、追加したDBテーブルは保持 |
 | `operations/Xrea/Deploy-LicenseAuthentication.ps1` | V2/V3ライセンス認証の更新を配備 | 同じバックアップ・照合・復元処理を使用。DB移行は実行せず、認証APIのエラー契約を確認 |
 | `operations/Xrea/Upload-Xrea.ps1` | 任意のフォルダーを任意の公開パスへアップロード | 高影響の汎用ツール。接続先を確認して個別実行 |

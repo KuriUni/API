@@ -4,7 +4,7 @@
   const defaultBase = () => `${window.location.origin}${(window.location.pathname.match(/^(.*)\/(?:tenant-portal|mobile-manager)(?:\/|$)/) || [])[1] || ''}`;
   const PAGE_SIZE = 100;
   let activeRequests = 0;
-  const state = { base: '', environment: 'production', key: '', tenantSsoSession: '', tenant: '', memberships: [], page: 'overview', products: [], licenses: [], auditEvents: [], auditFilter: { operation: '', clientId: '', status: '' }, licenseFilter: { search: '', product: '' }, noticeTimer: 0, issuePending: null, taskBusy: false, taskVersion: 0, productSearch: '', billingPeriod: new Date().toISOString().slice(0,7), reissueBusy: false, authBusy: false, viewVersion: 0, connectionVersion: 0 };
+  const state = { base: '', environment: 'production', key: '', tenantSsoSession: '', tenant: '', memberships: [], page: 'overview', products: [], licenses: [], auditEvents: [], auditFilter: { operation: '', clientId: '', status: '' }, licenseFilter: { search: '', product: '' }, noticeTimer: 0, issuePending: null, taskBusy: false, taskVersion: 0, productSearch: '', billingPeriod: new Date().toISOString().slice(0,7), reissueBusy: false, authBusy: false, viewVersion: 0, connectionVersion: 0, stripeReturn: null };
   Object.assign(state,{selectedTenantId:0,tenantSelectionBusy:false,tenantLinkBusy:false});
   $('base-url').value = defaultBase();
   const ssoLoginBase = defaultBase();
@@ -53,7 +53,7 @@
   const confirmAction = (message) => requestChoice(message);
   const askText = (message, initial) => requestChoice(message, initial, message);
   function notice(message, error = false) { const box = $('notice'); window.clearTimeout(state.noticeTimer); box.textContent = message; box.classList.toggle('error', error); box.classList.remove('hidden'); box.setAttribute('role', error ? 'alert' : 'status'); state.noticeTimer = window.setTimeout(() => box.classList.add('hidden'), 6500); }
-  function errorMessage(data, status) { const messages = { tenant_sso_admin_identity: 'Admin SSO identity detected. Signing out so you can continue with a contractor SSO ID.', sso_reauthentication_required: 'SSO IDで再認証してから5分以内に実行してください。', unauthorized: 'APIキーを確認してください。', invalid_api_key: 'APIキーが正しくないか、期限切れです。', insufficient_scope: 'この機能を使う権限がAPIキーにありません。管理者へ必要なスコープを確認してください。', server_not_writable: '現在は読み取り専用です。時間をおいて再度お試しください。', product_quota_exceeded: '契約プランの製品上限に達しています。', license_quota_exceeded: '契約プランのライセンス上限に達しています。', product_not_found: '発行先の製品を確認してください。', product_code_exists: 'この製品コードはすでに使われています。', invalid_license_mode: 'ライセンス方式が正しくありません。', invalid_portal_session: 'Passkeyセッションの有効期限が切れました。Passkeyで再接続してください。', unknown_credential: 'このPasskeyは登録されていないか、解除されています。', challenge_expired: '認証の有効期限が切れました。もう一度お試しください。', credential_already_registered: 'このPasskeyはすでに登録されています。', passkey_limit_reached: '登録できるPasskeyはテナントごとに25個までです。', passkey_management_key_required: 'Passkey管理には tenant:read と licenses:write 権限のあるAPIキーが必要です。', key_reissue_not_available: '登録元のAPIキーが失効・停止・期限切れのため再発行できません。管理者へお問い合わせください。', key_reissue_scope_mismatch: 'このPasskeyの権限では元のAPIキーを再発行できません。管理者へお問い合わせください。', key_reissue_result_expired: '再試行できる時間が過ぎたか、発行済みキーが失効しています。500円の請求記録を「利用・請求」で確認し、管理者へお問い合わせください。', key_reissue_request_owner_mismatch: '前回と同じPasskeyで再接続して再試行してください。', key_reissue_failed: '再発行結果を確認できませんでした。同じ画面から再試行してください。', rate_limited: 'APIアクセスが分速上限に達しました。1分ほど待ってから再度お試しください。', tenant_rate_limited: '契約全体のAPI分速上限に達しました。1分ほど待ってから再度お試しください。', api_monthly_limit_reached: '今月のAPI利用上限に達しました。契約管理者に上限の変更をご相談ください。', passkey_reauthentication_required: 'この操作は、Passkeyで再接続してから5分以内に実行してください。', tenant_api_key_required: '連携したAPIキーが無効・停止・期限切れ、または権限不足のためログインできません。有効なAPIキーを確認してください。', tenant_already_linked: 'このテナントはすでに共通IDに登録されています。', tenant_membership_required: 'この共通IDには選択したテナントが登録されていません。', common_id_sso_not_ready: '共通IDログインは利用できますが、別ドメインSSOのサーバー設定またはDB移行が未完了です。管理者へお知らせください。', tenant_sso_session_required: 'SSO IDのセッションが終了しました。SSO IDで再接続してください。', tenant_sso_ticket_invalid: 'SSO認証の有効期限が切れました。もう一度ログインしてください。' }; const code = String(data?.error || data?.error_code || ''); return messages[code] || data?.message || (code ? `${code} (HTTP ${status})` : `サーバーとの通信に失敗しました (HTTP ${status})`); }
+  function errorMessage(data, status) { const messages = { tenant_sso_admin_identity: 'Admin SSO identity detected. Signing out so you can continue with a contractor SSO ID.', sso_reauthentication_required: 'SSO IDで再認証してから5分以内に実行してください。', unauthorized: 'APIキーを確認してください。', invalid_api_key: 'APIキーが正しくないか、期限切れです。', insufficient_scope: 'この機能を使う権限がAPIキーにありません。管理者へ必要なスコープを確認してください。', server_not_writable: '現在は読み取り専用です。時間をおいて再度お試しください。', product_quota_exceeded: '契約プランの製品上限に達しています。', license_quota_exceeded: '契約プランのライセンス上限に達しています。', product_not_found: '発行先の製品を確認してください。', product_code_exists: 'この製品コードはすでに使われています。', invalid_license_mode: 'ライセンス方式が正しくありません。', invalid_portal_session: 'Passkeyセッションの有効期限が切れました。Passkeyで再接続してください。', unknown_credential: 'このPasskeyは登録されていないか、解除されています。', challenge_expired: '認証の有効期限が切れました。もう一度お試しください。', credential_already_registered: 'このPasskeyはすでに登録されています。', passkey_limit_reached: '登録できるPasskeyはテナントごとに25個までです。', passkey_management_key_required: 'Passkey管理には tenant:read と licenses:write 権限のあるAPIキーが必要です。', key_reissue_not_available: '登録元のAPIキーが失効・停止・期限切れのため再発行できません。管理者へお問い合わせください。', key_reissue_scope_mismatch: 'このPasskeyの権限では元のAPIキーを再発行できません。管理者へお問い合わせください。', key_reissue_result_expired: '再試行できる時間が過ぎたか、発行済みキーが失効しています。500円の請求記録を「利用・請求」で確認し、管理者へお問い合わせください。', key_reissue_request_owner_mismatch: '前回と同じPasskeyで再接続して再試行してください。', key_reissue_failed: '再発行結果を確認できませんでした。同じ画面から再試行してください。', stripe_not_configured: 'カード決済はまだ設定されていません。管理者へお問い合わせください。', invoice_not_payable: 'この請求書は現在お支払いできません。状態を確認してください。', invoice_not_found: '請求書が見つかりません。画面を再読み込みしてください。', stripe_checkout_completed: 'この請求書の決済はすでに完了しています。状態を更新してください。', stripe_live_sandbox_blocked: '本番決済はSandboxでは利用できません。', stripe_checkout_failed: '決済画面を開始できませんでした。時間をおいて再度お試しください。', key_reissue_pending: '決済を確認しています。少し待ってから再度お試しください。', key_reissue_result_ready: '前回の再発行は完了しています。結果を確認します。', key_reissue_result_expired: '決済結果の表示期限が切れたか、決済が完了していません。二重決済を避けるため管理者へお問い合わせください。', invoice_amount_invalid: '請求額を確認できないためカード決済を利用できません。管理者へお問い合わせください。', invoice_amount_too_small: '請求額が少ないためカード決済を利用できません。管理者へお問い合わせください。', rate_limited: 'APIアクセスが分速上限に達しました。1分ほど待ってから再度お試しください。', tenant_rate_limited: '契約全体のAPI分速上限に達しました。1分ほど待ってから再度お試しください。', api_monthly_limit_reached: '今月のAPI利用上限に達しました。契約管理者に上限の変更をご相談ください。', passkey_reauthentication_required: 'この操作は、Passkeyで再接続してから5分以内に実行してください。', tenant_api_key_required: '連携したAPIキーが無効・停止・期限切れ、または権限不足のためログインできません。有効なAPIキーを確認してください。', tenant_already_linked: 'このテナントはすでに共通IDに登録されています。', tenant_membership_required: 'この共通IDには選択したテナントが登録されていません。', common_id_sso_not_ready: '共通IDログインは利用できますが、別ドメインSSOのサーバー設定またはDB移行が未完了です。管理者へお知らせください。', tenant_sso_session_required: 'SSO IDのセッションが終了しました。SSO IDで再接続してください。', tenant_sso_ticket_invalid: 'SSO認証の有効期限が切れました。もう一度ログインしてください。' }; const code = String(data?.error || data?.error_code || ''); return messages[code] || data?.message || (code ? `${code} (HTTP ${status})` : `サーバーとの通信に失敗しました (HTTP ${status})`); }
   async function api(path, options = {}) {
     if(!state.key&&(!state.tenantSsoSession||!state.selectedTenantId))throw new Error('利用するテナント契約を選択してください。');
     const connection=state.connectionVersion;const headers=new Headers(options.headers||{});headers.set('Accept','application/json');if(state.key)headers.set('X-Tenant-API-Key',state.key);if(state.tenantSsoSession)headers.set('X-Tenant-SSO-Session',state.tenantSsoSession);headers.set('X-BaaS-Environment',state.environment);if(options.body!==undefined)headers.set('Content-Type','application/json');if(options.idempotency)headers.set('Idempotency-Key',options.idempotency);
@@ -62,44 +62,147 @@
     catch(error){if(error.name==='AbortError')throw new Error('応答に時間がかかっています。同じ内容で再試行してください。');throw error;}
     finally{window.clearTimeout(deadline);activeRequests=Math.max(0,activeRequests-1);if(!activeRequests)$('page-content').setAttribute('aria-busy','false');}
   }
-  function setConnected(tenant, environment, page='overview') { state.selectedTenantId=state.tenantSsoSession?Number(state.memberships.find(item=>item.slug===tenant&&item.environment===environment)?.tenant_id||0):0; $('tenant-choice-panel').hidden=true; $('tenant-sso-link-panel').hidden=true; state.tenant = tenant || '接続済みテナント'; state.environment = environment || 'production'; $('tenant-name').textContent = state.tenant; $('tenant-initial').textContent = state.tenant.slice(0,1).toUpperCase(); $('auth-label').textContent = state.tenantSsoSession ? 'SSO ID' : 'APIキー接続'; $('account-settings').classList.remove('hidden'); $('env-label').textContent = state.environment.toUpperCase(); $('env-label').classList.toggle('sandbox',state.environment==='sandbox'); $('connection-state').classList.add('connected'); $('connection-state').replaceChildren(element('i'), document.createTextNode('接続中')); $('connect-view').classList.add('hidden'); $('portal-view').classList.remove('hidden'); $('disconnect').classList.remove('hidden');     const selector=$('tenant-switcher');selector.replaceChildren();for(const item of state.memberships){const option=element('option','',`${item.name||item.slug} · ${String(item.environment).toUpperCase()} · ${contractKeyLabel(item)}`);option.value=String(item.tenant_id);option.selected=Number(item.tenant_id)===state.selectedTenantId;selector.append(option);}selector.classList.toggle('hidden',(!state.tenantSsoSession)||state.memberships.length<2);$('switch-tenant').classList.toggle('hidden',(!state.tenantSsoSession)||state.memberships.length<2); setPage(page); }
-  function openKeyReissue() {
-    if (!state.tenantSsoSession || state.reissueBusy) return;
+  function setConnected(tenant, environment, page='overview') { state.selectedTenantId=state.tenantSsoSession?Number(state.memberships.find(item=>item.slug===tenant&&item.environment===environment)?.tenant_id||0):0; $('tenant-choice-panel').hidden=true; $('tenant-sso-link-panel').hidden=true; state.tenant = tenant || '接続済みテナント'; state.environment = environment || 'production'; $('tenant-name').textContent = state.tenant; $('tenant-initial').textContent = state.tenant.slice(0,1).toUpperCase(); $('auth-label').textContent = state.tenantSsoSession ? 'SSO ID' : 'APIキー接続'; $('account-settings').classList.remove('hidden'); $('env-label').textContent = state.environment.toUpperCase(); $('env-label').classList.toggle('sandbox',state.environment==='sandbox'); $('connection-state').classList.add('connected'); $('connection-state').replaceChildren(element('i'), document.createTextNode('接続中')); $('connect-view').classList.add('hidden'); $('portal-view').classList.remove('hidden'); $('disconnect').classList.remove('hidden');     const selector=$('tenant-switcher');selector.replaceChildren();for(const item of state.memberships){const option=element('option','',`${item.name||item.slug} · ${String(item.environment).toUpperCase()} · ${contractKeyLabel(item)}`);option.value=String(item.tenant_id);option.selected=Number(item.tenant_id)===state.selectedTenantId;selector.append(option);}selector.classList.toggle('hidden',(!state.tenantSsoSession)||state.memberships.length<2);$('switch-tenant').classList.toggle('hidden',(!state.tenantSsoSession)||state.memberships.length<2); setPage(page); handleStripeReturn(); if (takeReissueResume() && state.tenantSsoSession) { void openKeyReissue(); } }
+  function reissueStorageKey() { return `tuti-key-reissue:${state.base}:${state.environment}:${state.tenant}`; }
+  function readPendingReissue() { try { return window.sessionStorage.getItem(reissueStorageKey()) || ''; } catch { return ''; } }
+  function setPendingReissue(value) { try { if (value) window.sessionStorage.setItem(reissueStorageKey(), value); else window.sessionStorage.removeItem(reissueStorageKey()); return true; } catch { return false; } }
+  function reissueResumeKey() { return 'tuti-key-reissue-resume'; }
+  function setReissueResume(value) { try { if (value) window.sessionStorage.setItem(reissueResumeKey(), '1'); else window.sessionStorage.removeItem(reissueResumeKey()); } catch {} }
+  function takeReissueResume() { try { const active = window.sessionStorage.getItem(reissueResumeKey()) === '1'; window.sessionStorage.removeItem(reissueResumeKey()); return active; } catch { return false; } }
+  function ssoReauthUrl() { return String(state.base || defaultBase()).replace(/\/+$/, '') + '/admin_api.php?tenant_sso_start=1&step_up=1'; }
+  function startSsoReauth() { setReissueResume(true); window.location.assign(ssoReauthUrl()); }
+  function reissueKeyView(result) {
+    const host = element('div');
+    host.append(element('p', '', result.paid_immediately ? 'お支払いが完了しました。再発行料500円（税込）をStripeで即時決済し、新しいAPIキーを発行しました。' : `再発行しました。再発行料500円（税込）を${text(result.billing_period)}の請求書に加算します。`));
+    if (result.old_key_expires_at_utc) host.append(element('p', '', `旧キーの切替期限（UTC）: ${result.old_key_expires_at_utc}`));
+    const key = element('input', 'mono'); key.type = 'text'; key.readOnly = true; key.value = result.api_key; key.autocomplete = 'off'; key.spellcheck = false; key.setAttribute('aria-label', '再発行されたAPIキー');
+    const copied = element('p', 'form-foot');
+    const copy = button('APIキーをコピー', async () => { try { await navigator.clipboard.writeText(key.value); copied.textContent = 'コピーしました。安全な場所に保管してください。'; } catch { key.focus(); key.select(); copied.textContent = 'キーを選択しました。手動でコピーしてください。'; } });
+    host.append(key, copy, copied, element('p', 'form-foot', '閉じるとキーの表示を消去します。次の再発行には再び500円がかかります。'));
+    if (result.paid_immediately && result.mode === 'test') host.append(element('p', 'form-foot', 'Stripeテストモードの決済です。'));
+    return host;
+  }
+  async function openKeyReissueResult(requestId) {
+    if (!state.tenantSsoSession) return;
+    const dialog = $('reissue-dialog');
+    $('reissue-content').replaceChildren(element('p', 'loading-label', '決済結果を確認しています…'));
+    if (!dialog.open) dialog.showModal();
+    let last = null;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      try {
+        const result = await api('/api/baas/v1/tenant-sso.php', { method: 'POST', body: { action: 'key_reissue_result', request_id: requestId } });
+        setPendingReissue('');
+        $('reissue-content').replaceChildren(reissueKeyView(result));
+        return;
+      } catch (error) {
+        last = error;
+        if (!String(error.message).includes('確認中')) break;
+        await new Promise((resolve) => window.setTimeout(resolve, 2500));
+      }
+    }
     const host = $('reissue-content'); host.replaceChildren();
-    const storageKey = `tuti-key-reissue:${state.base}:${state.environment}:${state.tenant}`;
-    let pending; try { pending = window.sessionStorage.getItem(storageKey); } catch { notice('二重請求防止のため、この操作にはブラウザーのセッションストレージが必要です。', true); return; }
-    const price=element('div','reissue-price');const priceCopy=element('div');priceCopy.append(element('b','','APIキー再発行料'),element('small','','月次請求書に加算'));const amount=element('strong','','¥500');amount.append(element('span','',' / 回・税込'));price.append(priceCopy,amount);host.append(price);
-    host.append(element('p', '', '元のAPIキーは再表示できないため、新しいAPIキーを発行します。再発行料は1回500円（税込）で、月次請求書に加算されます。Sandboxも同額です。'));
+    host.append(element('p', 'form-error', last ? last.message : '決済結果を確認できませんでした。'));
+    host.append(button('結果を再確認', () => openKeyReissueResult(requestId), 'button-secondary'));
+    host.append(element('p', 'form-foot', '決済が完了しているのに表示できない場合は、二重決済を避けるため管理者へお問い合わせください。'));
+  }
+  async function openKeyReissue() {
+    if (!state.tenantSsoSession || state.reissueBusy) return;
+    const host = $('reissue-content'); host.replaceChildren(element('p', 'loading-label', '請求方法を確認しています…'));
+    if (!$('reissue-dialog').open) $('reissue-dialog').showModal();
+    let methods = { stripe: { enabled: false } };
+    try { methods = await api('/api/baas/v1/tenant-sso.php', { method: 'POST', body: { action: 'billing_methods' } }); } catch { methods = { stripe: { enabled: false } }; }
+    if (!$('reissue-dialog').open) return;
+    const immediate = Boolean(methods && methods.stripe && methods.stripe.enabled);
+    const pending = readPendingReissue();
+    host.replaceChildren();
+    const price = element('div', 'reissue-price'); const priceCopy = element('div');
+    priceCopy.append(element('b', '', 'APIキー再発行料'), element('small', '', immediate ? 'カードで即時決済' : '月次請求書に加算'));
+    const amount = element('strong', '', '¥500'); amount.append(element('span', '', ' / 回・税込'));
+    price.append(priceCopy, amount); host.append(price);
+    host.append(element('p', '', immediate
+      ? '元のAPIキーは再表示できないため、新しいAPIキーを発行します。再発行料500円（税込）をStripeで即時決済し、決済完了後に新しいキーを表示します。Sandboxも同額です。'
+      : '元のAPIキーは再表示できないため、新しいAPIキーを発行します。再発行料は1回500円（税込）で、月次請求書に加算されます。Sandboxも同額です。'));
     host.append(element('p', '', '旧キーは60分後に無効になります（元の有効期限が先に来る場合はその期限まで）。利用中のアプリのAPIキーを切り替えてください。新しいキーの権限・有効期限は引き継ぎます。'));
-    host.append(element('p', 'form-foot', 'SSO ID認証から5分以内に実行してください。キーはこの画面で確認・コピーし、安全に保管してください。閉じると画面から消去します。通信に失敗した場合は、同じSSO IDで10分以内に再試行すると追加請求せず結果を取得できます。'));
-    if (pending) host.append(element('p', 'invoice-test-warning', '前回の再発行結果を確認します。同じリクエストの再試行では追加の500円は発生しません。'));
-    const agreement=element('label','checkbox-confirm');const checkbox=element('input');checkbox.type='checkbox';agreement.append(checkbox,element('span','',pending?'前回の再発行結果を追加請求なしで取得します。':'再発行料500円（税込）の月次請求への加算と、旧キーの切替期限を確認しました。'));host.append(agreement);
+    host.append(element('p', 'form-foot', immediate
+      ? 'SSO ID認証から5分以内に実行してください。決済後にWebhookでキーが有効化され、この画面にキーが表示されます。通信に失敗しても、同じリクエストIDで結果を取得できます。'
+      : 'SSO ID認証から5分以内に実行してください。キーはこの画面で確認・コピーし、安全に保管してください。閉じると画面から消去します。通信に失敗した場合は、同じSSO IDで10分以内に再試行すると追加請求せず結果を取得できます。'));
+    if (pending) host.append(element('p', 'invoice-test-warning', immediate ? '前回の決済が残っています。同じリクエストの再試行では追加請求されません。' : '前回の再発行結果を確認します。同じリクエストの再試行では追加の500円は発生しません。'));
+    const agreement = element('label', 'checkbox-confirm'); const checkbox = element('input'); checkbox.type = 'checkbox';
+    agreement.append(checkbox, element('span', '', immediate ? '500円（税込）の即時決済と、旧キーの切替期限を確認しました。' : '再発行料500円（税込）の月次請求への加算と、旧キーの切替期限を確認しました。'));
+    host.append(agreement);
     const errorBox = element('p', 'form-error'); errorBox.setAttribute('role', 'alert');
-    const submit = button(pending ? '前回の結果を再取得' : '500円で再発行する', async () => {
+    let reauthArmed = false;
+    const submit = button(immediate ? (pending ? '前回の決済結果を確認' : '500円を支払って再発行') : (pending ? '前回の結果を再取得' : '500円で再発行する'), async () => {
       if (state.reissueBusy || !state.tenantSsoSession || !checkbox.checked) return;
-      const session = state.tenantSsoSession;
-      if (!pending) { pending = crypto.randomUUID().replaceAll('-', ''); try { window.sessionStorage.setItem(storageKey, pending); } catch { pending = null; errorBox.textContent = '再試行用の情報を保存できませんでした。ブラウザーの設定を確認してください。'; return; } }
+      if (reauthArmed) { startSsoReauth(); return; }
+      if (immediate && pending) { openKeyReissueResult(pending); return; }
+      let requestId = pending;
+      if (!requestId) {
+        requestId = crypto.randomUUID().replaceAll('-', '');
+        if (!setPendingReissue(requestId)) { errorBox.textContent = '二重決済防止のため、この操作にはブラウザーのセッションストレージが必要です。'; return; }
+      }
       state.reissueBusy = true; submit.disabled = true; $('close-reissue-dialog').disabled = true; errorBox.textContent = '';
       try {
-        const result = await api('/api/baas/v1/tenant-sso.php', { method: 'POST', idempotency: pending, body: { action: 'reissue_api_key', confirm_fee_yen: 500 } });
-        if (state.tenantSsoSession !== session || !$('reissue-dialog').open) return;
-        try { window.sessionStorage.removeItem(storageKey); } catch {}
-        host.replaceChildren(element('p', '', `再発行しました。再発行料500円（税込）を${result.billing_period}の請求書に加算します。`), element('p', '', `旧キーの切替期限（UTC）: ${result.old_key_expires_at_utc}`));
-        const key = element('input', 'mono'); key.type = 'text'; key.readOnly = true; key.value = result.api_key; key.autocomplete = 'off'; key.spellcheck = false; key.setAttribute('aria-label', '再発行されたAPIキー');
-        const copied = element('p', 'form-foot');
-        const copy = button('APIキーをコピー', async () => { try { await navigator.clipboard.writeText(key.value); copied.textContent = 'コピーしました。安全な場所に保管してください。'; } catch { key.focus(); key.select(); copied.textContent = 'キーを選択しました。手動でコピーしてください。'; } });
-        host.append(key, copy, copied, element('p', 'form-foot', '閉じるとキーの表示を消去します。次の再発行には再び500円がかかります。'));
-        if (!result.peer_synced) host.append(element('p', 'form-error', '待機サーバーへの同期は未完了です。再発行は完了しています。管理者へ同期状況の確認を依頼してください。'));
-      } catch (error) { errorBox.textContent = error.message; submit.textContent = '同じリクエストで再試行'; }
-      finally { state.reissueBusy = false; submit.disabled = !checkbox.checked; $('close-reissue-dialog').disabled = false; }
+        if (immediate) {
+          const result = await api('/api/baas/v1/tenant-sso.php', { method: 'POST', idempotency: requestId, body: { action: 'create_key_reissue_checkout', confirm_fee_yen: 500 } });
+          if (result && result.checkout_url) { notice('Stripeの決済画面へ移動します。'); window.location.assign(result.checkout_url); return; }
+          errorBox.textContent = '決済画面を開始できませんでした。';
+        } else {
+          const result = await api('/api/baas/v1/tenant-sso.php', { method: 'POST', idempotency: requestId, body: { action: 'reissue_api_key', confirm_fee_yen: 500 } });
+          setPendingReissue('');
+          host.replaceChildren(reissueKeyView(result));
+        }
+      } catch (error) {
+        if (immediate && (String(error.message).includes('確認中') || String(error.message).includes('完了しています'))) { openKeyReissueResult(requestId); return; }
+        if (String(error.message).includes('SSO IDで再認証')) {
+          reauthArmed = true;
+          errorBox.textContent = error.message;
+          submit.textContent = 'SSO IDで再認証';
+          submit.disabled = false;
+          return;
+        }
+        errorBox.textContent = error.message;
+        submit.textContent = '同じリクエストで再試行';
+      } finally {
+        state.reissueBusy = false;
+        if ($('reissue-dialog').open) submit.disabled = !checkbox.checked;
+        $('close-reissue-dialog').disabled = false;
+      }
     }, 'button-primary');
-    submit.disabled=true;checkbox.addEventListener('change',()=>{submit.disabled=!checkbox.checked||state.reissueBusy;});host.append(submit, errorBox);
-    if (pending) host.append(button('新しい再発行を開始（別途500円）', async () => {
+    submit.disabled = true;
+    checkbox.addEventListener('change', () => { submit.disabled = !checkbox.checked || state.reissueBusy; });
+    host.append(submit, errorBox);
+    if (immediate && pending) host.append(button('決済結果を再確認', () => openKeyReissueResult(pending), 'button-secondary'));
+    if (immediate && pending) host.append(button('前回の決済を確認できず、新しく支払う', async () => {
+      if (state.reissueBusy || !await confirmAction('前回の決済が完了している場合、新しく支払うと二重請求になります。決済履歴を確認してから続けてください。新しく支払いますか？')) return;
+      if (!setPendingReissue('')) { notice('リクエスト情報を消去できませんでした。', true); return; }
+      $('reissue-dialog').close(); openKeyReissue();
+    }, 'button-quiet'));
+    if (!immediate && pending) host.append(button('新しい再発行を開始（別途500円）', async () => {
       if (state.reissueBusy || !await confirmAction('前回の再発行が完了している場合は、その500円に加えて、新しい再発行に500円がかかります。前回の結果取得を終了して、新しい再発行の確認画面を開きますか？')) return;
-      try { window.sessionStorage.removeItem(storageKey); } catch { errorBox.textContent = '前回のリクエスト情報を消去できませんでした。'; return; }
+      if (!setPendingReissue('')) { errorBox.textContent = '前回のリクエスト情報を消去できませんでした。'; return; }
       $('reissue-dialog').close(); openKeyReissue();
     }));
-    $('reissue-dialog').showModal();
+  }
+
+  function handleStripeReturn() {
+    const hash = String(window.location.hash || '');
+    const match = hash.match(/^#stripe=(success|cancel)(?:&|$)/);
+    const stashed = state.stripeReturn;
+    if (!match && !stashed) return;
+    const params = new URLSearchParams(hash.replace(/^#/, ''));
+    const status = match ? match[1] : (stashed && stashed.status);
+    const reissue = params.get('reissue') || (stashed && stashed.reissue);
+    state.stripeReturn = null;
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    if (!status) return;
+    if (reissue) {
+      if (status === 'success') { setPage('settings'); notice('決済を受け付けました。結果を確認しています…'); void openKeyReissueResult(reissue); }
+      else { setPage('settings'); notice('カード決済をキャンセルしました。', true); }
+      return;
+    }
+    notice(status === 'success' ? 'Stripeの決済画面から戻りました。反映には少し時間がかかる場合があります。' : 'カード決済をキャンセルしました。', status !== 'success');
+    setPage('billing');
   }
   function resetNode(node) { node.replaceChildren(); }
   function panel(title, subtitle = '') { const card = element('section', 'panel'); const head = element('div', 'panel-heading'); const copy = document.createElement('div'); copy.append(element('h2', '', title)); if (subtitle) copy.append(element('p', '', subtitle)); head.append(copy); card.append(head); return card; }
@@ -200,6 +303,8 @@
   if(new URLSearchParams(window.location.search).get('state')==='tenant-admin-identity'){history.replaceState(null,'',window.location.pathname);$('connect-error').textContent='\u7ba1\u7406\u8005SSO\u30bb\u30c3\u30b7\u30e7\u30f3\u3092\u7d42\u4e86\u3057\u307e\u3057\u305f\u3002\u5951\u7d04\u8005\u7528SSO ID\u3067\u30ed\u30b0\u30a4\u30f3\u3057\u3066\u304f\u3060\u3055\u3044\u3002';}
   async function restoreTenantSsoTicket(){
     const match=window.location.hash.match(/(?:^#|&)sso_ticket=([A-Za-z0-9_-]{43})(?:&|$)/);if(!match)return;
+    const returnParams=new URLSearchParams(window.location.hash.replace(/^#/,''));
+    state.stripeReturn={status:returnParams.get('stripe'),reissue:returnParams.get('reissue')};
     history.replaceState(null,'',window.location.pathname+window.location.search);
     $('connect-error').textContent='SSO IDを確認しています…';
     try{const response=await fetch(`${defaultBase()}/api/baas/v1/tenant-sso.php`,{method:'POST',headers:{'Accept':'application/json','Content-Type':'application/json'},body:JSON.stringify({action:'bootstrap',ticket:match[1]}),cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer'});const data=await response.json().catch(()=>({}));if(data.error==='tenant_sso_admin_identity'){const returnTo=window.location.origin+window.location.pathname;const logoutUrl=new URL('https://sso.2415.jp/logout');logoutUrl.searchParams.set('post_logout_redirect_uri',returnTo);logoutUrl.searchParams.set('state','tenant-admin-identity');window.location.replace(logoutUrl.href);return;}if(!response.ok||!data.ok)throw new Error(errorMessage(data,response.status));state.base=defaultBase();state.key='';state.tenantSsoSession=data.session_token;state.memberships=data.memberships||[];state.connectionVersion++;
@@ -229,7 +334,7 @@
     if(currentContract){details.append(element('dt','','利用中のAPIキー'),element('dd','',contractKeyLabel(currentContract)));}
     const security=panel('SSO IDの認証管理','ログインとパスキーはSSOサービスで管理します。');
     const account=element('a','button button-secondary','SSO IDの設定を開く');account.href='https://sso.2415.jp/account';account.target='_blank';account.rel='noopener noreferrer';security.append(account);
-    if(state.tenantSsoSession){security.append(actionButton('APIキー再発行（500円）','key',openKeyReissue));const reauth=element('a','button button-secondary','SSO IDで再認証');reauth.href='/license/admin_api.php?tenant_sso_start=1&step_up=1';security.append(reauth);}
+    if(state.tenantSsoSession){security.append(actionButton('APIキー再発行（500円）','key',openKeyReissue));const reauth=element('a','button button-secondary','SSO IDで再認証');reauth.href=ssoReauthUrl();reauth.addEventListener('click',()=>setReissueResume(true));security.append(reauth);}
     root.append(connection,security);
     if(state.environment==='production'){
       const sandbox=panel('Sandbox APIキー','本番テナントに紐づく検証環境のAPIキーを管理します。Sandboxキーは検証環境だけで使われ、本番データには接続できません。');
@@ -556,6 +661,8 @@
     const root = document.createDocumentFragment();
     const invoicePanel = panel('発行済み請求書', '管理者が確定した請求書を確認できます。印刷画面から「PDFとして保存」できます。');
     if (invoiceData.production_ready === false) invoicePanel.append(element('p', 'invoice-test-warning', 'API利用料金はテスト設定（TEST_ONLY）です。APIキー再発行料は1回500円（税込）です。'));
+    if (invoiceData.stripe?.test_mode) invoicePanel.append(element('p', 'invoice-test-warning', 'カード決済はStripeテストモードです。テスト用カードでのみ決済され、実際の請求は発生しません。'));
+    else if (invoiceData.stripe?.configured && !invoiceData.stripe.enabled) invoicePanel.append(element('p', 'invoice-test-warning', 'カード決済の設定はありますが、現在は無効です。管理者へお問い合わせください。'));
     const invoices = invoiceData.invoices || [];
     const periodSelect = document.createElement('select');
     periodSelect.setAttribute('aria-label', '請求書の対象月');
@@ -588,7 +695,21 @@
       if (Array.isArray(sections) && sections.length) { const sectionPanel = panel('テナント・環境別の集計'); sectionPanel.append(table(['テナント', '環境', '全リクエスト', '課金対象', 'API利用額'], sections.map((section) => [section.tenant_name || section.tenant_slug, section.environment, section.total_requests, section.billable_requests, `¥${section.total_charge_yen}`]))); breakdown.append(sectionPanel); }
       const totals = element('dl', 'invoice-totals'); [['小計', invoice.subtotal_yen], [`消費税（${(invoice.tax_rate_basis_points / 100).toFixed(2)}%）`, invoice.tax_yen], ['調整額', invoice.adjustment_yen], ['合計（税込）', invoice.total_yen]].forEach(([label, value], index) => { totals.append(element('dt', index === 3 ? 'total' : '', label), element('dd', index === 3 ? 'total' : '', `¥${text(value)}`)); });
       const foot = element('div', 'invoice-foot'); if (invoice.notes) foot.append(element('p', '', invoice.notes)); foot.append(element('p', '', '金額は請求書発行時点の確定スナップショットです。')); doc.append(breakdown, totals, foot);
-      const actions = element('div', 'invoice-actions no-print'); actions.append(button('← 請求書一覧', () => billingPage(period, selectedPeriod).catch((error) => notice(error.message, true))), button('印刷・PDF保存', () => { document.body.classList.add('print-invoice'); window.print(); window.setTimeout(() => document.body.classList.remove('print-invoice'), 500); }, 'button-primary'));
+      const actions = element('div', 'invoice-actions no-print'); actions.append(button('← 請求書一覧', () => billingPage(period, selectedPeriod).catch((error) => notice(error.message, true))));
+      if (invoice.status === 'issued' && invoiceData.stripe?.enabled && state.tenantSsoSession) {
+        const open = invoice.stripe_payment && invoice.stripe_payment.status === 'open';
+        const pay = button(open ? 'カードで支払いを続ける' : 'カードで支払う', async () => {
+          pay.disabled = true;
+          try {
+            const result = await api('/api/baas/v1/tenant-sso.php', { method: 'POST', body: { action: 'create_invoice_checkout', invoice_id: invoice.id } });
+            if (result.checkout_url) { notice('Stripeの決済画面へ移動します。'); window.location.assign(result.checkout_url); return; }
+            pay.disabled = false;
+          } catch (error) { pay.disabled = false; notice(error.message, true); if (String(error.message).includes('完了')) billingPage(period, selectedPeriod).catch(() => {}); }
+        }, open ? 'button-secondary' : 'button-primary');
+        actions.append(pay);
+        actions.append(element('p', 'form-foot', invoiceData.stripe.test_mode ? 'Stripeテストモード（テストカードのみ）· 決済後にWebhookで請求書が入金済みになります。' : 'カード決済後、Webhookで請求書が入金済みになります。'));
+      }
+      actions.append(button('印刷・PDF保存', () => { document.body.classList.add('print-invoice'); window.print(); window.setTimeout(() => document.body.classList.remove('print-invoice'), 500); }, 'button-primary'));
       shell(doc); $('page-content').append(actions);
     };
     visibleInvoices.forEach((invoice) => { const card = element('button', 'invoice-row'); card.type = 'button'; const left = element('span'); left.append(element('strong', '', `${invoice.billing_period} · ${invoice.invoice_number}`), element('small', '', `発行日 ${invoice.issue_date} · 期限 ${invoice.due_date}`)); const right = element('span', 'invoice-row-total'); right.append(element('strong', '', `¥${invoice.total_yen}`), statusBadge(invoice.status)); card.append(left, right); card.addEventListener('click', () => showInvoice(invoice)); invoiceList.append(card); });

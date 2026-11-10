@@ -20,6 +20,7 @@ ARTICLES = [
     ("docs/PRODUCT-KEY-ISSUANCE-V8.md", "BaaS-Contractor", "api"),
     ("docs/LICENSE-AUTHENTICATION-OPERATIONS.md", "BaaS-Contractor", "authentication"),
     ("docs/MNSL-SSO-ISSUE-HELP.md", "MyNumberSmartLogin", "operations"),
+    ("docs/BILLING-STRIPE-SANDBOX.md", "BaaS-Operator", "billing"),
 ]
 
 

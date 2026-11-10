@@ -126,6 +126,7 @@ PORTED_ROUTES = {
     "/api/baas/v1/sandbox-keys.php",
     "/api/baas/v1/sample-sdk-keys.php",
     "/api/baas/v1/sample-sdk-activate.php",
+    "/api/stripe/webhook.php",
     "/ha/bootstrap.php",
 }
 PARTIALLY_PORTED_ROUTES = {

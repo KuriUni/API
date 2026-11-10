@@ -1137,6 +1137,11 @@
       "path": "/license/api/v4/migrate.php",
       "access": "endpoint_or_include",
       "native_only": true
+    },
+    {
+      "path": "/api/stripe/webhook.php",
+      "source": "api/stripe/webhook.php",
+      "access": "endpoint_or_include"
     }
   ]
 }

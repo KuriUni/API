@@ -20,6 +20,10 @@ SECRET_ENV = {
     "common_id_sso_clients": "PYTHON_MIGRATION_COMMON_ID_SSO_CLIENTS_JSON",
     "common_id_sso_demo_client_secret": "PYTHON_MIGRATION_SSO_DEMO_CLIENT_SECRET",
     "ha_sync_token": "PYTHON_MIGRATION_HA_SYNC_TOKEN",
+    "stripe_secret_key": "PYTHON_MIGRATION_STRIPE_SECRET_KEY",
+    "stripe_webhook_secret": "PYTHON_MIGRATION_STRIPE_WEBHOOK_SECRET",
+    "stripe_enable_live": "PYTHON_MIGRATION_STRIPE_ENABLE_LIVE",
+    "stripe_return_base_url": "PYTHON_MIGRATION_STRIPE_RETURN_BASE_URL",
 }
 
 

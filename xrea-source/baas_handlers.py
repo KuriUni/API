@@ -580,6 +580,43 @@ def tenant_sso(request_context):
                 allowed = {'sso_reauthentication_required', 'tenant_sso_session_required', 'server_not_writable', 'key_reissue_fee_confirmation_required', 'key_reissue_request_id_required', 'key_reissue_not_available', 'invalid_portal_session', 'key_reissue_request_owner_mismatch', 'key_reissue_result_expired', 'key_reissue_scope_mismatch', 'key_reissue_billing_unavailable'}
                 error = str(exc) if str(exc) in allowed else 'key_reissue_failed'
                 return _tenant_sso_reply(428 if error == 'sso_reauthentication_required' else 409, {'ok': False, 'error': error})
+        if action == 'billing_methods':
+            try:
+                from stripe_billing import public_settings
+                stripe = public_settings()
+            except Exception:
+                stripe = {'configured': False, 'enabled': False, 'mode': '', 'test_mode': False}
+            return _tenant_sso_reply(200, {'ok': True, 'stripe': stripe,
+                                           'key_reissue': {'amount_yen': 500, 'immediate': bool(stripe.get('enabled'))}})
+        if action == 'create_key_reissue_checkout':
+            from stripe_billing import StripeError as ReissueStripeError, create_key_reissue_checkout
+            try:
+                client, _, _ = _authorize_key(connection, request_context, 'tenant:read', 'tenant_sso.create_key_reissue_checkout', uuid.uuid4().hex[:16])
+                return _tenant_sso_reply(200, create_key_reissue_checkout(connection, client, data, request_context))
+            except ReissueStripeError as exc:
+                allowed = {'stripe_not_configured', 'tenant_sso_session_required', 'sso_reauthentication_required', 'key_reissue_fee_confirmation_required', 'key_reissue_request_id_required', 'key_reissue_not_available', 'key_reissue_scope_mismatch', 'key_reissue_result_ready', 'key_reissue_pending', 'stripe_live_sandbox_blocked', 'stripe_checkout_failed', 'server_not_writable'}
+                error = str(exc) if str(exc) in allowed else 'stripe_checkout_failed'
+                status = 428 if error == 'sso_reauthentication_required' else (503 if error in ('stripe_not_configured', 'server_not_writable', 'stripe_checkout_failed') else 409)
+                return _tenant_sso_reply(status, {'ok': False, 'error': error})
+        if action == 'key_reissue_result':
+            from stripe_billing import StripeError as ResultStripeError, key_reissue_result
+            try:
+                client, _, _ = _authorize_key(connection, request_context, 'tenant:read', 'tenant_sso.key_reissue_result', uuid.uuid4().hex[:16])
+                return _tenant_sso_reply(200, key_reissue_result(connection, client, data, request_context))
+            except ResultStripeError as exc:
+                allowed = {'tenant_sso_session_required', 'key_reissue_request_id_required', 'key_reissue_not_available', 'key_reissue_pending', 'key_reissue_result_expired', 'key_reissue_failed'}
+                error = str(exc) if str(exc) in allowed else 'key_reissue_failed'
+                return _tenant_sso_reply(409 if error != 'key_reissue_failed' else 503, {'ok': False, 'error': error})
+        if action == 'create_invoice_checkout':
+            from stripe_billing import StripeError, create_checkout
+            try:
+                client, _, _ = _authorize_key(connection, request_context, 'tenant:read', 'billing.checkout', uuid.uuid4().hex[:16])
+                return _tenant_sso_reply(200, create_checkout(connection, client, data, request_context))
+            except StripeError as exc:
+                allowed = {'stripe_not_configured', 'tenant_sso_session_required', 'invalid_invoice', 'invoice_not_found', 'invoice_not_payable', 'invoice_amount_invalid', 'invoice_amount_too_small', 'stripe_checkout_completed', 'stripe_live_sandbox_blocked', 'server_not_writable'}
+                error = str(exc) if str(exc) in allowed else 'stripe_checkout_failed'
+                status = 503 if error in ('stripe_not_configured',) else (409 if error != 'stripe_checkout_failed' else 503)
+                return _tenant_sso_reply(status, {'ok': False, 'error': error})
         return _tenant_sso_reply(400, {'ok': False, 'error': 'invalid_action'})
     except BaaSError as exc:
         return _tenant_sso_reply(exc.status, {'ok': False, 'error': exc.error, **exc.extra})
@@ -729,20 +766,21 @@ def invoices(request_context):
         connection = database.connect()
         client, headers, ip_hash = _authorize_key(connection, request_context, 'tenant:read', 'billing.invoices', rid)
         tenant_id = int(client['tenant_id'])
+        account_id = int(client.get('parent_tenant_id') or tenant_id)
         with connection.cursor() as cursor:
             cursor.execute("SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='api_billing_invoices'")
             if int(_column_value(cursor.fetchone()) or 0) == 0:
                 invoice_rows, periods = ([], [])
             else:
                 sql = "SELECT id,invoice_number,billing_period,customer_name,issuer_name,issuer_registration_number,issue_date,due_date,tax_rate_basis_points,subtotal_units,tax_units,adjustment_units,total_units,status,notes,snapshot_json,issued_at,paid_at FROM api_billing_invoices WHERE account_tenant_id=%s AND status IN ('issued','paid')"
-                args = [tenant_id]
+                args = [account_id]
                 if period:
                     sql += ' AND billing_period=%s'
                     args.append(period)
                 sql += ' ORDER BY billing_period DESC,id DESC LIMIT 120'
                 cursor.execute(sql, tuple(args))
                 invoice_rows = cursor.fetchall()
-                cursor.execute("SELECT DISTINCT billing_period FROM api_billing_invoices WHERE account_tenant_id=%s AND status IN ('issued','paid') ORDER BY billing_period DESC LIMIT 120", (tenant_id,))
+                cursor.execute("SELECT DISTINCT billing_period FROM api_billing_invoices WHERE account_tenant_id=%s AND status IN ('issued','paid') ORDER BY billing_period DESC LIMIT 120", (account_id,))
                 period_rows = cursor.fetchall()
                 periods = [row.get('billing_period') for row in period_rows]
         converted = []
@@ -762,8 +800,24 @@ def invoices(request_context):
             row['total_yen'] = credit(row['total_units'])
             row['snapshot'] = snapshot
             converted.append(row)
+        try:
+            from stripe_billing import public_settings
+            stripe = public_settings()
+        except Exception:
+            stripe = {'configured': False, 'enabled': False, 'mode': ''}
+        payments = {}
+        if stripe.get('configured'):
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT invoice_id,status,mode,expires_at FROM stripe_invoice_payments WHERE account_tenant_id=%s ORDER BY id DESC LIMIT 240", (account_id,))
+                    for item in cursor.fetchall():
+                        payments.setdefault(int(item['invoice_id']), {'status': str(item['status']), 'mode': str(item['mode']), 'expires_at_utc': str(item.get('expires_at') or '')})
+            except Exception:
+                payments = {}
+        for row in converted:
+            row['stripe_payment'] = payments.get(int(row['id']))
         _usage(connection, client, 'billing.invoices', 200, rid, ip_hash)
-        return _reply(200, {'ok': True, 'request_id': rid, 'currency': 'JPY', 'unit_definition': '1 credit = 1 JPY equivalent; amount precision is 0.001 JPY', 'mode': RULES['mode'], 'production_ready': RULES['production_ready'], 'invoices': converted, 'periods': periods}, headers)
+        return _reply(200, {'ok': True, 'request_id': rid, 'currency': 'JPY', 'unit_definition': '1 credit = 1 JPY equivalent; amount precision is 0.001 JPY', 'mode': RULES['mode'], 'production_ready': RULES['production_ready'], 'invoices': converted, 'periods': periods, 'stripe': stripe}, headers)
     except BaaSError as exc:
         return _reply(exc.status, {'ok': False, 'error': exc.error, **exc.extra})
     except database.DatabaseConfigurationError:
