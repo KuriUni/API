@@ -30,6 +30,8 @@ class SqlCursor:
     def execute(self, sql, args=()):
         self.sql = sql; self.owner.statements.append(sql)
         sql = sql.replace('(UTC_TIMESTAMP() - INTERVAL 900 SECOND)', "datetime('now','-900 seconds')")
+        if "information_schema.tables" in sql:
+            sql = "SELECT 0 AS n"
         sql = sql.replace('UTC_TIMESTAMP()', 'CURRENT_TIMESTAMP').replace('%s', '?').replace(' FOR UPDATE', '')
         self.cursor.execute(sql, args)
     def fetchone(self):
