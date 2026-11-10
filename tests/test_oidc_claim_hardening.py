@@ -73,7 +73,17 @@ class OidcIdTokenClaimHardeningTests(unittest.TestCase):
 
     def test_rejects_expiration_before_issue_time(self):
         now = int(time.time())
-        token = self._token(overrides={"iat": now - 30, "exp": now - 1})
+        token = self._token(overrides={"iat": now + 30, "exp": now + 20})
+        with self.assertRaisesRegex(RuntimeError, "oidc_claims_invalid"):
+            self._verify(token)
+
+    def test_rejects_string_numeric_dates(self):
+        token = self._token(overrides={"iat": str(int(time.time()) - 30)})
+        with self.assertRaisesRegex(RuntimeError, "oidc_claims_invalid"):
+            self._verify(token)
+
+    def test_rejects_boolean_numeric_dates(self):
+        token = self._token(overrides={"nbf": True})
         with self.assertRaisesRegex(RuntimeError, "oidc_claims_invalid"):
             self._verify(token)
 
