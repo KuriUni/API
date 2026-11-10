@@ -27,7 +27,9 @@ class SubmissionTests(unittest.TestCase):
     def test_async_submission_never_runs_an_inline_worker(self):
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
-        cursor.fetchone.side_effect = [{'id': 1}, {'max_licenses': 100}, None] + [{'n': 0}] * 5
+        # Submission now checks legacy issuance tables and all historical
+        # engine queues before reserving tenant quota.
+        cursor.fetchone.side_effect = [{'id': 1}, {'max_licenses': 100}, None] + [{'n': 0}] * 20
         job = dict(id=1, job_id=JOB_ID, status='queued', requested_count=1,
                    environment='sandbox', product_id=1, license_mode='single')
         with patch('database.connect', return_value=connection), patch.object(v8, '_preflight', return_value=None), \
