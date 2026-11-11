@@ -327,13 +327,35 @@ def _load_session(connection, workspace, token, kind, lock=False):
     if not isinstance(token, str) or len(token) > 200 or not token.startswith(prefix):
         return None
     column = 'refresh_hash' if kind == 'refresh' else 'access_hash'
+    if lock:
+        # Refresh時はセッション行だけを先にロックする。
+        # JOIN ... FOR UPDATE は端末・ライセンス行やインデックス範囲まで
+        # ロックし、同じ旧Refresh Tokenの並行更新でデッドロックを招くため分離する。
+        with connection.cursor() as cursor:
+            cursor.execute(
+                'SELECT id FROM sunabar_v4_sessions '
+                'WHERE workspace_id=%s AND ' + column + '=%s LIMIT 1 FOR UPDATE',
+                (workspace, _token_hash(token)))
+            locked = cursor.fetchone()
+        if not locked:
+            return None
+        session_id = int(locked['id'])
+        with connection.cursor() as cursor:
+            cursor.execute(
+                'SELECT s.*,d.device_hash,d.public_key_pem,d.key_thumbprint,d.key_algorithm,'
+                'd.revoked_at AS device_revoked_at,l.status AS license_status,'
+                'l.expires_at AS license_expires_at '
+                'FROM sunabar_v4_sessions s '
+                'JOIN sunabar_v4_devices d ON d.id=s.device_id '
+                'JOIN sunabar_licenses l ON l.license_id=s.license_id AND l.workspace_id=s.workspace_id '
+                'WHERE s.id=%s AND s.workspace_id=%s LIMIT 1',
+                (session_id, workspace))
+            return cursor.fetchone()
     sql = ('SELECT s.*,d.device_hash,d.public_key_pem,d.key_thumbprint,d.key_algorithm,d.revoked_at AS device_revoked_at,'
            'l.status AS license_status,l.expires_at AS license_expires_at '
            'FROM sunabar_v4_sessions s JOIN sunabar_v4_devices d ON d.id=s.device_id '
            'JOIN sunabar_licenses l ON l.license_id=s.license_id AND l.workspace_id=s.workspace_id '
            'WHERE s.workspace_id=%s AND s.' + column + '=%s LIMIT 1')
-    if lock:
-        sql += ' FOR UPDATE'
     with connection.cursor() as cursor:
         cursor.execute(sql, (workspace, _token_hash(token)))
         return cursor.fetchone()
