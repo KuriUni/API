@@ -192,14 +192,16 @@ def _api(method, path, params=None, config=None, idempotency_key=''):
         with urlopen(request, timeout=20, context=ssl.create_default_context()) as response:
             raw = response.read(1024 * 1024 + 1)
     except urllib.error.HTTPError as exc:
-        detail = ''
+        # Do not propagate Stripe's response body: it can contain customer or
+        # account details and is not needed by callers to handle the failure.
         try:
-            detail = str(exc.read(4096).decode('utf-8', 'replace'))
+            exc.read(4096)
         except Exception:
-            detail = ''
-        raise StripeError('stripe_api_error:' + str(getattr(exc, 'code', '')) + ':' + detail[:200])
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        raise StripeError('stripe_unreachable:' + str(exc)[:120])
+            pass
+        raise StripeError('stripe_api_error:' + str(getattr(exc, 'code', '')))
+    except (urllib.error.URLError, OSError, ValueError):
+        # Network exception strings may include internal host/proxy details.
+        raise StripeError('stripe_unreachable')
     if len(raw) > 1024 * 1024:
         raise StripeError('stripe_response_too_large')
     try:
@@ -288,20 +290,32 @@ def create_checkout(connection, client, data, request_context):
 
     existing = _open_payment(connection, invoice_id)
     if existing and existing.get('mode') == config['mode']:
+        # A concurrent request may observe the row while the first request is
+        # creating the Stripe Session. Never expire that row and create a
+        # second Session: the first request owns the idempotency key.
+        if str(existing.get('status') or '') == 'creating' and not existing.get('checkout_session_id'):
+            raise StripeError('stripe_checkout_initializing')
         if existing.get('checkout_session_id') and not _expired(existing):
             try:
                 session = _api('GET', 'checkout/sessions/' + str(existing['checkout_session_id']), config=config)
             except StripeError:
-                session = None
-            if session and session.get('status') == 'open' and session.get('url'):
+                # A transient Stripe/network error is not evidence that the
+                # existing Session expired. Fail closed rather than duplicate it.
+                raise StripeError('stripe_checkout_status_unavailable')
+            if session.get('status') == 'open' and session.get('url'):
                 with connection.cursor() as cursor:
                     cursor.execute('UPDATE stripe_invoice_payments SET checkout_url=%s,updated_at=UTC_TIMESTAMP() WHERE id=%s', (str(session['url'])[:512], int(existing['id'])))
                 connection.commit()
                 return {'ok': True, 'checkout_url': str(session['url']), 'payment_id': int(existing['id']),
                         'invoice_id': invoice_id, 'amount_yen': int(existing['amount_yen']),
                         'mode': config['mode'], 'expires_at_utc': _utc_text(existing.get('expires_at')), 'reused': True}
-            if session and session.get('status') == 'complete':
+            if session.get('status') == 'complete':
                 raise StripeError('stripe_checkout_completed')
+            if session.get('status') != 'expired':
+                raise StripeError('stripe_checkout_status_unavailable')
+        elif existing.get('checkout_session_id') and _expired(existing):
+            # Locally expired rows are only retired after the expiry timestamp.
+            pass
         with connection.cursor() as cursor:
             cursor.execute("UPDATE stripe_invoice_payments SET status='expired',updated_at=UTC_TIMESTAMP() WHERE id=%s AND status IN ('creating','open')", (int(existing['id']),))
         connection.commit()
@@ -348,12 +362,18 @@ def create_checkout(connection, client, data, request_context):
 
 
 def _record_event(connection, event_id, event_type, mode, status='received', message='', invoice_id=None, payment_id=None, processed=False):
+    # The event_id primary key is the concurrency boundary. A single
+    # INSERT..ON DUPLICATE KEY UPDATE avoids the SELECT-then-INSERT race when
+    # Stripe retries the same event concurrently on multiple workers.
+    processed_at = _now().strftime('%Y-%m-%d %H:%M:%S') if processed else None
     with connection.cursor() as cursor:
-        cursor.execute('SELECT event_id FROM stripe_webhook_events WHERE event_id=%s LIMIT 1', (event_id,))
-        if cursor.fetchone():
-            cursor.execute('UPDATE stripe_webhook_events SET status=%s,message=%s,invoice_id=%s,payment_id=%s,processed_at=UTC_TIMESTAMP() WHERE event_id=%s', (status, message[:255], invoice_id, payment_id, event_id))
-        else:
-            cursor.execute('INSERT INTO stripe_webhook_events(event_id,event_type,mode,status,message,invoice_id,payment_id,processed_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)', (event_id, event_type[:80], mode, status, message[:255], invoice_id, payment_id, (_now().strftime('%Y-%m-%d %H:%M:%S') if processed else None)))
+        cursor.execute(
+            'INSERT INTO stripe_webhook_events(event_id,event_type,mode,status,message,invoice_id,payment_id,processed_at) '
+            'VALUES(%s,%s,%s,%s,%s,%s,%s,%s) '
+            'ON DUPLICATE KEY UPDATE event_type=VALUES(event_type),mode=VALUES(mode),status=VALUES(status),'
+            'message=VALUES(message),invoice_id=VALUES(invoice_id),payment_id=VALUES(payment_id),'
+            'processed_at=COALESCE(VALUES(processed_at),processed_at)',
+            (event_id, event_type[:80], mode, status, message[:255], invoice_id, payment_id, processed_at))
 
 
 def _complete_payment(connection, payment, session, request_context):
@@ -373,6 +393,13 @@ def _complete_payment(connection, payment, session, request_context):
             if str(current.get('status')) == 'completed':
                 connection.commit()
                 return 'already_completed'
+            # Only an active Checkout Session may settle an invoice. Late or
+            # replayed completion events must not revive failed/expired rows.
+            if str(current.get('status')) not in ('open', 'creating'):
+                connection.commit()
+                return 'payment_not_open'
+            if str(session.get('id') or '') != str(current.get('checkout_session_id') or ''):
+                raise StripeError('stripe_session_mismatch')
             if str(invoice.get('status')) == 'paid':
                 cursor.execute("UPDATE stripe_invoice_payments SET status='completed',completed_at=COALESCE(completed_at,UTC_TIMESTAMP()),updated_at=UTC_TIMESTAMP() WHERE id=%s", (int(payment['id']),))
                 connection.commit()
