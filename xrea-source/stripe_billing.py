@@ -457,7 +457,7 @@ def suspend_overdue_invoices(connection, limit=200):
                     connection.commit()
                     continue
                 cursor.execute(
-                    "INSERT IGNORE INTO stripe_billing_key_suspensions(invoice_id,tenant_id,client_id) "
+                    "INSERT IGNORE INTO stripe_billing_key_suspensions(invoice_id,tenant_id,client_id,previous_status) "
                     "SELECT %s,c.tenant_id,c.id,COALESCE((SELECT s0.previous_status "
                     "FROM stripe_billing_key_suspensions s0 WHERE s0.client_id=c.id "
                     "AND s0.restored_at IS NULL ORDER BY s0.id LIMIT 1),c.status) "
