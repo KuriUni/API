@@ -373,6 +373,69 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertEqual(rejected["error_code"], "SESSION_REVOKED")
 
+    def test_inactive_or_expired_license_blocks_existing_access_tokens(self):
+        def reply(status, payload):
+            return status, payload
+
+        token = "v4.a." + ("L" * 64)
+        connection = self.connect()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("UPDATE sunabar_v4_sessions SET access_hash=%s WHERE session_id=%s",
+                               (sunabar_v4._token_hash(token), self.session_id))
+                cursor.execute("UPDATE sunabar_licenses SET status='suspended' "
+                               "WHERE workspace_id=%s AND license_id=%s",
+                               (self.workspace, "integration-license"))
+            connection.commit()
+        finally:
+            connection.close()
+
+        headers = {"authorization": "Bearer " + token, "x-license-session": self.session_id}
+        status, response = sunabar_v4.handle_v4(
+            "verify", {"workspace": self.workspace}, {}, headers,
+            self.connect, reply, "suspended-license")
+        self.assertEqual(status, 401)
+        self.assertEqual(response["error_code"], "LICENSE_UNAVAILABLE")
+
+        connection = self.connect()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("UPDATE sunabar_licenses SET status='active',expires_at=%s "
+                               "WHERE workspace_id=%s AND license_id=%s",
+                               (int(sunabar_v4.time.time()) - 1, self.workspace, "integration-license"))
+            connection.commit()
+        finally:
+            connection.close()
+
+        status, response = sunabar_v4.handle_v4(
+            "verify", {"workspace": self.workspace}, {}, headers,
+            self.connect, reply, "expired-license")
+        self.assertEqual(status, 401)
+        self.assertEqual(response["error_code"], "LICENSE_UNAVAILABLE")
+
+    def test_expired_access_token_is_rejected_before_proof_validation(self):
+        def reply(status, payload):
+            return status, payload
+
+        token = "v4.a." + ("E" * 64)
+        connection = self.connect()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("UPDATE sunabar_v4_sessions SET access_hash=%s,access_expires_at=%s "
+                               "WHERE session_id=%s",
+                               (sunabar_v4._token_hash(token), int(sunabar_v4.time.time()) - 1,
+                                self.session_id))
+            connection.commit()
+        finally:
+            connection.close()
+
+        headers = {"authorization": "Bearer " + token, "x-license-session": self.session_id}
+        status, response = sunabar_v4.handle_v4(
+            "verify", {"workspace": self.workspace}, {}, headers,
+            self.connect, reply, "expired-access-token")
+        self.assertEqual(status, 401)
+        self.assertEqual(response["error_code"], "ACCESS_TOKEN_EXPIRED")
+
     def test_refresh_rotates_token_and_persists_only_hashes(self):
         with patch.object(sunabar_v4, "_require_proof", return_value=None):
             status, payload = self.invoke_refresh(self.old_refresh)
