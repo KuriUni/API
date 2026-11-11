@@ -67,7 +67,7 @@ SunabarはLicense API v4のオンライン認証フローもエミュレート�
    ```
 
 3. `activate` にライセンスキー、`device_fingerprint`（SHA-256 hex）、公開鍵、チャレンジ情報、署名を送ります。
-4. `verify` / `introspect` / `refresh` / `revoke` では、`X-License-Session`・`X-License-Timestamp`・`X-License-Nonce`・`X-License-Proof` を付け、`TUTI-LICENSE-V4` のリクエスト署名を送ります。更新は `refresh_token` を本文へ、その他はアクセストークンを `Authorization` へ指定します。
+4. `verify` / `introspect` / `refresh` / `reauth` / `revoke` では、`X-License-Session`・`X-License-Timestamp`・`X-License-Nonce`・`X-License-Proof` を付け、`TUTI-LICENSE-V4` のリクエスト署名を送ります。`refresh` と `reauth` は `refresh_token` を本文へ、その他はアクセストークンを `Authorization` へ指定します。
 
 `/license/api/v4/...` と `/license/api/sunabar/v4/...` のどちらのパスで署名しても検証します。Sunabarはデモ環境のため、オフラインチケット、v2からの移行、実製品用のオフライン署名鍵は提供しません（HTTP 501）。署名検証に必要な `openssl` がホストに無い場合もHTTP 503を返します。
 
