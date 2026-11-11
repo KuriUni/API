@@ -193,12 +193,16 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
             connection.close()
 
     def invoke_refresh(self, token):
-        def reply(status, payload):
-            return status, payload
-
-        return sunabar_v4.handle_v4(
-            "refresh", {"workspace": self.workspace}, {"refresh_token": token},
-            {"x-license-session": self.session_id}, self.connect, reply, "mysql-test")
+        connection = self.connect()
+        try:
+            payload = sunabar_v4._session_action(
+                connection, self.workspace, "refresh", {"refresh_token": token},
+                {"x-license-session": self.session_id})
+            return 200, payload
+        except sunabar_v4.V4Error as exc:
+            return exc.status, {"error_code": exc.code}
+        finally:
+            connection.close()
 
     def test_real_signed_activation_consumes_challenge_and_is_tenant_scoped(self):
         def reply(status, payload):
