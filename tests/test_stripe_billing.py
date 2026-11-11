@@ -673,4 +673,4 @@ class OverdueInvoiceKeySuspensionTests(unittest.TestCase):
             response = stripe_billing._handle_invoice_overdue(
                 connection, 'test', 'evt_overdue_71', 'invoice.overdue', invoice)
         suspend.assert_called_once()
-        self.assertIn('200 OK', response.status)
+        self.assertEqual(response.status_code, 200)
