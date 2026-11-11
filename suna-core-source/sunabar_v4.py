@@ -176,7 +176,7 @@ def _challenge(connection, workspace, data):
     challenge_id = secrets.token_hex(16)
     nonce = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b'=').decode('ascii')
     with connection.cursor() as cursor:
-        cursor.execute('DELETE FROM sunabar_v4_challenges WHERE expires_at<=%s', (now,))
+        cursor.execute('DELETE FROM sunabar_v4_challenges WHERE workspace_id=%s AND expires_at<=%s', (workspace, now))
         cursor.execute('INSERT INTO sunabar_v4_challenges(challenge_id,workspace_id,purpose,nonce_hash,key_thumbprint,expires_at) VALUES(%s,%s,%s,%s,%s,%s)',
                        (challenge_id, workspace, purpose, _hash(nonce), public_key['thumbprint'], now + 120))
     connection.commit()
@@ -290,13 +290,13 @@ def _activate(connection, workspace, data):
         cursor.execute('SELECT * FROM sunabar_v4_devices WHERE workspace_id=%s AND license_id=%s AND device_hash=%s LIMIT 1 FOR UPDATE',
                        (workspace, str(license_row['license_id']), device_hash))
         device = cursor.fetchone()
-        cursor.execute('SELECT id FROM sunabar_v4_devices WHERE license_id=%s AND key_thumbprint=%s AND device_hash<>%s LIMIT 1',
-                       (str(license_row['license_id']), public_key['thumbprint'], device_hash))
+        cursor.execute('SELECT id FROM sunabar_v4_devices WHERE workspace_id=%s AND license_id=%s AND key_thumbprint=%s AND device_hash<>%s LIMIT 1',
+                       (workspace, str(license_row['license_id']), public_key['thumbprint'], device_hash))
         if cursor.fetchone():
             raise V4Error(409, 'DEVICE_KEY_ALREADY_BOUND', 'This device key is already bound to another device.')
         if device is None:
-            cursor.execute('SELECT COUNT(*) AS count FROM sunabar_v4_devices WHERE license_id=%s AND revoked_at IS NULL',
-                           (str(license_row['license_id']),))
+            cursor.execute('SELECT COUNT(*) AS count FROM sunabar_v4_devices WHERE workspace_id=%s AND license_id=%s AND revoked_at IS NULL',
+                           (workspace, str(license_row['license_id'])))
             if int(cursor.fetchone()['count']) >= int(license_row['max_devices']):
                 raise V4Error(409, 'DEVICE_LIMIT_REACHED', 'This license reached its device limit.')
             cursor.execute('INSERT INTO sunabar_v4_devices(workspace_id,license_id,device_hash,public_key_pem,key_thumbprint,key_algorithm,device_label,app_version,bound_at,last_seen_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
