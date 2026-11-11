@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS `stripe_billing_key_suspensions` (
   `invoice_id` bigint(20) unsigned NOT NULL,
   `tenant_id` bigint(20) unsigned NOT NULL,
   `client_id` bigint(20) unsigned NOT NULL,
+  `previous_status` varchar(16) NOT NULL DEFAULT 'active',
   `suspended_at` datetime NOT NULL DEFAULT current_timestamp(),
   `restored_at` datetime DEFAULT NULL,
   PRIMARY KEY (`id`),
