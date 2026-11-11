@@ -41,9 +41,25 @@ https://2415.jp/license/api/stripe/webhook.php      （本番プレフィック�
 https://<sandbox-host>/license/python-migration/api/stripe/webhook.php  （移行検証環境）
 ```
 
-送信イベントは `invoice.paid` と `invoice.payment_failed` を登録します。APIキー再発行の即時決済は従来どおりCheckoutを使うため、`checkout.session.completed`、`checkout.session.expired`、`payment_intent.payment_failed` も残してください。署名シークレットを上記の `stripe_webhook_secret` に設定します。
+送信イベントは `invoice.paid`、`invoice.payment_failed`、`invoice.overdue` を登録します。`invoice.overdue` はStripe Automations側の期限超過通知設定に従って配信されるため、キー停止の正確な期限判定は後述の定期ワーカーを正とします。APIキー再発行の即時決済は従来どおりCheckoutを使うため、`checkout.session.completed`、`checkout.session.expired`、`payment_intent.payment_failed` も残してください。署名シークレットを上記の `stripe_webhook_secret` に設定します。
 
 Webhookはブラウザーや管理セッションではなく、`Stripe-Signature` のHMAC（`t` と `v1`、許容誤差300秒）で検証します。署名不一致はHTTP 400、設定不足はHTTP 503を返します。同じイベントIDは `stripe_webhook_events` で重複処理しません。
+
+## 支払期限超過時のAPIキー停止
+
+- 請求書の支払期限日は日本時間（JST）の当日23:59まで有効とし、翌日00:00 JST以降も請求書が `issued` のままなら、その請求書の請求先テナントに属する有効なAPIキーを停止します。
+- 停止状態は `tenant_api_clients.status=billing_hold` です。API認証は `active` / 有効な `retiring` のみを許可するため、停止後のキーは通常APIに利用できません。
+- どの請求書がキーを停止したかを `stripe_billing_key_suspensions` に記録します。複数の期限超過請求がある場合、1件の支払いだけではキーを復帰させません。
+- 入金Webhook `invoice.paid` を受け取ると、支払い済み請求書による停止記録を解消します。ほかに期限超過の未払い請求がなければ、請求処理が停止したキーのみ `active` に戻します。手動失効済みキーや別理由で停止されたキーは復帰させません。
+- 定期実行の本体は `xrea-source/stripe_overdue_worker.py` です。サーバーのCronに登録し、**5分ごと**に実行してください。デプロイ先の実パスとPython実行ファイルに合わせて設定します。
+
+Cron設定例（パスはサーバー環境に合わせて置き換え）:
+
+```cron
+*/5 * * * * cd /path/to/xrea-source && /path/to/python3 stripe_overdue_worker.py
+```
+
+ワーカーは最大1,000件ずつ期限超過請求を確認し、再実行しても同じ停止記録を重複作成しません。Webhookの `invoice.overdue` は補助トリガーとして利用し、Cronワーカーが停止処理の定期的な取りこぼしを防ぎます。
 
 ## Sandboxでのテスト手順
 

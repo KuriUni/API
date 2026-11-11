@@ -110,6 +110,18 @@ def ensure_schema(connection):
             PRIMARY KEY (event_id),
             KEY idx_stripe_event_status (status, received_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS stripe_billing_key_suspensions (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            invoice_id BIGINT UNSIGNED NOT NULL,
+            tenant_id BIGINT UNSIGNED NOT NULL,
+            client_id BIGINT UNSIGNED NOT NULL,
+            suspended_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            restored_at DATETIME NULL DEFAULT NULL,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_stripe_billing_suspension (invoice_id, client_id),
+            KEY idx_stripe_billing_suspension_client (client_id, restored_at),
+            KEY idx_stripe_billing_suspension_invoice (invoice_id, restored_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
         cursor.execute("""CREATE TABLE IF NOT EXISTS stripe_key_reissue_payments (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             tenant_id BIGINT UNSIGNED NOT NULL,
@@ -405,6 +417,107 @@ def create_checkout(connection, client, data, request_context):
     return {'ok': True, 'checkout_url': url, 'payment_id': payment_id, 'invoice_id': invoice_id,
             'amount_yen': int(amount_yen), 'mode': config['mode'],
             'expires_at_utc': expires_at.strftime('%Y-%m-%d %H:%M:%S'), 'reused': False}
+
+def suspend_overdue_invoices(connection, limit=200):
+    """Suspend tenant API keys for issued invoices past their inclusive due date.
+
+    The due date remains payable through that calendar day. Suspension begins
+    at 00:00 JST on the following date. Only keys that were active at suspension time
+    are recorded, and a distinct billing_hold state prevents accidental
+    reactivation of keys disabled for another reason.
+    """
+    from v3_handlers import _assert_write_fence
+    _assert_write_fence(connection)
+    ensure_schema(connection)
+    try:
+        batch_limit = max(1, min(1000, int(limit)))
+    except (TypeError, ValueError):
+        batch_limit = 200
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT id,account_tenant_id FROM api_billing_invoices "
+            "WHERE status='issued' AND due_date<DATE(UTC_TIMESTAMP() + INTERVAL 9 HOUR) "
+            "ORDER BY due_date,id LIMIT %s",
+            (batch_limit,),
+        )
+        invoices = list(cursor.fetchall() or [])
+    suspended = 0
+    for invoice in invoices:
+        invoice_id = int(invoice['id'])
+        tenant_id = int(invoice['account_tenant_id'])
+        connection.begin()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id,account_tenant_id,status,due_date FROM api_billing_invoices "
+                    "WHERE id=%s AND status='issued' AND due_date<DATE(UTC_TIMESTAMP() + INTERVAL 9 HOUR) FOR UPDATE", (invoice_id,))
+                current = cursor.fetchone()
+                if (not current or int(current.get('account_tenant_id') or 0) != tenant_id
+                        or str(current.get('status') or '') != 'issued'):
+                    connection.commit()
+                    continue
+                cursor.execute(
+                    "INSERT IGNORE INTO stripe_billing_key_suspensions(invoice_id,tenant_id,client_id,previous_status) "
+                    "SELECT %s,c.tenant_id,c.id,COALESCE((SELECT s0.previous_status "
+                    "FROM stripe_billing_key_suspensions s0 WHERE s0.client_id=c.id "
+                    "AND s0.restored_at IS NULL ORDER BY s0.id LIMIT 1),c.status) "
+                    "FROM tenant_api_clients c "
+                    "WHERE c.tenant_id=%s AND c.status IN ('active','retiring','billing_hold') "
+                    "AND c.revoked_at IS NULL",
+                    (invoice_id, tenant_id),
+                )
+                cursor.execute(
+                    "UPDATE tenant_api_clients c "
+                    "JOIN stripe_billing_key_suspensions s ON s.client_id=c.id AND s.invoice_id=%s "
+                    "SET c.status='billing_hold' "
+                    "WHERE c.tenant_id=%s AND c.status IN ('active','retiring') AND c.revoked_at IS NULL",
+                    (invoice_id, tenant_id),
+                )
+                suspended += int(cursor.rowcount or 0)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+    return {'overdue_invoices_checked': len(invoices), 'keys_suspended': suspended}
+
+
+def restore_billing_suspended_keys(connection, invoice_id):
+    """Restore only keys suspended by billing when no other overdue invoice remains."""
+    try:
+        invoice_id = int(invoice_id)
+    except (TypeError, ValueError):
+        return 0
+    if invoice_id < 1:
+        return 0
+    from v3_handlers import _assert_write_fence
+    _assert_write_fence(connection)
+    ensure_schema(connection)
+    connection.begin()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE stripe_billing_key_suspensions SET restored_at=UTC_TIMESTAMP() "
+                "WHERE invoice_id=%s AND restored_at IS NULL", (invoice_id,))
+            cursor.execute(
+                "UPDATE tenant_api_clients c "
+                "JOIN stripe_billing_key_suspensions s ON s.client_id=c.id AND s.invoice_id=%s "
+                "SET c.status=s.previous_status "
+                "WHERE c.status='billing_hold' AND c.revoked_at IS NULL "
+                "AND NOT EXISTS ("
+                " SELECT 1 FROM stripe_billing_key_suspensions s2 "
+                " JOIN api_billing_invoices i2 ON i2.id=s2.invoice_id "
+                " WHERE s2.client_id=c.id AND s2.restored_at IS NULL "
+                " AND i2.status='issued' AND i2.due_date<DATE(UTC_TIMESTAMP() + INTERVAL 9 HOUR)"
+                ")",
+                (invoice_id,),
+            )
+            restored = int(cursor.rowcount or 0)
+        connection.commit()
+        return restored
+    except Exception:
+        connection.rollback()
+        raise
+
 
 def _record_event(connection, event_id, event_type, mode, status='received', message='', invoice_id=None, payment_id=None, processed=False):
     with connection.cursor() as cursor:
@@ -849,6 +962,8 @@ def webhook(request_context):
             return _handle_invoice_paid(connection, mode, event_id, event_type, event_object, request_context)
         if event_type == 'invoice.payment_failed':
             return _handle_invoice_payment_failed(connection, mode, event_id, event_type, event_object)
+        if event_type == 'invoice.overdue':
+            return _handle_invoice_overdue(connection, mode, event_id, event_type, event_object)
         if event_type == 'checkout.session.expired':
             return _handle_expired(connection, config, mode, event_id, event_type, event_object, request_context)
         if event_type == 'payment_intent.payment_failed':
@@ -925,6 +1040,11 @@ def _handle_invoice_paid(connection, mode, event_id, event_type, invoice, reques
         raise StripeError('stripe_amount_mismatch')
     normalized = {'amount_total': amount_paid, 'currency': invoice.get('currency'), 'payment_intent': invoice.get('payment_intent')}
     message = _complete_payment(connection, payment, normalized, request_context)
+    if message in ('paid', 'invoice_already_paid'):
+        # Register any other overdue invoices before deciding whether keys
+        # can safely be restored.
+        suspend_overdue_invoices(connection, limit=1000)
+        restore_billing_suspended_keys(connection, invoice_id)
     _record_event(connection, event_id, event_type, mode, 'processed' if message == 'paid' else 'ignored', message, invoice_id, payment_id, processed=True)
     connection.commit()
     if message in ('paid', 'invoice_already_paid'):
@@ -932,6 +1052,41 @@ def _handle_invoice_paid(connection, mode, event_id, event_type, invoice, reques
         _append_ha_audit('api_billing_invoice_paid', {'invoice_id': invoice_id, 'payment_id': payment_id, 'provider': 'stripe_invoice', 'mode': mode, 'amount_yen': amount_paid}, request_context)
         ha_sync_peer('api_billing_invoice_paid', request_context)
     return json_response('200 OK', {'ok': True, 'received': True, 'result': message})
+
+
+def _handle_invoice_overdue(connection, mode, event_id, event_type, invoice):
+    """Suspend the billed tenant's active API keys after the invoice due date."""
+    metadata = invoice.get('metadata') if isinstance(invoice.get('metadata'), dict) else {}
+    try:
+        payment_id = int(metadata.get('payment_id') or 0)
+        invoice_id = int(metadata.get('invoice_id') or 0)
+        account_id = int(metadata.get('account_tenant_id') or 0)
+    except (TypeError, ValueError):
+        payment_id = invoice_id = account_id = 0
+    stripe_invoice_id = str(invoice.get('id') or '')
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT * FROM stripe_invoice_payments WHERE id=%s AND invoice_id=%s "
+            "AND account_tenant_id=%s AND checkout_session_id=%s LIMIT 1",
+            (payment_id, invoice_id, account_id, stripe_invoice_id[:120]),
+        )
+        payment = cursor.fetchone()
+    if not payment or str(payment.get('mode') or '') != mode:
+        _record_event(connection, event_id, event_type, mode, 'ignored',
+                      'invoice_payment_not_found', invoice_id or None, payment_id or None, processed=True)
+        connection.commit()
+        return json_response('200 OK', {'ok': True, 'received': True, 'ignored': True})
+    if str(invoice.get('status') or '') == 'paid':
+        _record_event(connection, event_id, event_type, mode, 'ignored',
+                      'paid_invoice_waiting_for_invoice_paid_event', invoice_id, payment_id, processed=True)
+        connection.commit()
+        return json_response('200 OK', {'ok': True, 'received': True, 'ignored': True})
+    result = suspend_overdue_invoices(connection, limit=200)
+    _record_event(connection, event_id, event_type, mode, 'processed',
+                  'overdue_keys_suspended_%d' % int(result['keys_suspended']), invoice_id, payment_id, processed=True)
+    connection.commit()
+    return json_response('200 OK', {'ok': True, 'received': True,
+                                    'keys_suspended': int(result['keys_suspended'])})
 
 
 def _handle_invoice_payment_failed(connection, mode, event_id, event_type, invoice):
