@@ -358,7 +358,7 @@ def _require_proof(connection, session, action, data, headers, token):
     now = int(time.time())
     try:
         with connection.cursor() as cursor:
-            cursor.execute('DELETE FROM sunabar_v4_proofs WHERE expires_at<=%s', (now,))
+            cursor.execute('DELETE FROM sunabar_v4_proofs WHERE session_id=%s AND expires_at<=%s', (session_id, now))
             cursor.execute('INSERT INTO sunabar_v4_proofs(proof_hash,session_id,action,expires_at) VALUES(%s,%s,%s,%s)',
                            (proof_hash, session_id, action, now + 120))
     except Exception as exc:
