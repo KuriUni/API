@@ -368,7 +368,7 @@ def _require_proof(connection, session, action, data, headers, token):
 
 
 def _session(connection, workspace, action, data, headers):
-    kind = 'refresh' if action == 'refresh' else 'access'
+    kind = 'refresh' if action in ('refresh', 'reauth') else 'access'
     if kind == 'refresh':
         token = str(data.get('refresh_token', '')).strip()
     else:
