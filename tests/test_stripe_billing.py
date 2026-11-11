@@ -257,31 +257,46 @@ class CreateCheckoutTests(unittest.TestCase):
         return {'key_kind': 'tenant_sso', 'tenant_sso_session_id': 'x' * 43, 'tenant_id': 7,
                 'parent_tenant_id': None, 'tenant_environment': environment}
 
-    def _run(self, responses, environment='production', api_result=None):
+    def _run(self, responses, environment='production'):
         connection = FakeConnection(responses)
         config = {'enabled': True, 'mode': 'test', 'secret_key': 'sk_test_x', 'webhook_secret': 'whsec_x'}
-        result = api_result or {'id': 'cs_test_1', 'url': 'https://checkout.stripe.com/c/pay/1', 'expires_at': 1900000000}
+        api_calls = [
+            {'id': 'cus_privacy_1'},
+            {'id': 'in_test_1', 'status': 'draft'},
+            {'id': 'in_test_1', 'status': 'open', 'hosted_invoice_url': 'https://invoice.stripe.com/i/acct/test'},
+        ]
         with mock.patch.object(stripe_billing, 'settings', return_value=config), \
                 mock.patch.object(stripe_billing, 'ensure_schema'), \
-                mock.patch.object(stripe_billing, '_api', return_value=result), \
+                mock.patch.object(stripe_billing, '_api', side_effect=api_calls) as api_mock, \
                 mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
             created = stripe_billing.create_checkout(connection, self._client(environment), {'invoice_id': '11'},
-                                                     {'header:host': '2415.jp', 'https': 'on'})
-        return connection, created
+                                                     {'header:host': 'evil.example', 'https': 'on'})
+        return connection, created, api_mock
 
-    def test_creates_checkout_session_and_records_payment(self):
-        connection, created = self._run([
+    def test_creates_hosted_invoice_without_email_and_records_payment(self):
+        connection, created, api_mock = self._run([
             ('FROM api_billing_invoices', [{'id': 11, 'invoice_number': 'API-202611-000007', 'account_tenant_id': 7,
-                                            'total_units': 500500, 'status': 'issued'}]),
+                                            'total_units': 500500, 'status': 'issued', 'due_date': '2026-12-10'}]),
             ('FROM stripe_invoice_payments WHERE invoice_id', []),
         ])
-        self.assertEqual(created['checkout_url'], 'https://checkout.stripe.com/c/pay/1')
+        self.assertEqual(created['checkout_url'], 'https://invoice.stripe.com/i/acct/test')
         self.assertEqual(created['amount_yen'], 501)
         self.assertFalse(created['reused'])
         insert = [params for sql, params in connection.statements if sql.startswith('INSERT INTO stripe_invoice_payments')]
         self.assertEqual(insert[0][:4], (11, 7, 7, 501))
         update = [params for sql, params in connection.statements if 'SET checkout_session_id' in sql]
-        self.assertEqual(update[0][3], 42)
+        self.assertEqual(update[0][0], 'in_test_1')
+        self.assertEqual(update[0][4], 42)
+        customer_params = api_mock.call_args_list[0].args[2]
+        self.assertNotIn('email', customer_params)
+        self.assertFalse(any('email' in str(call.args[2]).lower() for call in api_mock.call_args_list))
+        self.assertEqual(api_mock.call_args_list[0].args[1], 'customers')
+        self.assertEqual(api_mock.call_args_list[1].args[1], 'invoiceitems')
+        self.assertEqual(api_mock.call_args_list[2].args[1], 'invoices')
+        self.assertEqual(api_mock.call_args_list[3].args[1], 'invoices/in_test_1/finalize')
+        invoice_params = api_mock.call_args_list[2].args[2]
+        self.assertEqual(invoice_params['collection_method'], 'send_invoice')
+        self.assertEqual(invoice_params['auto_advance'], 'false')
 
     def test_live_mode_is_blocked_for_sandbox_tenant(self):
         connection = FakeConnection([])
@@ -300,6 +315,21 @@ class CreateCheckoutTests(unittest.TestCase):
                 ('FROM api_billing_invoices', [{'id': 11, 'account_tenant_id': 99, 'total_units': 500500, 'status': 'issued'}]),
             ])
         self.assertEqual(str(caught.exception), 'invoice_not_found')
+
+    def test_customer_creation_failure_does_not_expose_email(self):
+        connection = FakeConnection([
+            ('FROM api_billing_invoices', [{'id': 11, 'invoice_number': 'API-11', 'account_tenant_id': 7,
+                                            'total_units': 500000, 'status': 'issued'}]),
+            ('FROM stripe_invoice_payments WHERE invoice_id', []),
+        ])
+        config = {'enabled': True, 'mode': 'test', 'secret_key': 'sk_test_x', 'webhook_secret': 'whsec_x'}
+        with mock.patch.object(stripe_billing, 'settings', return_value=config), \
+                mock.patch.object(stripe_billing, 'ensure_schema'), \
+                mock.patch.object(stripe_billing, '_api', side_effect=stripe_billing.StripeError('customer_error')), \
+                mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
+            with self.assertRaises(stripe_billing.StripeError):
+                stripe_billing.create_checkout(connection, self._client(), {'invoice_id': '11'}, {})
+        self.assertTrue(any("status='failed'" in sql for sql, _ in connection.statements))
 
 
 class CompletePaymentTests(unittest.TestCase):
