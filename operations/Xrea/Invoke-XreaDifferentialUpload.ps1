@@ -74,7 +74,11 @@ function Save-XreaDifferentialState {
         $json = $State | ConvertTo-Json -Depth 5
         $encoding = New-Object System.Text.UTF8Encoding($false)
         [System.IO.File]::WriteAllText($tempFile, $json, $encoding)
-        Move-Item -LiteralPath $tempFile -Destination $StateFile -Force
+        if (Test-Path -LiteralPath $StateFile -PathType Leaf) {
+            [System.IO.File]::Replace($tempFile, $StateFile, $null)
+        } else {
+            [System.IO.File]::Move($tempFile, $StateFile)
+        }
     }
     finally {
         if (Test-Path -LiteralPath $tempFile -PathType Leaf) {
