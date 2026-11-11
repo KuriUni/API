@@ -136,7 +136,8 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
                     proof_hash CHAR(64) NOT NULL PRIMARY KEY,
                     session_id CHAR(32) NOT NULL,
                     action VARCHAR(16) NOT NULL,
-                    expires_at BIGINT NOT NULL
+                    expires_at BIGINT NOT NULL,
+                    INDEX idx_sunabar_v4_proof_session_expiry (session_id, expires_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
             connection.commit()
         finally:
