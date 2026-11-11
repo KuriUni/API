@@ -21,7 +21,7 @@ RATE_MAX_IDENTITIES = 5000
 # All current _limited() windows are at most one hour. Keep only the longest
 # active window so a quiet identity cannot retain a full day's history.
 RATE_RETENTION_SECONDS = 3600
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 STATE_DIR = Path(__file__).resolve().parent / ".sunabar"
 sys.path.insert(0, str(Path(__file__).resolve().parent / "pymysql_vendor.zip"))
 import pymysql
@@ -124,7 +124,8 @@ _SCHEMA = (
         proof_hash CHAR(64) NOT NULL PRIMARY KEY,
         session_id CHAR(32) NOT NULL,
         action VARCHAR(16) NOT NULL,
-        expires_at BIGINT NOT NULL
+        expires_at BIGINT NOT NULL,
+        INDEX idx_sunabar_v4_proof_session_expiry (session_id, expires_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
 )
 PRODUCTS = [
@@ -222,6 +223,8 @@ def _ensure_schema(connection):
                     ("sunabar_licenses", "idx_sunabar_license_recent", "workspace_id, issued_at, license_id"),
                     ("sunabar_sessions", "idx_sunabar_session_license_expiry",
                      "workspace_id, license_id, refresh_expires_at, revoked_at"),
+                    ("sunabar_v4_proofs", "idx_sunabar_v4_proof_session_expiry",
+                     "session_id, expires_at"),
                 )
                 for table, name, columns in indexes:
                     cursor.execute("SHOW INDEX FROM `" + table + "` WHERE Key_name=%s", (name,))
