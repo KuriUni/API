@@ -69,6 +69,12 @@ function Save-XreaDifferentialState {
         [Parameter(Mandatory = $true)][string] $StateFile
     )
 
+    $stateDirectory = Split-Path -Parent $StateFile
+    if ([string]::IsNullOrWhiteSpace($stateDirectory)) {
+        throw "StateFile must include a parent directory: $StateFile"
+    }
+    [System.IO.Directory]::CreateDirectory($stateDirectory) | Out-Null
+
     $tempFile = $StateFile + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
     try {
         $json = $State | ConvertTo-Json -Depth 5
