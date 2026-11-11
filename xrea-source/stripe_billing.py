@@ -672,7 +672,10 @@ def _issue_key_reissue(connection, row, session, request_context):
             if str(current.get('status')) == 'issued':
                 connection.commit()
                 return 'already_issued'
-            if str(current.get('status')) not in ('paid', 'pending', 'creating'):
+            # Key issuance is permitted only after the webhook/reconciliation
+            # path has persisted a verified paid state. Never treat a merely
+            # pending/creating Checkout as proof of payment.
+            if str(current.get('status')) != 'paid':
                 connection.commit()
                 return 'ignored'
             cursor.execute("SELECT * FROM tenant_api_clients WHERE id=%s AND tenant_id=%s AND status='active' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP()) FOR UPDATE", (source_id, tenant))
