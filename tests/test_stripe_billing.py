@@ -423,6 +423,9 @@ class ReconcileReissueTests(unittest.TestCase):
             ('SELECT * FROM stripe_key_reissue_payments WHERE id', [dict(row, status='issued')]),
         ])
         session = {'id': 'cs_test_1', 'status': 'complete', 'payment_status': 'paid',
+                   'client_reference_id': 'reissue-3',
+                   'metadata': {'kind': 'key_reissue', 'reissue_id': '3', 'tenant_id': '7',
+                                'request_hash': 'a' * 64},
                    'amount_total': 500, 'currency': 'jpy', 'payment_intent': 'pi_test_1'}
         with mock.patch.object(stripe_billing, '_api', return_value=session), \
                 mock.patch.object(stripe_billing, '_issue_key_reissue', return_value='issued') as issue:
