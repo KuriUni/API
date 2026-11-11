@@ -517,3 +517,19 @@ class ReconcileReissueTests(unittest.TestCase):
         with mock.patch.object(stripe_billing, '_api', return_value={'id': 'cs_test_2', 'status': 'open'}):
             refreshed = stripe_billing._reconcile_key_reissue(connection, row, {'enabled': True})
         self.assertEqual(refreshed['status'], 'pending')
+
+
+class KeyReissuePaymentGateTests(unittest.TestCase):
+    def test_pending_checkout_cannot_issue_replacement_key(self):
+        pending = {'id': 9, 'tenant_id': 7, 'source_client_id': 3,
+                   'environment': 'production', 'status': 'pending'}
+        connection = FakeConnection([
+            ('SELECT id,status FROM tenants WHERE id', [{'id': 7, 'status': 'active'}]),
+            ('SELECT * FROM stripe_key_reissue_payments WHERE id', [pending]),
+        ])
+        with mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
+            result = stripe_billing._issue_key_reissue(
+                connection, pending, {'payment_intent': 'pi_unpaid'}, {})
+        self.assertEqual(result, 'ignored')
+        self.assertFalse([sql for sql, _ in connection.statements
+                          if sql.startswith('INSERT INTO tenant_api_clients')])
