@@ -174,10 +174,10 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
                      "統合試験ライセンス", "online", 3, "統合試験", self.now, self.now + 86400, "active"))
                 cursor.execute(
                     "INSERT INTO sunabar_v4_devices(id,workspace_id,license_id,device_hash,public_key_pem,"
-                    "key_thumbprint,key_algorithm,revoked_at,last_seen_at) "
-                    "VALUES(%s,%s,%s,%s,%s,%s,%s,NULL,%s)",
+                    "key_thumbprint,key_algorithm,bound_at,revoked_at,last_seen_at) "
+                    "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,NULL,%s)",
                     (self.device_id, self.workspace, "integration-license", "d" * 64,
-                     "test-public-key", "t" * 64, "RSA-SHA256", self.now))
+                     "test-public-key", "t" * 64, "RSA-SHA256", self.now, self.now))
                 cursor.execute(
                     "INSERT INTO sunabar_v4_sessions(session_id,family_id,workspace_id,license_id,"
                     "device_id,access_hash,refresh_hash,access_expires_at,refresh_expires_at,"
