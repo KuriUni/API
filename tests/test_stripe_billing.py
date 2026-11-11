@@ -224,19 +224,21 @@ class StripeSecurityRegressionTests(unittest.TestCase):
         self.assertIn('ON DUPLICATE KEY UPDATE', sql)
         self.assertNotIn('SELECT EVENT_ID', sql)
 
-    def test_expired_payment_cannot_be_completed_by_late_webhook(self):
-        expired = dict(CompletePaymentTests.payment, status='expired')
-        connection = FakeConnection([
-            ('FROM api_billing_invoices WHERE id', [{'id': 11, 'status': 'issued',
-                                                     'account_tenant_id': 7}]),
-            ('FROM stripe_invoice_payments WHERE id', [expired]),
-        ])
-        with mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
-            result = stripe_billing._complete_payment(
-                connection, expired, CompletePaymentTests.session, {})
-        self.assertEqual(result, 'payment_not_open')
-        self.assertFalse([sql for sql, _ in connection.statements
-                          if 'api_billing_invoices SET status' in sql])
+    def test_only_open_payment_can_be_completed_by_webhook(self):
+        for status in ('expired', 'failed', 'creating'):
+            with self.subTest(status=status):
+                payment = dict(CompletePaymentTests.payment, status=status)
+                connection = FakeConnection([
+                    ('FROM api_billing_invoices WHERE id', [{'id': 11, 'status': 'issued',
+                                                             'account_tenant_id': 7}]),
+                    ('FROM stripe_invoice_payments WHERE id', [payment]),
+                ])
+                with mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
+                    result = stripe_billing._complete_payment(
+                        connection, payment, CompletePaymentTests.session, {})
+                self.assertEqual(result, 'payment_not_open')
+                self.assertFalse([sql for sql, _ in connection.statements
+                                  if 'api_billing_invoices SET status' in sql])
 
     def test_mismatched_checkout_session_cannot_settle_payment(self):
         payment = dict(CompletePaymentTests.payment)
