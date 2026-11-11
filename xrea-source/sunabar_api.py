@@ -87,7 +87,9 @@ def _relay(request, route_name):
     }
     content_type = str(request.get("content_type") or request.get("header:content-type") or "")
     api_key = str(request.get("header:x-sunabar-api-key") or "").strip()
-    authorization = str(request.get("header:authorization") or "").strip()
+    authorization = str(request.get("header:authorization")
+                        or request.get("REDIRECT_HTTP_AUTHORIZATION")
+                        or request.get("redirect_http_authorization") or "").strip()
     if content_type:
         headers["Content-Type"] = content_type
     if api_key:
