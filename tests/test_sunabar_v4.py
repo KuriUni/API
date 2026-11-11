@@ -142,6 +142,7 @@ class ChallengeTests(unittest.TestCase):
 class RecordingCursor(FakeCursor):
     def __init__(self, connection):
         self.connection = connection
+        self.rowcount = 1
 
     def execute(self, query, params=None):
         self.connection.statements.append((query, params))
@@ -204,6 +205,26 @@ class V4TokenLifetimeTests(unittest.TestCase):
         self.assertEqual(payload["access_expires_in"], 300)
         self.assertEqual(payload["refresh_expires_in"], 14 * 86400)
         self.assertEqual(payload["refresh_after_seconds"], 240)
+
+
+    def test_expired_license_cannot_receive_session_tokens(self):
+        connection = RecordingConnection()
+        now = 1_800_000_000
+        original_time = sunabar_v4.time.time
+        sunabar_v4.time.time = lambda: now
+        try:
+            with self.assertRaises(sunabar_v4.V4Error) as raised:
+                sunabar_v4._new_tokens(
+                    connection, "workspace",
+                    {"license_id": "lic-expired", "expires_at": now},
+                    10)
+        finally:
+            sunabar_v4.time.time = original_time
+
+        self.assertEqual(raised.exception.status, 401)
+        self.assertEqual(raised.exception.code, "LICENSE_EXPIRED")
+        self.assertFalse(any("INSERT INTO sunabar_v4_sessions" in query
+                             for query, _ in connection.statements))
 
 
 class V4RefreshRotationTests(unittest.TestCase):
