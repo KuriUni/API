@@ -378,11 +378,23 @@ def _require_proof(connection, session, action, data, headers, token):
         raise V4Error(401, 'PROOF_SIGNATURE_INVALID', 'The request proof signature is not valid.')
     proof_hash = _hash(session_id + '|' + nonce)
     now = int(time.time())
+    # 同一セッションのProof消費を直列化し、期限切れ行の掃除とINSERTが
+    # 同時に走ってInnoDBのギャップロック競合を起こすことを防ぐ。
+    # 名前付きロックは接続が閉じられるまで保持される。
+    lock_name = 'sunabar-v4-proof:' + hashlib.sha256(session_id.encode('utf-8')).hexdigest()[:40]
     try:
         with connection.cursor() as cursor:
-            cursor.execute('DELETE FROM sunabar_v4_proofs WHERE session_id=%s AND expires_at<=%s', (session_id, now))
+            cursor.execute('SELECT GET_LOCK(%s, 5) AS acquired', (lock_name,))
+            lock_row = cursor.fetchone()
+            if not lock_row or int(lock_row.get('acquired') or 0) != 1:
+                raise V4Error(503, 'PROOF_LOCK_UNAVAILABLE',
+                              'The request proof could not be serialized. Retry the request.')
+            cursor.execute('DELETE FROM sunabar_v4_proofs WHERE session_id=%s AND expires_at<=%s',
+                           (session_id, now))
             cursor.execute('INSERT INTO sunabar_v4_proofs(proof_hash,session_id,action,expires_at) VALUES(%s,%s,%s,%s)',
                            (proof_hash, session_id, action, now + 120))
+    except V4Error:
+        raise
     except Exception as exc:
         if getattr(exc, 'args', [None])[0] == 1062:
             raise V4Error(401, 'PROOF_REPLAYED', 'This request proof was already used.')
