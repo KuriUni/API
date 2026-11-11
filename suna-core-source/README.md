@@ -27,7 +27,19 @@ License API v4 emulation (online sessions only):
 
 The v4 endpoints require the Sunabar API key in `X-Sunabar-API-Key` and use the v4 token in `Authorization`. Device signatures are verified with the host OpenSSL command; if OpenSSL is unavailable, signed v4 requests return 503.
 
-Authenticated calls use `X-Sunabar-API-Key` or `Authorization: Bearer <key>` and are limited to 120 requests per minute per workspace and client IP. Only hashes of API and license keys are stored in MySQL. Device IDs accept 1–128 ASCII letters, digits, dots, colons, underscores, or hyphens. Session tokens are opaque random values; only SHA-256 hashes are stored. Access TTL is at most one hour, refresh TTL at most seven days, both capped by demo license and API-key expiry. Refresh rotates both tokens, so the previous pair cannot be reused.
+Authenticated calls use `X-Sunabar-API-Key` or `Authorization: Bearer <key>` and are limited to 120 requests per minute per workspace and client IP. Only hashes of API and license keys are stored in MySQL. Device IDs accept 1–128 ASCII letters, digits, dots, colons, underscores, or hyphens. Session tokens are opaque random values; only SHA-256 hashes are stored. The v1 session endpoints use an access TTL of at most one hour and a refresh TTL of at most seven days, both capped by demo license and API-key expiry. Refresh rotates both tokens, so the previous pair cannot be reused.
+
+
+### License API v4 session lifetime and replay protection
+
+The v4 emulator has its own lifetime settings, separate from the v1 session API:
+
+- Access token: 300 seconds (5 minutes), capped by the demo license expiry.
+- Refresh token: 14 days, capped by the demo license expiry.
+- Activation challenge: 120 seconds and single-use.
+- Request proof: timestamp tolerance of 60 seconds; proof nonce records are retained for 120 seconds to reject replay.
+
+A successful refresh rotates both tokens and increments `token_version`. The previous refresh token is recorded by hash. Reuse of a previously consumed refresh token revokes the associated session family. These values describe the Sunabar V4 emulator implementation and are not a promise about production License API V4.
 
 Expired API-key hash rows are removed automatically at most once per hour during database-backed requests. The expiry column is indexed so cleanup does not scan the full key table. A workspace can issue at most 20 demo licenses per hour. When a device is activated again, its expired session rows for that license are removed before the device limit is checked. License history is retained for the workspace.
 
