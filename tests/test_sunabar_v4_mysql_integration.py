@@ -49,14 +49,25 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
                     workspace_id VARCHAR(128) NOT NULL,
                     status VARCHAR(32) NOT NULL,
                     expires_at BIGINT NOT NULL,
+                    key_hash CHAR(64) NOT NULL DEFAULT '',
+                    product_id BIGINT NOT NULL DEFAULT 1,
+                    product_name VARCHAR(128) NOT NULL DEFAULT '統合試験ライセンス',
+                    license_mode VARCHAR(32) NOT NULL DEFAULT 'online',
+                    max_devices INT NOT NULL DEFAULT 3,
+                    label VARCHAR(128) NOT NULL DEFAULT '統合試験',
                     PRIMARY KEY (workspace_id, license_id)
                 ) ENGINE=InnoDB""")
                 cursor.execute("""CREATE TABLE IF NOT EXISTS sunabar_v4_devices (
                     id BIGINT NOT NULL AUTO_INCREMENT,
+                    workspace_id VARCHAR(128) NOT NULL DEFAULT '',
+                    license_id VARCHAR(128) NOT NULL DEFAULT '',
                     device_hash CHAR(64) NOT NULL,
                     public_key_pem TEXT NOT NULL,
                     key_thumbprint CHAR(64) NOT NULL,
                     key_algorithm VARCHAR(32) NOT NULL,
+                    device_label VARCHAR(120) NOT NULL DEFAULT '',
+                    app_version VARCHAR(40) NOT NULL DEFAULT '',
+                    bound_at BIGINT NOT NULL DEFAULT 0,
                     revoked_at BIGINT NULL,
                     last_seen_at BIGINT NOT NULL,
                     PRIMARY KEY (id)
@@ -91,6 +102,18 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
                     PRIMARY KEY (token_hash),
                     KEY ix_test_refresh_family (family_id)
                 ) ENGINE=InnoDB""")
+                cursor.execute("""CREATE TABLE IF NOT EXISTS sunabar_v4_challenges (
+                    id BIGINT NOT NULL AUTO_INCREMENT,
+                    challenge_id CHAR(32) NOT NULL,
+                    workspace_id VARCHAR(128) NOT NULL,
+                    purpose VARCHAR(32) NOT NULL,
+                    nonce_hash CHAR(64) NOT NULL,
+                    key_thumbprint CHAR(64) NOT NULL,
+                    expires_at BIGINT NOT NULL,
+                    consumed_at BIGINT NULL,
+                    PRIMARY KEY (id),
+                    UNIQUE KEY uq_test_challenge_id (challenge_id)
+                ) ENGINE=InnoDB""")
                 cursor.execute("""CREATE TABLE IF NOT EXISTS sunabar_v4_proofs (
                     proof_hash CHAR(64) NOT NULL,
                     session_id VARCHAR(64) NOT NULL,
@@ -116,8 +139,9 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
         connection = self.connect()
         try:
             with connection.cursor() as cursor:
-                for table in ("sunabar_v4_proofs", "sunabar_v4_refresh_history",
-                              "sunabar_v4_sessions", "sunabar_v4_devices", "sunabar_licenses"):
+                for table in ("sunabar_v4_proofs", "sunabar_v4_challenges",
+                              "sunabar_v4_refresh_history", "sunabar_v4_sessions",
+                              "sunabar_v4_devices", "sunabar_licenses"):
                     cursor.execute("DELETE FROM " + table)
                 cursor.execute(
                     "INSERT INTO sunabar_licenses(license_id,workspace_id,status,expires_at) "
