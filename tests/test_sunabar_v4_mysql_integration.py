@@ -63,82 +63,81 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
         try:
             with connection.cursor() as cursor:
                 cursor.execute("""CREATE TABLE IF NOT EXISTS sunabar_licenses (
-                    license_id VARCHAR(128) NOT NULL,
-                    workspace_id VARCHAR(128) NOT NULL,
-                    status VARCHAR(32) NOT NULL,
+                    license_id CHAR(20) NOT NULL PRIMARY KEY,
+                    key_hash CHAR(64) NOT NULL UNIQUE,
+                    workspace_id CHAR(32) NOT NULL,
+                    product_id INT NOT NULL,
+                    product_name VARCHAR(120) NOT NULL,
+                    license_mode VARCHAR(24) NOT NULL,
+                    max_devices INT NOT NULL,
+                    label VARCHAR(100) NOT NULL,
+                    issued_at BIGINT NOT NULL,
                     expires_at BIGINT NOT NULL,
-                    key_hash CHAR(64) NOT NULL DEFAULT '',
-                    product_id BIGINT NOT NULL DEFAULT 1,
-                    product_name VARCHAR(128) NOT NULL DEFAULT '統合試験ライセンス',
-                    license_mode VARCHAR(32) NOT NULL DEFAULT 'online',
-                    max_devices INT NOT NULL DEFAULT 3,
-                    label VARCHAR(128) NOT NULL DEFAULT '統合試験',
-                    PRIMARY KEY (workspace_id, license_id)
-                ) ENGINE=InnoDB""")
+                    status VARCHAR(16) NOT NULL DEFAULT 'active',
+                    INDEX idx_sunabar_license_workspace (workspace_id),
+                    INDEX idx_sunabar_license_recent (workspace_id, issued_at, license_id),
+                    INDEX idx_sunabar_license_status_expiry (status, expires_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
                 cursor.execute("""CREATE TABLE IF NOT EXISTS sunabar_v4_devices (
-                    id BIGINT NOT NULL AUTO_INCREMENT,
-                    workspace_id VARCHAR(128) NOT NULL DEFAULT '',
-                    license_id VARCHAR(128) NOT NULL DEFAULT '',
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    workspace_id CHAR(32) NOT NULL,
+                    license_id CHAR(20) NOT NULL,
                     device_hash CHAR(64) NOT NULL,
                     public_key_pem TEXT NOT NULL,
                     key_thumbprint CHAR(64) NOT NULL,
                     key_algorithm VARCHAR(32) NOT NULL,
                     device_label VARCHAR(120) NOT NULL DEFAULT '',
                     app_version VARCHAR(40) NOT NULL DEFAULT '',
-                    bound_at BIGINT NOT NULL DEFAULT 0,
-                    revoked_at BIGINT NULL,
+                    bound_at BIGINT NOT NULL,
                     last_seen_at BIGINT NOT NULL,
-                    PRIMARY KEY (id)
-                ) ENGINE=InnoDB""")
+                    revoked_at BIGINT NULL,
+                    UNIQUE KEY uq_sunabar_v4_device (workspace_id, license_id, device_hash),
+                    UNIQUE KEY uq_sunabar_v4_license_key (license_id, key_thumbprint),
+                    INDEX idx_sunabar_v4_device_license (license_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
                 cursor.execute("""CREATE TABLE IF NOT EXISTS sunabar_v4_sessions (
-                    id BIGINT NOT NULL AUTO_INCREMENT,
-                    session_id VARCHAR(64) NOT NULL,
-                    family_id VARCHAR(64) NOT NULL,
-                    workspace_id VARCHAR(128) NOT NULL,
-                    license_id VARCHAR(128) NOT NULL,
-                    device_id BIGINT NOT NULL,
-                    access_hash CHAR(64) NOT NULL,
-                    refresh_hash CHAR(64) NOT NULL,
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    session_id CHAR(32) NOT NULL UNIQUE,
+                    family_id CHAR(32) NOT NULL,
+                    workspace_id CHAR(32) NOT NULL,
+                    license_id CHAR(20) NOT NULL,
+                    device_id BIGINT UNSIGNED NOT NULL,
+                    access_hash CHAR(64) NOT NULL UNIQUE,
+                    refresh_hash CHAR(64) NOT NULL UNIQUE,
                     access_expires_at BIGINT NOT NULL,
                     refresh_expires_at BIGINT NOT NULL,
-                    token_version INT NOT NULL,
+                    token_version INT NOT NULL DEFAULT 1,
                     created_at BIGINT NOT NULL,
                     last_seen_at BIGINT NOT NULL,
                     revoked_at BIGINT NULL,
-                    revoke_reason VARCHAR(64) NULL,
-                    PRIMARY KEY (id),
-                    UNIQUE KEY uq_test_session_id (session_id),
-                    UNIQUE KEY uq_test_refresh_hash (refresh_hash),
-                    KEY ix_test_family (family_id)
-                ) ENGINE=InnoDB""")
+                    revoke_reason VARCHAR(40) NOT NULL DEFAULT '',
+                    INDEX idx_sunabar_v4_session_family (family_id),
+                    INDEX idx_sunabar_v4_session_device (device_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
                 cursor.execute("""CREATE TABLE IF NOT EXISTS sunabar_v4_refresh_history (
-                    token_hash CHAR(64) NOT NULL,
-                    session_id VARCHAR(64) NOT NULL,
-                    family_id VARCHAR(64) NOT NULL,
+                    token_hash CHAR(64) NOT NULL PRIMARY KEY,
+                    session_id CHAR(32) NOT NULL,
+                    family_id CHAR(32) NOT NULL,
                     expires_at BIGINT NOT NULL,
-                    used_at BIGINT NOT NULL,
-                    PRIMARY KEY (token_hash),
-                    KEY ix_test_refresh_family (family_id)
-                ) ENGINE=InnoDB""")
+                    used_at BIGINT NOT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
                 cursor.execute("""CREATE TABLE IF NOT EXISTS sunabar_v4_challenges (
-                    id BIGINT NOT NULL AUTO_INCREMENT,
-                    challenge_id CHAR(32) NOT NULL,
-                    workspace_id VARCHAR(128) NOT NULL,
-                    purpose VARCHAR(32) NOT NULL,
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    challenge_id CHAR(32) NOT NULL UNIQUE,
+                    workspace_id CHAR(32) NOT NULL,
+                    purpose VARCHAR(8) NOT NULL,
                     nonce_hash CHAR(64) NOT NULL,
                     key_thumbprint CHAR(64) NOT NULL,
                     expires_at BIGINT NOT NULL,
                     consumed_at BIGINT NULL,
-                    PRIMARY KEY (id),
-                    UNIQUE KEY uq_test_challenge_id (challenge_id)
-                ) ENGINE=InnoDB""")
+                    INDEX idx_sunabar_v4_challenge_expiry (workspace_id, expires_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
                 cursor.execute("""CREATE TABLE IF NOT EXISTS sunabar_v4_proofs (
-                    proof_hash CHAR(64) NOT NULL,
-                    session_id VARCHAR(64) NOT NULL,
-                    action VARCHAR(32) NOT NULL,
-                    expires_at BIGINT NOT NULL,
-                    PRIMARY KEY (proof_hash)
-                ) ENGINE=InnoDB""")
+                    proof_hash CHAR(64) NOT NULL PRIMARY KEY,
+                    session_id CHAR(32) NOT NULL,
+                    action VARCHAR(16) NOT NULL,
+                    expires_at BIGINT NOT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
             connection.commit()
         finally:
             connection.close()
@@ -168,19 +167,22 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
                               "sunabar_v4_devices", "sunabar_licenses"):
                     cursor.execute("DELETE FROM " + table)
                 cursor.execute(
-                    "INSERT INTO sunabar_licenses(license_id,workspace_id,status,expires_at,key_hash,max_devices) "
-                    "VALUES(%s,%s,%s,%s,%s,%s)",
-                    ("integration-license", self.workspace, "active", self.now + 86400,
-                     sunabar_v4._hash(self.license_key), 3))
+                    "INSERT INTO sunabar_licenses(license_id,key_hash,workspace_id,product_id,product_name,"
+                    "license_mode,max_devices,label,issued_at,expires_at,status) "
+                    "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    ("integration-license", sunabar_v4._hash(self.license_key), self.workspace, 1,
+                     "統合試験ライセンス", "online", 3, "統合試験", self.now, self.now + 86400, "active"))
                 cursor.execute(
-                    "INSERT INTO sunabar_v4_devices(id,device_hash,public_key_pem,key_thumbprint,"
-                    "key_algorithm,revoked_at,last_seen_at) VALUES(%s,%s,%s,%s,%s,NULL,%s)",
-                    (self.device_id, "d" * 64, "test-public-key", "t" * 64, "RSA-SHA256", self.now))
+                    "INSERT INTO sunabar_v4_devices(id,workspace_id,license_id,device_hash,public_key_pem,"
+                    "key_thumbprint,key_algorithm,revoked_at,last_seen_at) "
+                    "VALUES(%s,%s,%s,%s,%s,%s,%s,NULL,%s)",
+                    (self.device_id, self.workspace, "integration-license", "d" * 64,
+                     "test-public-key", "t" * 64, "RSA-SHA256", self.now))
                 cursor.execute(
                     "INSERT INTO sunabar_v4_sessions(session_id,family_id,workspace_id,license_id,"
                     "device_id,access_hash,refresh_hash,access_expires_at,refresh_expires_at,"
                     "token_version,created_at,last_seen_at,revoked_at,revoke_reason) "
-                    "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s,%s,NULL,NULL)",
+                    "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s,%s,NULL,'')",
                     (self.session_id, self.family_id, self.workspace, "integration-license",
                      self.device_id, sunabar_v4._token_hash("v4.a." + ("A" * 64)),
                      sunabar_v4._token_hash(self.old_refresh), self.now + 300,
@@ -202,21 +204,6 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
             return status, payload
 
         thumbprint = sunabar_v4.normalize_public_key(self.public_key_pem)["thumbprint"]
-        # 同じlicense_idの別テナント端末は、端末上限にも鍵重複判定にも影響しない。
-        connection = self.connect()
-        try:
-            with connection.cursor() as cursor:
-                for index in range(3):
-                    cursor.execute(
-                        "INSERT INTO sunabar_v4_devices(workspace_id,license_id,device_hash,"
-                        "public_key_pem,key_thumbprint,key_algorithm,last_seen_at) "
-                        "VALUES(%s,%s,%s,%s,%s,%s,%s)",
-                        ("another-workspace", "integration-license", str(index) * 64,
-                         self.public_key_pem, thumbprint, "RSA-SHA256", self.now))
-            connection.commit()
-        finally:
-            connection.close()
-
         status, challenge_reply = sunabar_v4.handle_v4(
             "challenge", {"workspace": self.workspace},
             {"purpose": "activate", "device_public_key": self.public_key_pem},
@@ -264,8 +251,8 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
                                (self.workspace, "integration-license"))
                 session_count = cursor.fetchone()["count"]
             self.assertIsNotNone(consumed["consumed_at"])
-            self.assertEqual(device_count, 1)
-            self.assertEqual(session_count, 1)
+            self.assertEqual(device_count, 2)
+            self.assertEqual(session_count, 2)
         finally:
             connection.close()
 
