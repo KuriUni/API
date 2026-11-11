@@ -458,15 +458,19 @@ def suspend_overdue_invoices(connection, limit=200):
                     continue
                 cursor.execute(
                     "INSERT IGNORE INTO stripe_billing_key_suspensions(invoice_id,tenant_id,client_id) "
-                    "SELECT %s,c.tenant_id,c.id FROM tenant_api_clients c "
-                    "WHERE c.tenant_id=%s AND c.status IN ('active','billing_hold') AND c.revoked_at IS NULL",
+                    "SELECT %s,c.tenant_id,c.id,COALESCE((SELECT s0.previous_status "
+                    "FROM stripe_billing_key_suspensions s0 WHERE s0.client_id=c.id "
+                    "AND s0.restored_at IS NULL ORDER BY s0.id LIMIT 1),c.status) "
+                    "FROM tenant_api_clients c "
+                    "WHERE c.tenant_id=%s AND c.status IN ('active','retiring','billing_hold') "
+                    "AND c.revoked_at IS NULL",
                     (invoice_id, tenant_id),
                 )
                 cursor.execute(
                     "UPDATE tenant_api_clients c "
                     "JOIN stripe_billing_key_suspensions s ON s.client_id=c.id AND s.invoice_id=%s "
                     "SET c.status='billing_hold' "
-                    "WHERE c.tenant_id=%s AND c.status='active' AND c.revoked_at IS NULL",
+                    "WHERE c.tenant_id=%s AND c.status IN ('active','retiring') AND c.revoked_at IS NULL",
                     (invoice_id, tenant_id),
                 )
                 suspended += int(cursor.rowcount or 0)
@@ -497,7 +501,7 @@ def restore_billing_suspended_keys(connection, invoice_id):
             cursor.execute(
                 "UPDATE tenant_api_clients c "
                 "JOIN stripe_billing_key_suspensions s ON s.client_id=c.id AND s.invoice_id=%s "
-                "SET c.status='active' "
+                "SET c.status=s.previous_status "
                 "WHERE c.status='billing_hold' AND c.revoked_at IS NULL "
                 "AND NOT EXISTS ("
                 " SELECT 1 FROM stripe_billing_key_suspensions s2 "
@@ -1073,11 +1077,10 @@ def _handle_invoice_overdue(connection, mode, event_id, event_type, invoice):
         connection.commit()
         return json_response('200 OK', {'ok': True, 'received': True, 'ignored': True})
     if str(invoice.get('status') or '') == 'paid':
-        restored = restore_billing_suspended_keys(connection, invoice_id)
-        _record_event(connection, event_id, event_type, mode, 'processed',
-                      'already_paid_keys_restored_%d' % restored, invoice_id, payment_id, processed=True)
+        _record_event(connection, event_id, event_type, mode, 'ignored',
+                      'paid_invoice_waiting_for_invoice_paid_event', invoice_id, payment_id, processed=True)
         connection.commit()
-        return json_response('200 OK', {'ok': True, 'received': True, 'restored_keys': restored})
+        return json_response('200 OK', {'ok': True, 'received': True, 'ignored': True})
     result = suspend_overdue_invoices(connection, limit=200)
     _record_event(connection, event_id, event_type, mode, 'processed',
                   'overdue_keys_suspended_%d' % int(result['keys_suspended']), invoice_id, payment_id, processed=True)
