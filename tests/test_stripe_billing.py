@@ -438,3 +438,42 @@ class ReconcileReissueTests(unittest.TestCase):
         with mock.patch.object(stripe_billing, '_api', return_value={'id': 'cs_test_2', 'status': 'open'}):
             refreshed = stripe_billing._reconcile_key_reissue(connection, row, {'enabled': True})
         self.assertEqual(refreshed['status'], 'pending')
+
+
+class AdaptivePricingReissueTests(unittest.TestCase):
+    def setUp(self):
+        self.row = {
+            'id': 9,
+            'tenant_id': 7,
+            'request_hash': 'a' * 64,
+            'checkout_session_id': 'cs_test_reissue_9',
+            'amount_yen': 500,
+        }
+        self.session = {
+            'id': 'cs_test_reissue_9',
+            'client_reference_id': 'reissue-9',
+            'metadata': {
+                'kind': 'key_reissue',
+                'reissue_id': '9',
+                'tenant_id': '7',
+                'request_hash': 'a' * 64,
+            },
+            'currency': 'usd',
+            'amount_total': 350,
+            'payment_status': 'paid',
+        }
+
+    def test_adaptive_local_currency_is_accepted_for_exact_session(self):
+        self.assertTrue(stripe_billing._key_reissue_session_matches(self.row, self.session))
+
+    def test_wrong_session_id_is_rejected(self):
+        session = dict(self.session, id='cs_test_other')
+        self.assertFalse(stripe_billing._key_reissue_session_matches(self.row, session))
+
+    def test_wrong_tenant_metadata_is_rejected(self):
+        session = dict(self.session, metadata=dict(self.session['metadata'], tenant_id='8'))
+        self.assertFalse(stripe_billing._key_reissue_session_matches(self.row, session))
+
+    def test_wrong_request_hash_is_rejected(self):
+        session = dict(self.session, metadata=dict(self.session['metadata'], request_hash='b' * 64))
+        self.assertFalse(stripe_billing._key_reissue_session_matches(self.row, session))
