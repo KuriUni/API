@@ -366,6 +366,8 @@ class KeyReissueCheckoutTests(unittest.TestCase):
         self.assertEqual(result['checkout_url'], 'https://checkout.stripe.com/c/pay/9')
         params = api_mock.call_args[0][2]
         self.assertEqual(params['line_items[0][price_data][unit_amount]'], '500')
+        self.assertEqual(params['line_items[0][price_data][currency]'], 'jpy')
+        self.assertEqual(params['adaptive_pricing[enabled]'], 'true')
         self.assertEqual(params['metadata[kind]'], 'key_reissue')
         self.assertEqual(params['metadata[tenant_id]'], '7')
         self.assertIn('#sso_ticket=', params['success_url'])
