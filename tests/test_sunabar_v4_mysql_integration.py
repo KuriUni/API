@@ -176,11 +176,11 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
 
         def request():
             barrier.wait(timeout=10)
-            with patch.object(sunabar_v4, "_require_proof", return_value=None):
-                return self.invoke_refresh(self.old_refresh)
+            return self.invoke_refresh(self.old_refresh)
 
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            results = list(pool.map(lambda _: request(), range(2)))
+        with patch.object(sunabar_v4, "_require_proof", return_value=None):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(lambda _: request(), range(2)))
 
         self.assertEqual(sorted(status for status, _ in results), [200, 401])
         errors = [body.get("error_code") for status, body in results if status == 401]
