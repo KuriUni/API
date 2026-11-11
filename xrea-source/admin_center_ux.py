@@ -10,8 +10,8 @@ import html
 
 
 CSS = '''
-.wrap>header{flex-wrap:wrap}
-.wrap>header>div:first-child{flex:1 1 420px;min-width:0}
+.wrap>header{flex-wrap:wrap;gap:12px}
+.wrap>header>div:first-child{flex:1 1 340px;min-width:0}
 .admin-tools{display:flex;align-items:center;justify-content:flex-end;gap:9px;flex-wrap:wrap;min-width:0}
 .admin-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 #logout{flex:0 0 auto;white-space:nowrap}
