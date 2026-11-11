@@ -261,7 +261,7 @@ class CreateCheckoutTests(unittest.TestCase):
         connection = FakeConnection(responses)
         config = {'enabled': True, 'mode': 'test', 'secret_key': 'sk_test_x', 'webhook_secret': 'whsec_x'}
         api_calls = [
-            {'id': 'cusPrivacy1'},
+            {'id': 'cus_privacy1'},
             {'id': 'ii_test1'},
             {'id': 'in_test1', 'status': 'draft'},
             {'id': 'in_test1', 'status': 'open', 'hosted_invoice_url': 'https://invoice.stripe.com/i/acct/test'},
