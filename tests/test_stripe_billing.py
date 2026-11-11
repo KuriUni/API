@@ -540,9 +540,9 @@ class StripeInvoiceRetryStabilityTests(unittest.TestCase):
         ]
         config = {'enabled': True, 'mode': 'test', 'secret_key': 'sk_test_x',
                   'webhook_secret': 'whsec_x'}
-        with mock.patch.object(stripe_billing, 'settings', return_value=config), \\
-                mock.patch.object(stripe_billing, 'ensure_schema'), \\
-                mock.patch.object(stripe_billing, '_api', side_effect=responses) as api_mock, \\
+        with mock.patch.object(stripe_billing, 'settings', return_value=config), \
+                mock.patch.object(stripe_billing, 'ensure_schema'), \
+                mock.patch.object(stripe_billing, '_api', side_effect=responses) as api_mock, \
                 mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
             result = stripe_billing.create_checkout(
                 connection, self._client(), {'invoice_id': '11'}, {'header:host': 'evil.example'})
@@ -565,10 +565,10 @@ class StripeInvoiceRetryStabilityTests(unittest.TestCase):
         connection = self._connection(existing)
         config = {'enabled': True, 'mode': 'test', 'secret_key': 'sk_test_x',
                   'webhook_secret': 'whsec_x'}
-        with mock.patch.object(stripe_billing, 'settings', return_value=config), \\
-                mock.patch.object(stripe_billing, 'ensure_schema'), \\
+        with mock.patch.object(stripe_billing, 'settings', return_value=config), \
+                mock.patch.object(stripe_billing, 'ensure_schema'), \
                 mock.patch.object(stripe_billing, '_api',
-                                  side_effect=stripe_billing.StripeError('stripe_unreachable')), \\
+                                  side_effect=stripe_billing.StripeError('stripe_unreachable')), \
                 mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
             with self.assertRaises(stripe_billing.StripeError) as caught:
                 stripe_billing.create_checkout(
@@ -584,8 +584,8 @@ class StripeInvoiceRetryStabilityTests(unittest.TestCase):
         connection = self._connection(existing)
         config = {'enabled': True, 'mode': 'test', 'secret_key': 'sk_test_x',
                   'webhook_secret': 'whsec_x'}
-        with mock.patch.object(stripe_billing, 'settings', return_value=config), \\
-                mock.patch.object(stripe_billing, 'ensure_schema'), \\
+        with mock.patch.object(stripe_billing, 'settings', return_value=config), \
+                mock.patch.object(stripe_billing, 'ensure_schema'), \
                 mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
             with self.assertRaises(stripe_billing.StripeError) as caught:
                 stripe_billing.create_checkout(
@@ -606,10 +606,10 @@ class StripeInvoiceTransientFailureTests(unittest.TestCase):
                   'tenant_environment': 'production'}
         config = {'enabled': True, 'mode': 'test', 'secret_key': 'sk_test_x',
                   'webhook_secret': 'whsec_x'}
-        with mock.patch.object(stripe_billing, 'settings', return_value=config), \\
-                mock.patch.object(stripe_billing, 'ensure_schema'), \\
+        with mock.patch.object(stripe_billing, 'settings', return_value=config), \
+                mock.patch.object(stripe_billing, 'ensure_schema'), \
                 mock.patch.object(stripe_billing, '_api',
-                                  side_effect=stripe_billing.StripeError('stripe_unreachable:timeout')), \\
+                                  side_effect=stripe_billing.StripeError('stripe_unreachable:timeout')), \
                 mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
             with self.assertRaises(stripe_billing.StripeError):
                 stripe_billing.create_checkout(connection, client, {'invoice_id': '11'}, {})
