@@ -1142,6 +1142,51 @@
       "path": "/api/stripe/webhook.php",
       "source": "api/stripe/webhook.php",
       "access": "endpoint_or_include"
+    },
+    {
+      "path": "/api/sunabar/v4/challenge.php",
+      "source": "api/sunabar/v4/challenge.php",
+      "access": "endpoint_or_include"
+    },
+    {
+      "path": "/api/sunabar/v4/activate.php",
+      "source": "api/sunabar/v4/activate.php",
+      "access": "endpoint_or_include"
+    },
+    {
+      "path": "/api/sunabar/v4/verify.php",
+      "source": "api/sunabar/v4/verify.php",
+      "access": "endpoint_or_include"
+    },
+    {
+      "path": "/api/sunabar/v4/introspect.php",
+      "source": "api/sunabar/v4/introspect.php",
+      "access": "endpoint_or_include"
+    },
+    {
+      "path": "/api/sunabar/v4/refresh.php",
+      "source": "api/sunabar/v4/refresh.php",
+      "access": "endpoint_or_include"
+    },
+    {
+      "path": "/api/sunabar/v4/revoke.php",
+      "source": "api/sunabar/v4/revoke.php",
+      "access": "endpoint_or_include"
+    },
+    {
+      "path": "/api/sunabar/v4/offline-public-key.php",
+      "source": "api/sunabar/v4/offline-public-key.php",
+      "access": "endpoint_or_include"
+    },
+    {
+      "path": "/api/sunabar/v4/offline-ticket.php",
+      "source": "api/sunabar/v4/offline-ticket.php",
+      "access": "endpoint_or_include"
+    },
+    {
+      "path": "/api/sunabar/v4/migrate.php",
+      "source": "api/sunabar/v4/migrate.php",
+      "access": "endpoint_or_include"
     }
   ]
 }

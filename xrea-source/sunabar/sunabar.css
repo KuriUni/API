@@ -2,3 +2,24 @@
 @media(max-width:1080px){.scenario-grid{grid-template-columns:1fr 1fr}.scenario-side{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr}.console-layout{grid-template-columns:190px minmax(250px,1fr)}.response-panel{grid-column:2}.operation-nav{grid-row:span 2}.catalog-grid{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:720px){.topbar{height:auto;min-height:60px;padding:10px 15px;gap:10px;flex-wrap:wrap}.top-context{display:none}.top-actions{gap:5px}.key-status{font-size:9px}.button-outline,.button-quiet{font-size:10px;padding:7px 9px}.app-shell{padding:0 15px}.welcome{padding:27px 0 21px;display:block}.welcome h1{font-size:31px}.welcome-state{margin-top:17px;min-width:0}.view-tabs{overflow:auto;white-space:nowrap}.view-tab{padding:0 12px;font-size:11px}.session-chip{font-size:9px;white-space:nowrap}.view{padding-top:20px}.section-heading{align-items:flex-start}.section-heading h2,.catalog-heading h2{font-size:20px}.section-heading> .button{font-size:9px;padding:8px}.metrics-grid{grid-template-columns:1fr 1fr;gap:8px}.metric-card{padding:12px}.metric-value{font-size:15px}.metric-card small{font-size:9px}.scenario-grid{grid-template-columns:1fr}.scenario-side{grid-column:auto;grid-template-columns:1fr}.scenario-card{padding:16px}.flow-log{grid-template-columns:1fr 1fr}.catalog-grid{grid-template-columns:1fr 1fr;gap:7px}.catalog-item{padding:9px;gap:8px}.catalog-item b{font-size:10px}.console-layout{grid-template-columns:1fr}.operation-nav{grid-row:auto}.operation-list{grid-template-columns:1fr 1fr}.operation{font-size:10px}.request-panel,.response-panel{padding:14px}.response-panel{grid-column:auto}.response-json{height:280px}.history-toolbar{flex-wrap:wrap}.history-search{min-width:100%;max-width:none}.history-actions{flex-wrap:wrap}.app-footer{flex-wrap:wrap;line-height:1.4}.product-key-result{flex-wrap:wrap}.product-key-result code{flex:1}.product-key-result button{margin-left:auto}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
+
+/* Beginner tour, operation guide and code samples */
+.tour-card{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:0 0 15px;padding:18px 20px;border:1px solid #bcd3f3;border-radius:15px;background:linear-gradient(135deg,#eef4ff,#f6fbff);box-shadow:var(--shadow)}
+.tour-card h3{margin:2px 0 4px;font-size:18px;letter-spacing:-.03em}
+.tour-card p:not(.eyebrow){margin:0;color:#5d6f88;font-size:12px;max-width:760px}
+.tour-actions{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:none}
+.tour-actions small{font-size:10px;color:#6f829b}
+.operation-guide{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0 0 12px;padding:9px 11px;border:1px solid #d8e4f6;border-radius:8px;background:#f4f8ff;color:#526784;font-size:10px}
+.operation-guide b{color:#2d4f86;font-size:10px}
+.operation-guide .text-button{margin-left:auto;padding:2px 0}
+.form-hint{margin:-4px 0 10px;font-size:10px;color:#8794a7}
+.code-samples{margin-top:12px;border-top:1px solid #eef1f5;padding-top:10px}
+.code-samples summary{cursor:pointer;color:#4a6a9c;font-size:10px;font-weight:750}
+.code-block{margin-top:9px;border:1px solid #e2e8f1;border-radius:8px;overflow:hidden}
+.code-head{display:flex;align-items:center;justify-content:space-between;padding:5px 8px;background:#f5f8fc;color:#5c7291;font-size:9px}
+.code-copy{border:0;background:#e8effb;color:#35599a;border-radius:6px;padding:3px 7px;font-size:9px;font-weight:700}
+.code-sample{margin:0;max-height:180px;overflow:auto;padding:9px;background:#111c2c;color:#d5e2f4;font:9.5px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.code-note{margin:8px 0 0;font-size:9px;color:#8794a7}
+@media(max-width:720px){.tour-card{display:block}.tour-actions{display:block;margin-top:12px}.tour-actions small{display:block;margin-top:6px}}
+.scenario-input-row .button{flex:none;padding:9px 10px;font-size:10px}
+.scenario-input-row input[list]{flex:1}

@@ -16,6 +16,18 @@
     refresh: { title: 'セッション更新', group: 'DEVICE SESSION', method: 'POST', endpoint: 'session-refresh.php', body: { refresh_token: '', device_id: 'sunabar-v2-device-01' }, risk: 'ROTATES TOKENS', description: 'トークンを更新します。成功後は前のトークンを使えません。' },
     deactivate: { title: 'セッション終了', group: 'DEVICE SESSION', method: 'POST', endpoint: 'session-deactivate.php', body: { refresh_token: '', device_id: 'sunabar-v2-device-01' }, risk: 'END SESSION', description: '端末セッションを終了します。' },
   };
+  const guides = {
+    health: ['中継サーバーとデモ用データベースが応答するか確認します。ここで失敗すると他の操作も進みません。', 'products'],
+    products: ['デモで使える製品IDとライセンス方式を確認します。次の発行で使う製品を選びます。', 'issue'],
+    issue: ['デモライセンスを1件発行します。返ったキーは検証と端末認証で使います。', 'verify'],
+    verify: ['発行したキーが有効か、製品IDと一致するかを確認します。', 'activate'],
+    list: ['この専用キーで発行したライセンスを一覧します。失効済みも確認できます。', ''],
+    revoke: ['デモライセンスを失効させます。端末セッションも終了します。', ''],
+    activate: ['ライセンスを使って端末セッションを開始し、トークンを取得します。', 'check'],
+    check: ['アクセストークンが有効か確認します。', 'refresh'],
+    refresh: ['更新トークンでトークンをローテーションします。古いトークンは使えなくなります。', 'deactivate'],
+    deactivate: ['端末セッションを終了します。', ''],
+  };
   const errors = {
     invalid_api_key: ['APIキーを確認', 'キーが無効か、発行元のワークスペースが異なります。専用キーを再発行してください。'],
     expired_token: ['APIキーの期限切れ', '専用キーは24時間で期限切れになります。新しいキーを発行してください。'],
@@ -33,6 +45,7 @@
   let lastResponse = null;
   let lastLicense = null;
   let lastSession = null;
+  let lastProducts = null;
   let requestCount = 0;
   let history = [];
   let flowRunning = false;
@@ -68,7 +81,45 @@
     $('key-expiry').textContent = key ? `有効期限 ${new Date(key.expires_at * 1000).toLocaleString('ja-JP')}` : '';
     $('issue-api-key').textContent = key ? '新しいキーを発行' : '専用キーを発行';
   }
-  function openOperation(name, save = true) {
+  function renderGuide(name) {
+    const box = $('operation-guide'); const info = guides[name]; if (!box) return;
+    box.replaceChildren(); const title = document.createElement('b'); title.textContent = 'この操作のあと';
+    const text = document.createElement('span'); text.textContent = info ? info[0] : specs[name].description;
+    box.append(title, text);
+    const next = info && info[1];
+    if (next && specs[next]) { const button = document.createElement('button'); button.type = 'button'; button.className = 'text-button'; button.textContent = `次へ: ${specs[next].title} →`; button.addEventListener('click', () => openOperation(next)); box.append(button); }
+  }
+  function chooseProductId(preferred) {
+    const ids = (lastProducts || []).map((product) => Number(product.id)); const value = Number(preferred);
+    if (Number.isInteger(value) && value > 0 && (!ids.length || ids.includes(value))) return value;
+    return ids[0] || (Number.isInteger(value) && value > 0 ? value : 101);
+  }
+  function renderProductOptions() {
+    const list = $('flow-product-options'); if (!list) return;
+    list.replaceChildren(...(lastProducts || []).map((product) => { const option = document.createElement('option'); option.value = String(product.id); option.textContent = `${product.name || product.code || '製品'} (${product.id})`; option.label = option.textContent; return option; }));
+    const input = $('flow-product-id'); const ids = (lastProducts || []).map((product) => Number(product.id));
+    if (input && ids.length && !ids.includes(Number(input.value))) input.value = String(ids[0]);
+    if (ids.length) $('product-hint').textContent = `選択できます: ${(lastProducts || []).map((product) => `${product.name || product.code} (${product.id})`).join(' / ')}`;
+  }
+  function sampleBody() {
+    try { const value = JSON.parse($('request-body').value || '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? value : specs[current].body; } catch { return specs[current].body; }
+  }
+  function renderSamples() {
+    const op = specs[current]; const url = `${location.origin}${path(current)}`; const pretty = json(sampleBody());
+    const keyValue = op.key === false ? '' : 'YOUR_SUNABAR_API_KEY';
+    const NL = String.fromCharCode(10); const BS = String.fromCharCode(92);
+    const curlLines = [`curl -X ${op.method} '${url}'`, "  -H 'Accept: application/json'"];
+    if (keyValue) curlLines.push(`  -H 'X-Sunabar-API-Key: ${keyValue}'`);
+    if (op.method === 'POST') { curlLines.push("  -H 'Content-Type: application/json'"); curlLines.push(`  -d '${pretty.replace(/'/g, "'" + BS + "''")}'`); }
+    const curl = curlLines.map((line, index) => index === curlLines.length - 1 ? line : line + ' ' + BS).join(NL);
+    const jsHeaders = ["'Accept': 'application/json'", ...(keyValue ? [`'X-Sunabar-API-Key': '${keyValue}'`] : []), ...(op.method === 'POST' ? ["'Content-Type': 'application/json'"] : [])];
+    const js = [`const res = await fetch('${path(current)}', {`, `  method: '${op.method}',`, `  headers: { ${jsHeaders.join(', ')} }${op.method === 'POST' ? ',' : ''}`, ...(op.method === 'POST' ? [`  body: JSON.stringify(${pretty})`] : []), '});', 'const data = await res.json();', 'console.log(data);'].join(NL);
+    const pyHeaders = ['"Accept": "application/json"', ...(keyValue ? [`"X-Sunabar-API-Key": "${keyValue}"`] : [])];
+    const python = ['import requests', '', `url = "${url}"`, `headers = {${pyHeaders.join(', ')}}`, op.method === 'POST' ? `r = requests.post(url, headers=headers, json=${pretty})` : 'r = requests.get(url, headers=headers)', 'print(r.status_code)', 'print(r.json())'].join(NL);
+    const codes = { curl, js, python };
+    document.querySelectorAll('.code-sample').forEach((node) => { node.textContent = codes[node.dataset.code] || ''; });
+  }
+  function openOperation2(name, save = true) {
     if (!specs[name]) return;
     if (save && $('request-body')) drafts[current] = $('request-body').value;
     current = name; const op = specs[name];
@@ -80,6 +131,9 @@
     const risk = $('operation-risk'); risk.textContent = op.risk; risk.classList.toggle('mutation', /CHANGE|ROTATES|CREATE|END/.test(op.risk));
     $('request-hint').textContent = op.key === false ? 'APIキー不要の読み取り操作です。' : (hasKeyHint());
     updateKeyState();
+  }
+  function openOperation(name, save = true) {
+    openOperation2(name, save); renderGuide(name); renderSamples();
   }
   function hasKeyHint() { return readKey() ? '同一タブのSunabar専用キーを使用します。' : '実行前にSunabar専用キーが必要です。'; }
   function switchView(view) {
@@ -133,6 +187,7 @@
   }
   function updateKeyFromResponse(name, request, result) {
     const data = result.body?.data;
+    if (name === 'products' && Array.isArray(data?.products)) { lastProducts = data.products; renderProductOptions(); }
     if (name === 'issue' && data?.license) {
       lastLicense = data.license;
       drafts.verify = json({ license_key: data.license.license_key || data.license.product_key, product_id: data.license.product_id ?? request.product_id });
@@ -181,7 +236,7 @@
   }
   async function runFlow(title, steps) {
     if (flowRunning || busy) return; flowRunning = true; recordFlow(title, steps);
-    $('run-license-flow').disabled = true; $('run-session-flow').disabled = true;
+    ['run-license-flow', 'run-session-flow', 'run-tour', 'load-products'].forEach((id) => { $(id).disabled = true; });
     const summary = $('flow-summary'); let failed = false;
     try {
       for (let i = 0; i < steps.length; i++) {
@@ -191,10 +246,10 @@
         if (result.status < 200 || result.status >= 300 || !result.body?.ok) { setFlowStep(i, 'failed', steps); failed = true; summary.textContent = `「${specs[step.name].title}」で停止しました。応答の診断を確認し、修正してから個別に再実行してください。`; break; }
         setFlowStep(i, 'done', steps);
       }
-      if (!failed) summary.textContent = '全ステップが完了しました。各要求の応答と履歴から、入力と出力のつながりを確認できます。';
+      if (!failed) summary.textContent = title.includes('通し') ? `通し実習が完了しました。発行ライセンスID: ${lastLicense?.license_id || '—'}。履歴から各応答を確認できます。` : '全ステップが完了しました。各要求の応答と履歴から、入力と出力のつながりを確認できます。';
     } catch (error) { failed = true; summary.textContent = error.message; }
     summary.hidden = false; if (failed) summary.style.color = '#aa3b46'; else summary.style.color = '#187653';
-    $('run-license-flow').disabled = false; $('run-session-flow').disabled = false; flowRunning = false;
+    ['run-license-flow', 'run-session-flow', 'run-tour', 'load-products'].forEach((id) => { $(id).disabled = false; }); flowRunning = false;
   }
   async function issueKey() {
     const button = $('issue-api-key'); button.disabled = true; button.textContent = '発行中…'; $('key-message').textContent = '';
@@ -203,14 +258,17 @@
       let response; try { response = await fetch(`${API}key.php`, { method: 'POST', cache: 'no-store', credentials: 'omit', signal: ctl.signal, headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: '{}' }); } finally { clearTimeout(timer); }
       const body = await response.json().catch(() => ({})); if (!response.ok || !body.ok || !body.data?.api_key) throw new Error(body.message || body.error || `HTTP ${response.status}`);
       sessionStorage.setItem(KEY_SLOT, JSON.stringify({ key: body.data.api_key, expires_at: body.data.expires_at })); lastLicense = null; lastSession = null; updateKeyState(); $('api-key-value').type = 'text'; $('key-message').textContent = 'キーを発行しました。このタブの間だけ利用できます。'; $('license-indicator').className = 'metric-dot neutral'; $('license-status').textContent = '未作成'; $('license-detail').textContent = 'このタブで発行したデモライセンス';
-    } catch (err) { $('key-message').textContent = `発行できませんでした: ${err.message}`; }
+      return true;
+    } catch (err) { $('key-message').textContent = `発行できませんでした: ${err.message}`; return false; }
     finally { button.disabled = false; button.textContent = readKey() ? '新しいキーを発行' : '専用キーを発行'; }
   }
+  async function ensureKey() { if (readKey()) return true; await issueKey(); if (!readKey()) $('key-dialog').showModal(); return Boolean(readKey()); }
   function downloadJson(filename, data) {
     const blob = new Blob([json(data)], { type: 'application/json;charset=utf-8' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   function resetAll() {
-    if (busy) return; sessionStorage.removeItem(KEY_SLOT); lastResponse = null; lastLicense = null; lastSession = null; history = []; requestCount = 0; $('request-count').textContent = '0'; Object.keys(drafts).forEach((k) => delete drafts[k]);
+    if (busy) return; sessionStorage.removeItem(KEY_SLOT); lastResponse = null; lastLicense = null; lastSession = null; lastProducts = null; history = []; requestCount = 0; $('request-count').textContent = '0'; Object.keys(drafts).forEach((k) => delete drafts[k]);
+    $('flow-product-id').value = '101'; $('product-hint').textContent = '「一覧」を押すと製品名から選べます。'; renderProductOptions();
     $('license-indicator').className = 'metric-dot neutral'; $('license-status').textContent = '未作成'; $('license-detail').textContent = 'このタブで発行したデモライセンス'; $('device-indicator').className = 'metric-dot neutral'; $('device-status').textContent = '未認証'; $('device-detail').textContent = 'アクセストークンと更新トークンはメモリー内';
     $('response-status').textContent = '未実行'; $('response-status').className = 'status-empty'; $('response-time').textContent = '— ms'; $('response-size').textContent = '— bytes'; $('response-request-id').textContent = 'Request ID —'; $('response-json').textContent = '要求を送ると、HTTP状態・応答・診断情報がここに表示されます。'; $('copy-response').disabled = true; $('response-diagnostic').hidden = true; $('product-key-result').hidden = true; $('flow-progress').hidden = true; renderHistory(); updateKeyState(); openOperation('health', false);
   }
@@ -235,6 +293,34 @@
       { name: 'deactivate', body: () => ({ refresh_token: lastSession?.refresh_token || '', device_id: device }) },
     ]);
   });
+  $('load-products').addEventListener('click', async () => {
+    if (!readKey()) { $('key-dialog').showModal(); $('key-message').textContent = '製品一覧の取得には専用キーが必要です。発行してから再試行してください。'; return; }
+    try {
+      const result = await request('products', {}, { fromFlow: true });
+      if (result.status >= 200 && result.status < 300 && lastProducts?.length) $('product-hint').textContent = `選択できます: ${lastProducts.map((product) => `${product.name || product.code} (${product.id})`).join(' / ')}`;
+    } catch (error) { $('product-hint').textContent = error.message; }
+  });
+  $('run-tour').addEventListener('click', async () => {
+    if (flowRunning || busy) return;
+    if (!await ensureKey()) return;
+    const device = ($('flow-device-id')?.value || '').trim() || 'sunabar-v2-device-01';
+    const preferred = Number($('flow-product-id').value);
+    await runFlow('はじめての通し実習', [
+      { name: 'health', body: {} },
+      { name: 'products', body: {} },
+      { name: 'issue', body: () => ({ product_id: chooseProductId(preferred), license_mode: 'single', label: 'Sunabar tour' }) },
+      { name: 'verify', body: () => ({ license_key: lastLicense?.license_key || lastLicense?.product_key || '', product_id: lastLicense?.product_id ?? chooseProductId(preferred) }) },
+      { name: 'activate', body: () => ({ license_key: lastLicense?.license_key || lastLicense?.product_key || '', device_id: device }) },
+      { name: 'check', body: () => ({ access_token: lastSession?.access_token || '', device_id: device }) },
+      { name: 'refresh', body: () => ({ refresh_token: lastSession?.refresh_token || '', device_id: device }) },
+      { name: 'deactivate', body: () => ({ refresh_token: lastSession?.refresh_token || '', device_id: device }) },
+    ]);
+  });
+  document.querySelectorAll('.code-copy').forEach((button) => button.addEventListener('click', async () => {
+    const node = document.querySelector(`.code-sample[data-code="${button.dataset.code}"]`); if (!node) return;
+    try { await navigator.clipboard.writeText(node.textContent); button.textContent = 'コピーしました'; window.setTimeout(() => { button.textContent = 'コピー'; }, 1500); } catch { button.textContent = '選択してコピー'; }
+  }));
+  $('request-body').addEventListener('input', renderSamples);
   $('send').addEventListener('click', async () => {
     $('form-error').textContent = ''; let body;
     try { body = JSON.parse($('request-body').value || '{}'); if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('JSONのトップレベルはオブジェクトにしてください。'); }
@@ -243,7 +329,7 @@
     await request(current, body);
   });
   $('request-body').addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') $('send').click(); });
-  $('reset-body').addEventListener('click', () => { drafts[current] = json(specs[current].body); $('request-body').value = drafts[current]; $('form-error').textContent = ''; });
+  $('reset-body').addEventListener('click', () => { drafts[current] = json(specs[current].body); $('request-body').value = drafts[current]; $('form-error').textContent = ''; renderSamples(); });
   $('operation-search').addEventListener('input', (e) => { const q = e.target.value.toLowerCase(); document.querySelectorAll('.operation').forEach((b) => { b.hidden = !`${b.textContent} ${specs[b.dataset.operation].group} ${specs[b.dataset.operation].endpoint}`.toLowerCase().includes(q); }); });
   $('history-search').addEventListener('input', renderHistory); $('history-filter').addEventListener('change', renderHistory);
   $('export-history').addEventListener('click', () => downloadJson(`sunabar-v2-history-${new Date().toISOString().slice(0, 10)}.json`, { exported_at: new Date().toISOString(), redacted: true, entries: history }));

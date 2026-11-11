@@ -5,6 +5,9 @@ Sunabar v2 is a browser-based practice environment for learning the complete Sun
 ## What's included
 
 - Guided license practice: list products, issue a demo license, and verify it.
+- Beginner tour: issue a key if needed, then run health, products, license, verify, activate, check, refresh, and deactivate in one guided pass.
+- Product picker: load the demo product list and choose a product by name instead of memorizing IDs.
+- Next-step guide and copyable cURL / JavaScript / Python samples for the selected operation.
 - Guided device practice: activate, check, rotate tokens, and deactivate a session.
 - Explorer for all ten API operations, editable JSON bodies, response diagnostics, request IDs, and a 20-second timeout.
 - Searchable, filterable in-tab history capped at 50 requests. API keys and token/license secrets are redacted from history and JSON exports.

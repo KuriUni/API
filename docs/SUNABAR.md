@@ -7,6 +7,9 @@ Sunabar は、本番環境や Sandbox API に接続せずに、API連携のリ�
 [Sunabar Playground](https://2415.jp/license/sunabar/) を開き、専用APIキーを発行します。画面の左側から操作を選び、必要に応じてJSONを編集して「APIを呼び出す」を押してください。
 
 - 稼働確認はAPIキーなしで実行できます。
+- はじめての方は「通し実習」を押してください。キーが無ければ自動で発行し、稼働確認 → 製品一覧 → ライセンス発行 → 検証 → 端末認証 → セッション確認 → 更新 → 終了までを順に実行します。
+- 製品は「一覧」ボタンで読み込み、製品名から選べます。製品IDを覚える必要はありません。
+- 各操作には「この操作のあと」の案内と、そのまま使えるcURL / JavaScript / Pythonのコード例が付きます。キーは `YOUR_SUNABAR_API_KEY` の位置に置き換えてください。
 - キー発行後は、ライセンス発行→検証→端末認証→セッション確認・更新・終了の一連の流れを試せます。
 - 発行したライセンスや端末トークンは、次の操作の入力欄に自動で引き継がれます。
 - APIキーはタブの `sessionStorage` に保存され、トークンと発行ライセンスは画面を開いている間だけメモリー上で扱われます。
@@ -31,6 +34,44 @@ Core Server直結のベースURLは `https://suna.2415.jp/suna/api/v1/` です�
 | セッション終了 | `session/deactivate` | `session-deactivate.php` | POST |
 
 2415.jp中継のベースURLは `https://2415.jp/license/api/sunabar/v1/` です。稼働確認以外は `X-Sunabar-API-Key: <専用キー>` を付けます。POSTには `Content-Type: application/json` を指定します。`Authorization: Bearer <専用キー>` も利用できます。
+
+## License API v4（オンライン端末セッション）
+
+SunabarはLicense API v4のオンライン認証フローもエミュレートします。専用キーはこれまでどおり `X-Sunabar-API-Key` に指定し、v4のセッショントークンは `Authorization: Bearer v4.a....` に指定します。v4の端末公開鍵と署名は実際に検証されます（ホストの `openssl` を使用）。
+
+| 操作 | Core Server | 2415.jp中継 | メソッド |
+| --- | --- | --- | --- |
+| チャレンジ発行 | `v4/challenge` | `v4/challenge.php` | POST |
+| 端末認証 | `v4/activate` | `v4/activate.php` | POST |
+| セッション検証 | `v4/verify` | `v4/verify.php` | POST |
+| セッション情報 | `v4/introspect` | `v4/introspect.php` | POST |
+| トークン更新 | `v4/refresh` | `v4/refresh.php` | POST |
+| セッション失効 | `v4/revoke` | `v4/revoke.php` | POST |
+| オフライン公開鍵 | `v4/offline-public-key` | `v4/offline-public-key.php` | GET（501） |
+| オフラインチケット・移行 | `v4/offline-ticket`, `v4/migrate` | 同名 | POST（501） |
+
+### 認証の流れ
+
+1. `challenge` に `{"purpose":"activate","device_public_key":"-----BEGIN PUBLIC KEY-----..."}` を送り、`challenge_id` と `nonce` を受け取ります。
+2. 端末秘密鍵で次の文字列を署名します。
+
+   ```text
+   TUTI-LICENSE-V4
+   ACTIVATE
+   POST
+   /license/api/v4/activate.php
+   <challenge_id>
+   <nonce>
+   <thumbprint>
+   <body_hash>
+   ```
+
+3. `activate` にライセンスキー、`device_fingerprint`（SHA-256 hex）、公開鍵、チャレンジ情報、署名を送ります。
+4. `verify` / `introspect` / `refresh` / `revoke` では、`X-License-Session`・`X-License-Timestamp`・`X-License-Nonce`・`X-License-Proof` を付け、`TUTI-LICENSE-V4` のリクエスト署名を送ります。更新は `refresh_token` を本文へ、その他はアクセストークンを `Authorization` へ指定します。
+
+`/license/api/v4/...` と `/license/api/sunabar/v4/...` のどちらのパスで署名しても検証します。Sunabarはデモ環境のため、オフラインチケット、v2からの移行、実製品用のオフライン署名鍵は提供しません（HTTP 501）。署名検証に必要な `openssl` がホストに無い場合もHTTP 503を返します。
+
+
 
 ## 端末セッションの例
 

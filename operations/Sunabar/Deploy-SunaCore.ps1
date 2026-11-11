@@ -7,7 +7,7 @@ Add-Type -AssemblyName System.Drawing
 
 $base = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $source = Join-Path $base 'suna-core-source'
-$files = @('.htaccess', 'main.py', 'sunabar_sessions.py', 'api.cgi', 'index.html', 'sunabar.css', 'sunabar.js', 'pymysql_vendor.zip')
+$files = @('.htaccess', 'main.py', 'sunabar_sessions.py', 'sunabar_v4.py', 'api.cgi', 'index.html', 'sunabar.css', 'sunabar.js', 'pymysql_vendor.zip')
 $remoteDirectory = '' # This FTP account is rooted at /public_html/suna/.
 $hostName = 'v2006.coreserver.jp'
 $userName = 'suna@suna.2415.jp'

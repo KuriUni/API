@@ -21,7 +21,7 @@ RATE_MAX_IDENTITIES = 5000
 # All current _limited() windows are at most one hour. Keep only the longest
 # active window so a quiet identity cannot retain a full day's history.
 RATE_RETENTION_SECONDS = 3600
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 STATE_DIR = Path(__file__).resolve().parent / ".sunabar"
 sys.path.insert(0, str(Path(__file__).resolve().parent / "pymysql_vendor.zip"))
 import pymysql
@@ -65,6 +65,66 @@ _SCHEMA = (
         UNIQUE KEY uq_sunabar_access (access_hash),
         UNIQUE KEY uq_sunabar_refresh (refresh_hash),
         INDEX idx_sunabar_session_license_expiry (workspace_id, license_id, refresh_expires_at, revoked_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    """CREATE TABLE IF NOT EXISTS sunabar_v4_challenges (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        challenge_id CHAR(32) NOT NULL UNIQUE,
+        workspace_id CHAR(32) NOT NULL,
+        purpose VARCHAR(8) NOT NULL,
+        nonce_hash CHAR(64) NOT NULL,
+        key_thumbprint CHAR(64) NOT NULL,
+        expires_at BIGINT NOT NULL,
+        consumed_at BIGINT NULL,
+        INDEX idx_sunabar_v4_challenge_expiry (workspace_id, expires_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    """CREATE TABLE IF NOT EXISTS sunabar_v4_devices (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        workspace_id CHAR(32) NOT NULL,
+        license_id CHAR(20) NOT NULL,
+        device_hash CHAR(64) NOT NULL,
+        public_key_pem TEXT NOT NULL,
+        key_thumbprint CHAR(64) NOT NULL,
+        key_algorithm VARCHAR(32) NOT NULL,
+        device_label VARCHAR(120) NOT NULL DEFAULT '',
+        app_version VARCHAR(40) NOT NULL DEFAULT '',
+        bound_at BIGINT NOT NULL,
+        last_seen_at BIGINT NOT NULL,
+        revoked_at BIGINT NULL,
+        UNIQUE KEY uq_sunabar_v4_device (workspace_id, license_id, device_hash),
+        UNIQUE KEY uq_sunabar_v4_license_key (license_id, key_thumbprint),
+        INDEX idx_sunabar_v4_device_license (license_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    """CREATE TABLE IF NOT EXISTS sunabar_v4_sessions (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        session_id CHAR(32) NOT NULL UNIQUE,
+        family_id CHAR(32) NOT NULL,
+        workspace_id CHAR(32) NOT NULL,
+        license_id CHAR(20) NOT NULL,
+        device_id BIGINT UNSIGNED NOT NULL,
+        access_hash CHAR(64) NOT NULL UNIQUE,
+        refresh_hash CHAR(64) NOT NULL UNIQUE,
+        access_expires_at BIGINT NOT NULL,
+        refresh_expires_at BIGINT NOT NULL,
+        token_version INT NOT NULL DEFAULT 1,
+        created_at BIGINT NOT NULL,
+        last_seen_at BIGINT NOT NULL,
+        revoked_at BIGINT NULL,
+        revoke_reason VARCHAR(40) NOT NULL DEFAULT '',
+        INDEX idx_sunabar_v4_session_family (family_id),
+        INDEX idx_sunabar_v4_session_device (device_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    """CREATE TABLE IF NOT EXISTS sunabar_v4_refresh_history (
+        token_hash CHAR(64) NOT NULL PRIMARY KEY,
+        session_id CHAR(32) NOT NULL,
+        family_id CHAR(32) NOT NULL,
+        expires_at BIGINT NOT NULL,
+        used_at BIGINT NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    """CREATE TABLE IF NOT EXISTS sunabar_v4_proofs (
+        proof_hash CHAR(64) NOT NULL PRIMARY KEY,
+        session_id CHAR(32) NOT NULL,
+        action VARCHAR(16) NOT NULL,
+        expires_at BIGINT NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
 )
 PRODUCTS = [
@@ -350,9 +410,9 @@ def _limited(name, limit, window):
         os.close(fd)
 
 
-def _api_key(headers, remote_addr):
+def _api_key(headers, remote_addr, allow_bearer=True):
     value = str(headers.get("x-sunabar-api-key", "")).strip()
-    if not value:
+    if not value and allow_bearer:
         authorization = str(headers.get("authorization", "")).strip()
         if authorization.lower().startswith("bearer "):
             value = authorization[7:].strip()
@@ -440,6 +500,22 @@ def handle(method, path, headers, remote_addr, content_type, content_length, str
         connection.close()
         return reply(200, {"ok": True, "api_version": "sunabar-v1",
                                "dependencies": {"database": "ok"}})
+    if path.startswith("/api/v4/"):
+        action = path[len("/api/v4/"):]
+        if action not in ("challenge", "activate", "verify", "introspect", "refresh", "reauth", "revoke", "offline-public-key", "offline-ticket", "migrate"):
+            raise ApiError(404, "not_found")
+        if action == "offline-public-key":
+            if method != "GET":
+                raise ApiError(405, "method_not_allowed")
+        elif method != "POST":
+            raise ApiError(405, "method_not_allowed")
+        from sunabar_v4 import handle_v4, v4_error
+        try:
+            identity = _api_key(headers, remote_addr, allow_bearer=False)
+            data = _json_body(method, content_type, content_length, stream) if method == "POST" else {}
+        except ApiError as exc:
+            return v4_error(reply, request_id, exc.status, exc.code, exc.message)
+        return handle_v4(action, identity, data, headers, _db_connect, reply, request_id)
     if path in ("/api/v1/activate", "/api/v1/session/check", "/api/v1/session/refresh", "/api/v1/session/deactivate"):
         if method != "POST":
             raise ApiError(405, "method_not_allowed")

@@ -6,13 +6,34 @@
   <meta name="theme-color" content="#101a2a">
   <meta name="description" content="本番環境から分離されたSunabar API検証ワークベンチ。APIフローを再現し、応答と失敗を確認できます。">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-fBx7zCdwA3Oy1EkYkIvNkv/v49Mh/9RvIKktm79CFqw='; style-src 'self' 'sha256-IoVLzsMwZXPE34GodauJOJr7SnMfdAh78EVoRg7AjUQ='; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-kooF6QC/sCD43EcD7/5dhYVmTpcY2LaLHrwIjlfE3t4='; style-src 'self' 'sha256-+Is145HdV9yn/UNFEiOLwmfT8rBYoemNpa9/x/OuMqw='; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>Sunabar v2 — API Verification Workbench</title>
   <style>
 :root{color-scheme:light;--ink:#142033;--muted:#66758b;--line:#dfe6ef;--paper:#fff;--canvas:#f3f6fa;--navy:#101a2a;--blue:#2458d3;--cyan:#52d9d0;--green:#16835d;--red:#b43a46;--amber:#a46509;--shadow:0 16px 44px #172a4210;font-family:Inter,"Noto Sans JP",system-ui,-apple-system,"Segoe UI",sans-serif}*{box-sizing:border-box}body{margin:0;background:var(--canvas);color:var(--ink);font-size:14px;line-height:1.65}button,input,textarea,select{font:inherit}button{cursor:pointer}.topbar{height:66px;background:var(--navy);color:white;display:flex;align-items:center;padding:0 max(calc((100% - 1440px)/2),24px);gap:26px}.brand{display:flex;align-items:center;gap:10px;color:white;text-decoration:none;font-weight:750;font-size:20px;letter-spacing:-.04em}.brand-symbol{display:grid;place-items:center;width:32px;height:32px;border-radius:10px;background:linear-gradient(135deg,#77e6dc,#3188df);color:#112139;font-weight:900}.brand-version{font-size:11px;color:var(--cyan);margin-left:5px;letter-spacing:0}.top-context{display:flex;align-items:center;gap:10px;color:#a8b8ce;font-size:10px;letter-spacing:.12em}.isolation-dot,.metric-dot{width:8px;height:8px;border-radius:50%;background:#32c595;box-shadow:0 0 0 4px #32c59520}.context-divider{height:14px;width:1px;background:#40516a}.top-actions{margin-left:auto;display:flex;align-items:center;gap:8px}.key-status{font-size:11px;color:#ffc87c;margin-right:5px}.key-status i,.session-chip i,.response-foot i{display:inline-block;width:7px;height:7px;border-radius:50%;background:#e8a53f;margin-right:6px}.key-status.key-ready{color:#8de0bc}.key-status.key-ready i{background:#42c892}.button{border:0;border-radius:9px;padding:10px 14px;font-weight:700;transition:.18s ease;display:inline-flex;align-items:center;justify-content:center;gap:8px}.button:hover{transform:translateY(-1px);filter:brightness(1.03)}.button:disabled{opacity:.55;cursor:wait;transform:none}.button-primary{background:var(--blue);color:white;box-shadow:0 6px 16px #2458d32b}.button-secondary{background:#142d4f;color:white}.button-outline{background:#ffffff12;border:1px solid #ffffff36;color:white}.button-quiet{background:transparent;color:#d4ddec}.button-light{background:#eaf0fb;color:#234a9f}.button-quiet-dark{background:#f0f2f5;color:#5b6472}.app-shell{max-width:1440px;margin:auto;padding:0 32px}.welcome{display:flex;align-items:center;justify-content:space-between;gap:30px;padding:38px 4px 30px}.eyebrow{margin:0 0 7px;color:#6c7d95;font-size:10px;letter-spacing:.14em;font-weight:800}.welcome .eyebrow{color:#4264a1}.welcome h1{font-size:clamp(30px,4vw,43px);line-height:1.2;letter-spacing:-.055em;margin:0 0 10px}.welcome h1 span{color:#3974dc}.welcome-copy>p:last-child{margin:0;color:var(--muted);max-width:740px}.welcome-state{display:flex;align-items:center;gap:13px;padding:14px 17px;border:1px solid #bfe9d8;background:#ebfaf3;border-radius:13px;min-width:310px}.welcome-state b,.welcome-state small{display:block}.welcome-state b{color:#126746;font-size:12px}.welcome-state small{color:#648577;font-size:11px}.state-icon{display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:#d2f3e5;color:#19805c;font-size:20px}.view-tabs{display:flex;align-items:center;gap:5px;border-bottom:1px solid var(--line);min-height:56px}.view-tab{height:56px;background:none;border:0;border-bottom:2px solid transparent;padding:0 17px;color:#718097;font-weight:700}.view-tab span{font:700 10px ui-monospace,monospace;color:#96a4b7;margin-right:9px}.view-tab.active{color:#193a79;border-bottom-color:#3974dc}.tab-spacer{flex:1}.session-chip{font-size:11px;color:#77869b;padding:7px 10px;border-radius:99px;background:#e9edf3}.session-chip i{background:#a8b4c3}.session-chip.session-active{background:#e4f6ee;color:#197653}.session-chip.session-active i{background:#2eb982}.view{padding:28px 0 36px}.view[hidden]{display:none}.section-heading,.catalog-heading{display:flex;justify-content:space-between;align-items:center;gap:20px;margin:0 0 20px}.section-heading h2,.catalog-heading h2{font-size:23px;letter-spacing:-.04em;margin:0}.section-heading p:not(.eyebrow){margin:4px 0 0;color:var(--muted)}.section-heading .button{flex:none}.metrics-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:19px}.metric-card{background:white;border:1px solid var(--line);border-radius:13px;padding:15px 17px;box-shadow:0 2px 8px #13243c05}.metric-label{color:#8190a5;font-size:9px;letter-spacing:.14em;font-weight:800}.metric-value{display:flex;align-items:center;gap:9px;margin:5px 0 1px;font-weight:750;font-size:18px}.metric-value .metric-dot{width:7px;height:7px;box-shadow:none}.metric-dot.neutral{background:#aab5c4}.metric-dot.error{background:#d84c58}.metric-card small{font-size:10px;color:#8491a3}.metric-unit{font-size:12px;color:#8491a3}.scenario-grid{display:grid;grid-template-columns:1fr 1fr 265px;gap:15px;align-items:stretch}.scenario-card,.side-card{background:white;border:1px solid var(--line);border-radius:15px;padding:19px;box-shadow:var(--shadow)}.scenario-primary{border-color:#bed0f3;box-shadow:0 12px 35px #3459a314}.scenario-top{display:flex;align-items:center;justify-content:space-between}.scenario-index{font-size:9px;letter-spacing:.12em;font-weight:850;color:#4671cf}.scenario-tag{font-size:10px;color:#77869a;background:#f0f3f8;padding:4px 8px;border-radius:99px}.scenario-icon{margin-top:15px;display:grid;place-items:center;width:36px;height:36px;border-radius:11px;background:#e9efff;color:#2458d3;font:800 12px ui-monospace,monospace}.session-icon{background:#e2f7f1;color:#15815b}.scenario-card h3,.side-card h3{font-size:17px;margin:9px 0 4px;letter-spacing:-.025em}.scenario-card>p,.side-card>p{font-size:12px;color:var(--muted);margin:0 0 15px;min-height:39px}.input-label{display:block;font-size:10px;font-weight:750;color:#53637a;margin-bottom:6px}.scenario-input-row{display:flex;gap:8px;margin-bottom:11px}.scenario-input-row input,.key-entry input{min-width:0;flex:1;border:1px solid var(--line);border-radius:8px;padding:9px 10px;background:#fbfcfe;color:var(--ink);outline:none}.scenario-input-row input:focus,.key-entry input:focus,.history-search input:focus,.operation-search input:focus,textarea:focus{border-color:#5b83e1;box-shadow:0 0 0 3px #356add16}.scenario-card>.button{width:100%;padding:11px}.flow-steps{display:flex;align-items:center;gap:8px;margin-top:11px;color:#75849a;font-size:10px}.flow-steps i{font-style:normal;color:#b3bdca}.scenario-side{display:flex;flex-direction:column;gap:13px}.side-card{padding:17px}.side-card h3{margin:2px 0 6px}.side-card>p{min-height:0;margin-bottom:12px}.side-card>.button{width:100%;font-size:11px}.side-card-tip{display:flex;gap:10px;align-items:flex-start;background:#fff9eb;border-color:#f0dfb9;box-shadow:none}.side-card-tip b{font-size:11px;color:#755117}.side-card-tip p{font-size:10px;color:#83775f;margin:2px 0 0}.tip-mark{flex:none;display:grid;place-items:center;width:20px;height:20px;background:#f4e3b7;color:#9b6b15;border-radius:50%;font-weight:800;font-size:11px}.flow-progress{margin-top:20px;background:#fff;border:1px solid #cbd8ef;border-radius:14px;padding:18px 20px;box-shadow:var(--shadow)}.flow-progress[hidden],.flow-summary[hidden]{display:none}.flow-progress-head{display:flex;justify-content:space-between;align-items:center}.flow-progress-head h3{margin:0;font-size:16px}.flow-counter{font:700 12px ui-monospace,monospace;color:#4269b3}.progress-track{height:5px;background:#e9eef7;border-radius:10px;margin:13px 0}.progress-track i{display:block;height:100%;width:0;background:linear-gradient(90deg,#3d72db,#48c4ac);border-radius:10px;transition:width .25s}.flow-log{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.flow-log li{padding:9px 10px;border-radius:9px;background:#f5f7fa;color:#718096;font-size:11px}.flow-log li.done{background:#eaf8f2;color:#187653}.flow-log li.failed{background:#fff0f0;color:#a83942}.flow-log li.running{background:#eef3ff;color:#315ab0}.flow-log li b{display:block;font-size:10px;margin-bottom:2px}.flow-summary{margin-top:10px;color:#64738a;font-size:12px}.operation-catalog{margin-top:30px}.catalog-heading{margin-bottom:12px}.catalog-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}.catalog-item{display:flex;align-items:center;gap:11px;text-align:left;padding:12px;background:#fff;border:1px solid var(--line);border-radius:11px;color:var(--ink);transition:.16s}.catalog-item:hover{border-color:#aabfe9;transform:translateY(-2px);box-shadow:var(--shadow)}.catalog-num{display:grid;place-items:center;width:30px;height:30px;flex:none;border-radius:9px;background:#edf2fb;color:#4269b3;font:750 10px ui-monospace,monospace}.catalog-item b,.catalog-item small{display:block}.catalog-item b{font-size:11px}.catalog-item small{font-size:9px;color:#8794a7}.text-button{border:0;background:none;color:#3463bb;font-size:11px;font-weight:750;padding:7px}.safety-note{margin-top:21px;padding:13px 15px;display:flex;gap:11px;background:#edf2f8;border-radius:11px;color:#63748b}.safety-note>span{display:grid;place-items:center;flex:none;width:20px;height:20px;border-radius:50%;background:#d6e1ef;color:#526d91;font-weight:800}.safety-note p{font-size:10px;margin:0}.safety-note b{color:#334964}.console-layout{display:grid;grid-template-columns:220px minmax(280px,1fr) minmax(310px,1fr);gap:14px;align-items:start}.operation-nav,.request-panel,.response-panel{min-width:0;background:white;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}.operation-nav{padding:15px}.operation-nav-head,.response-panel-head,.request-panel-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px}.operation-nav-head h2,.request-panel-head h2,.response-panel-head h2{margin:0;font-size:17px;letter-spacing:-.03em}.operation-nav-head>span{background:#edf2fb;color:#4e6ca8;padding:2px 7px;border-radius:20px;font-size:10px}.operation-search,.history-search{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:8px;padding:0 9px;color:#94a1b2}.operation-search{margin:12px 0}.operation-search input,.history-search input{border:0!important;outline:0;min-width:0;width:100%;padding:9px 0;background:transparent;box-shadow:none!important;font-size:11px}.operation-list{display:grid;gap:3px}.operation{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;border-radius:8px;background:transparent;padding:8px;color:#53637a;font-size:11px}.operation:hover{background:#f4f7fb}.operation.active{background:#eaf0fc;color:#234fba;font-weight:750}.operation .operation-method{font:750 8px ui-monospace,monospace;color:#6881aa;width:29px}.nav-help{margin-top:13px;border-top:1px solid #edf0f4;padding:11px 2px 0;color:#8a97a9;font-size:9px}.request-panel,.response-panel{padding:18px}.request-panel-head{min-height:56px}.request-panel-head>div>p:last-child{margin:4px 0 0;color:#738198;font-size:11px}.method-badge{font:800 9px ui-monospace,monospace;border-radius:6px;padding:5px 8px;background:#e8f5ee;color:#21805b}.method-badge.post{background:#edf1ff;color:#4565bf}.endpoint-bar{display:flex;align-items:center;gap:8px;margin:13px 0 11px;padding:9px 10px;background:#f3f6fa;border:1px solid #e7ecf3;border-radius:8px;font:10px ui-monospace,monospace;min-width:0}.endpoint-host{color:#75849a}.endpoint-path{min-width:0;overflow-wrap:anywhere;color:#315584}.icon-button{width:30px;height:30px;display:grid;place-items:center;border:1px solid var(--line);background:white;color:#64748b;border-radius:8px;flex:none}.icon-button:disabled{opacity:.4;cursor:default}.endpoint-bar .icon-button{margin-left:auto}.request-controls{display:flex;align-items:center;gap:7px;margin:0 0 12px}.auth-chip,.risk-chip{font-size:9px;border-radius:20px;padding:4px 8px;background:#f0f3f8;color:#6f7e92}.risk-chip{background:#e9f7ef;color:#247752}.risk-chip.mutation{background:#fff2df;color:#936116}.request-controls .text-button{margin-left:auto}.editor-label{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;color:#6b7a91;font:750 9px ui-monospace,monospace;letter-spacing:.08em}.editor-label span{font:10px system-ui;letter-spacing:0;color:#9aa5b4}textarea{display:block;width:100%;height:205px;resize:vertical;border:1px solid #dce3ed;border-radius:9px;background:#111c2c;color:#d5e2f4;padding:13px;font:11px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace;outline:none;tab-size:2}.request-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px}.request-actions p{font-size:10px;color:#8592a4;margin:0}.request-actions .button{padding:9px 12px;font-size:11px}.form-error{font-size:11px;color:#b33c48;margin:5px 0}.response-panel-head{align-items:center}.response-metrics{display:flex;align-items:center;gap:14px;padding:11px 0;border-bottom:1px solid #edf0f4;color:#8592a4;font:10px ui-monospace,monospace}.status-pill{font-weight:800;color:#17825b}.status-pill.error{color:#bb3b49}.status-empty{color:#8a97a9}.diagnostic{margin:10px 0;padding:10px;border-radius:8px;background:#fff3df;color:#815712;font-size:10px}.diagnostic[hidden],.product-key-result[hidden]{display:none}.diagnostic b{display:block;margin-bottom:3px}.product-key-result{display:flex;align-items:center;gap:10px;margin:10px 0;padding:10px;background:#eaf8f1;border:1px solid #ccebdc;border-radius:9px}.product-key-result>div{flex:none}.product-key-result b,.product-key-result small{display:block}.product-key-result b{color:#1c714f;font-size:10px}.product-key-result small{font-size:8px;color:#6e9583}.product-key-result code{min-width:0;overflow:hidden;text-overflow:ellipsis;color:#365a49;font-size:9px}.product-key-result button{margin-left:auto;padding:6px 9px;font-size:9px}.response-json{height:340px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:13px;margin:11px 0;background:#111c2c;color:#d5e2f4;border-radius:9px;font:10px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace}.json-placeholder{color:#8392a8}.response-foot{display:flex;justify-content:space-between;align-items:center;color:#8c99aa;font-size:9px}.response-foot i{width:6px;height:6px;background:#38ad82;margin-right:5px}.history-actions{display:flex;gap:7px}.history-actions .button{font-size:10px;padding:8px 11px}.history-toolbar{display:flex;align-items:center;gap:9px;margin-bottom:12px}.history-search{flex:1;max-width:500px}.history-toolbar select{border:1px solid var(--line);border-radius:8px;background:white;padding:9px;color:#53637a;font-size:11px}.history-count{color:#8290a3;font-size:10px}.history-table-wrap{overflow:auto;background:white;border:1px solid var(--line);border-radius:12px}.history-table{width:100%;border-collapse:collapse;min-width:740px}.history-table th,.history-table td{text-align:left;padding:11px 12px;border-bottom:1px solid #edf0f4;font-size:10px}.history-table th{background:#f7f9fb;color:#77869a;font-weight:750}.history-table td{color:#57677e}.history-table tr:last-child td{border-bottom:0}.history-table .history-empty td{text-align:center;color:#929eae;padding:40px}.history-operation b{display:block;color:#33445c;font-size:10px}.history-operation code{font-size:9px;color:#8290a3}.history-status{font:750 9px ui-monospace,monospace;color:#188059}.history-status.error{color:#b13d4a}.history-open{border:0;background:#edf2fb;color:#4564a2;border-radius:7px;padding:5px 8px;font-size:9px}.history-disclaimer{display:flex;align-items:center;gap:10px;margin-top:15px;color:#738197;background:#edf2f7;padding:12px 14px;border-radius:9px}.history-disclaimer>span{display:grid;place-items:center;width:19px;height:19px;flex:none;border-radius:50%;background:#dbe4ee;color:#637d9b;font-size:10px;font-weight:800}.history-disclaimer p{margin:0;font-size:10px}.app-footer{display:flex;justify-content:space-between;gap:15px;border-top:1px solid var(--line);padding:17px 0 23px;color:#8b97a8;font-size:9px;letter-spacing:.04em}.app-footer a{color:#526a91;text-decoration:none}.key-dialog{width:min(480px,calc(100% - 28px));padding:22px;border:1px solid var(--line);border-radius:16px;box-shadow:0 24px 80px #111a2b40;color:var(--ink)}.key-dialog::backdrop{background:#101a2a88;backdrop-filter:blur(3px)}.dialog-head{display:flex;justify-content:space-between;align-items:center}.dialog-head h2{margin:0;font-size:22px}.key-dialog>p{color:#718096;font-size:12px}.key-entry{display:flex;gap:6px}.key-entry .button{padding:8px 10px;font-size:10px}.key-expiry{font-size:10px!important;color:#8c98a8!important}.key-dialog>#issue-api-key{width:100%;margin-top:8px}.key-dialog .form-error{min-height:18px}.operation[hidden]{display:none}
 @media(max-width:1080px){.scenario-grid{grid-template-columns:1fr 1fr}.scenario-side{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr}.console-layout{grid-template-columns:190px minmax(250px,1fr)}.response-panel{grid-column:2}.operation-nav{grid-row:span 2}.catalog-grid{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:720px){.topbar{height:auto;min-height:60px;padding:10px 15px;gap:10px;flex-wrap:wrap}.top-context{display:none}.top-actions{gap:5px}.key-status{font-size:9px}.button-outline,.button-quiet{font-size:10px;padding:7px 9px}.app-shell{padding:0 15px}.welcome{padding:27px 0 21px;display:block}.welcome h1{font-size:31px}.welcome-state{margin-top:17px;min-width:0}.view-tabs{overflow:auto;white-space:nowrap}.view-tab{padding:0 12px;font-size:11px}.session-chip{font-size:9px;white-space:nowrap}.view{padding-top:20px}.section-heading{align-items:flex-start}.section-heading h2,.catalog-heading h2{font-size:20px}.section-heading> .button{font-size:9px;padding:8px}.metrics-grid{grid-template-columns:1fr 1fr;gap:8px}.metric-card{padding:12px}.metric-value{font-size:15px}.metric-card small{font-size:9px}.scenario-grid{grid-template-columns:1fr}.scenario-side{grid-column:auto;grid-template-columns:1fr}.scenario-card{padding:16px}.flow-log{grid-template-columns:1fr 1fr}.catalog-grid{grid-template-columns:1fr 1fr;gap:7px}.catalog-item{padding:9px;gap:8px}.catalog-item b{font-size:10px}.console-layout{grid-template-columns:1fr}.operation-nav{grid-row:auto}.operation-list{grid-template-columns:1fr 1fr}.operation{font-size:10px}.request-panel,.response-panel{padding:14px}.response-panel{grid-column:auto}.response-json{height:280px}.history-toolbar{flex-wrap:wrap}.history-search{min-width:100%;max-width:none}.history-actions{flex-wrap:wrap}.app-footer{flex-wrap:wrap;line-height:1.4}.product-key-result{flex-wrap:wrap}.product-key-result code{flex:1}.product-key-result button{margin-left:auto}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
+
+/* Beginner tour, operation guide and code samples */
+.tour-card{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:0 0 15px;padding:18px 20px;border:1px solid #bcd3f3;border-radius:15px;background:linear-gradient(135deg,#eef4ff,#f6fbff);box-shadow:var(--shadow)}
+.tour-card h3{margin:2px 0 4px;font-size:18px;letter-spacing:-.03em}
+.tour-card p:not(.eyebrow){margin:0;color:#5d6f88;font-size:12px;max-width:760px}
+.tour-actions{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:none}
+.tour-actions small{font-size:10px;color:#6f829b}
+.operation-guide{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0 0 12px;padding:9px 11px;border:1px solid #d8e4f6;border-radius:8px;background:#f4f8ff;color:#526784;font-size:10px}
+.operation-guide b{color:#2d4f86;font-size:10px}
+.operation-guide .text-button{margin-left:auto;padding:2px 0}
+.form-hint{margin:-4px 0 10px;font-size:10px;color:#8794a7}
+.code-samples{margin-top:12px;border-top:1px solid #eef1f5;padding-top:10px}
+.code-samples summary{cursor:pointer;color:#4a6a9c;font-size:10px;font-weight:750}
+.code-block{margin-top:9px;border:1px solid #e2e8f1;border-radius:8px;overflow:hidden}
+.code-head{display:flex;align-items:center;justify-content:space-between;padding:5px 8px;background:#f5f8fc;color:#5c7291;font-size:9px}
+.code-copy{border:0;background:#e8effb;color:#35599a;border-radius:6px;padding:3px 7px;font-size:9px;font-weight:700}
+.code-sample{margin:0;max-height:180px;overflow:auto;padding:9px;background:#111c2c;color:#d5e2f4;font:9.5px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.code-note{margin:8px 0 0;font-size:9px;color:#8794a7}
+@media(max-width:720px){.tour-card{display:block}.tour-actions{display:block;margin-top:12px}.tour-actions small{display:block;margin-top:6px}}
+.scenario-input-row .button{flex:none;padding:9px 10px;font-size:10px}
+.scenario-input-row input[list]{flex:1}
 </style>
 
 </head>
@@ -25,7 +46,7 @@
 
   <main class="app-shell">
     <section class="welcome">
-      <div class="welcome-copy"><p class="eyebrow">SUNABAR · API EMULATOR · V2</p><h1>APIを試す。<span>流れを確かめる。</span></h1><p>キー発行からライセンス・端末セッションまで、実際のAPI要求を安全なデモ環境でつなげて検証できます。</p></div>
+      <div class="welcome-copy"><p class="eyebrow">SUNABAR · API EMULATOR · V2</p><h1>APIを試す。<span>流れを確かめる。</span></h1><p>キー発行からライセンス・端末セッションまで、実際のAPI要求を安全なデモ環境でつなげて検証できます。はじめての方は「通し実習」から順に進めてください。</p></div>
       <div class="welcome-state"><span class="state-icon">↗</span><div><b>本番データには接続しません</b><small>デモ用キーとライセンスは実製品では使えません</small></div></div>
     </section>
 
@@ -45,11 +66,15 @@
         <article class="metric-card"><div class="metric-label">REQUESTS</div><div class="metric-value"><span id="request-count">0</span><span class="metric-unit">件</span></div><small>このタブで実行したAPI要求</small></article>
       </div>
 
+      <article class="tour-card">
+        <div><p class="eyebrow">BEGINNER TOUR</p><h3>はじめての通し実習</h3><p>キー発行 → ライセンス発行 → 検証 → 端末認証 → トークン更新 → セッション終了までを、案内に沿って自動実行します。所要約2分。応答は1件ずつ確認できます。</p></div>
+        <div class="tour-actions"><button id="run-tour" class="button button-primary" type="button">通し実習をはじめる →</button><small>キーが無い場合は自動で発行します</small></div>
+      </article>
       <div class="scenario-grid">
         <article class="scenario-card scenario-primary">
           <div class="scenario-top"><span class="scenario-index">FLOW 01</span><span class="scenario-tag">約1分 · 3 API要求</span></div>
           <div class="scenario-icon license-icon">01</div><h3>デモライセンスを発行して検証</h3><p>製品一覧 → デモ発行 → キー検証までを連続実行。発行キーをこのタブの状態へ安全に引き継ぎます。</p>
-          <label class="input-label" for="flow-product-id">製品ID</label><div class="scenario-input-row"><input id="flow-product-id" value="101" inputmode="numeric" aria-label="製品ID"><input id="flow-label" value="Sunabar v2 practice" maxlength="80" aria-label="デモライセンスのラベル"></div>
+          <label class="input-label" for="flow-product-id">製品</label><div class="scenario-input-row"><input id="flow-product-id" value="101" list="flow-product-options" inputmode="numeric" aria-label="製品ID"><datalist id="flow-product-options"></datalist><button id="load-products" class="button button-light" type="button">一覧</button></div><div class="scenario-input-row"><input id="flow-label" value="Sunabar v2 practice" maxlength="80" aria-label="デモライセンスのラベル"></div><p id="product-hint" class="form-hint">「一覧」を押すと製品名から選べます。</p>
           <button id="run-license-flow" class="button button-primary" type="button">デモ発行フローを実行 <span>→</span></button>
           <div class="flow-steps" aria-label="フローの段階"><span>製品一覧</span><i>›</i><span>発行</span><i>›</i><span>検証</span></div>
         </article>
@@ -78,8 +103,15 @@
         <section class="request-panel" aria-labelledby="operation-title"><div class="request-panel-head"><div><p class="eyebrow" id="operation-category">LICENSE</p><h2 id="operation-title">稼働状態</h2><p id="operation-description"></p></div><span id="method-badge" class="method-badge get">GET</span></div>
           <div class="endpoint-bar"><span id="endpoint-host" class="endpoint-host">2415.jp</span><span id="endpoint-path" class="endpoint-path">/license/api/sunabar/v1/health.php</span><button id="copy-path" class="icon-button" type="button" title="URLをコピー" aria-label="URLをコピー">⧉</button></div>
           <div class="request-controls"><span id="auth-state" class="auth-chip">認証不要</span><span id="operation-risk" class="risk-chip">READ ONLY</span><button id="reset-body" class="text-button" type="button">例を戻す</button></div>
+          <div id="operation-guide" class="operation-guide" aria-live="polite"></div>
           <div class="editor-label"><label for="request-body">REQUEST BODY</label><span>JSON · Ctrl/⌘ + Enterで実行</span></div><textarea id="request-body" spellcheck="false" aria-label="JSONリクエスト本文"></textarea>
           <p id="form-error" class="form-error" role="alert"></p><div class="request-actions"><p id="request-hint">この操作は状態を変更しません。</p><button id="send" class="button button-primary" type="button"><span>▶</span>要求を送る</button></div>
+          <details class="code-samples" id="code-samples"><summary>この操作のコード例（cURL / JavaScript / Python）</summary>
+            <div class="code-block"><div class="code-head"><b>cURL</b><button class="code-copy" type="button" data-code="curl">コピー</button></div><pre class="code-sample" data-code="curl"></pre></div>
+            <div class="code-block"><div class="code-head"><b>JavaScript</b><button class="code-copy" type="button" data-code="js">コピー</button></div><pre class="code-sample" data-code="js"></pre></div>
+            <div class="code-block"><div class="code-head"><b>Python</b><button class="code-copy" type="button" data-code="python">コピー</button></div><pre class="code-sample" data-code="python"></pre></div>
+            <p class="code-note">キーは <code>YOUR_SUNABAR_API_KEY</code> の位置に置き換えてください。デモ用キーを実製品へ使わないでください。</p>
+          </details>
         </section>
         <section class="response-panel" aria-labelledby="response-title"><div class="response-panel-head"><div><p class="eyebrow">LIVE RESPONSE</p><h2 id="response-title">応答インスペクター</h2></div><button id="copy-response" class="icon-button" type="button" title="応答をコピー" aria-label="応答をコピー" disabled>⧉</button></div>
           <div class="response-metrics"><span id="response-status" class="status-empty">未実行</span><span id="response-time">— ms</span><span id="response-size">— bytes</span></div>
@@ -121,6 +153,18 @@
     refresh: { title: 'セッション更新', group: 'DEVICE SESSION', method: 'POST', endpoint: 'session-refresh.php', body: { refresh_token: '', device_id: 'sunabar-v2-device-01' }, risk: 'ROTATES TOKENS', description: 'トークンを更新します。成功後は前のトークンを使えません。' },
     deactivate: { title: 'セッション終了', group: 'DEVICE SESSION', method: 'POST', endpoint: 'session-deactivate.php', body: { refresh_token: '', device_id: 'sunabar-v2-device-01' }, risk: 'END SESSION', description: '端末セッションを終了します。' },
   };
+  const guides = {
+    health: ['中継サーバーとデモ用データベースが応答するか確認します。ここで失敗すると他の操作も進みません。', 'products'],
+    products: ['デモで使える製品IDとライセンス方式を確認します。次の発行で使う製品を選びます。', 'issue'],
+    issue: ['デモライセンスを1件発行します。返ったキーは検証と端末認証で使います。', 'verify'],
+    verify: ['発行したキーが有効か、製品IDと一致するかを確認します。', 'activate'],
+    list: ['この専用キーで発行したライセンスを一覧します。失効済みも確認できます。', ''],
+    revoke: ['デモライセンスを失効させます。端末セッションも終了します。', ''],
+    activate: ['ライセンスを使って端末セッションを開始し、トークンを取得します。', 'check'],
+    check: ['アクセストークンが有効か確認します。', 'refresh'],
+    refresh: ['更新トークンでトークンをローテーションします。古いトークンは使えなくなります。', 'deactivate'],
+    deactivate: ['端末セッションを終了します。', ''],
+  };
   const errors = {
     invalid_api_key: ['APIキーを確認', 'キーが無効か、発行元のワークスペースが異なります。専用キーを再発行してください。'],
     expired_token: ['APIキーの期限切れ', '専用キーは24時間で期限切れになります。新しいキーを発行してください。'],
@@ -138,6 +182,7 @@
   let lastResponse = null;
   let lastLicense = null;
   let lastSession = null;
+  let lastProducts = null;
   let requestCount = 0;
   let history = [];
   let flowRunning = false;
@@ -173,7 +218,45 @@
     $('key-expiry').textContent = key ? `有効期限 ${new Date(key.expires_at * 1000).toLocaleString('ja-JP')}` : '';
     $('issue-api-key').textContent = key ? '新しいキーを発行' : '専用キーを発行';
   }
-  function openOperation(name, save = true) {
+  function renderGuide(name) {
+    const box = $('operation-guide'); const info = guides[name]; if (!box) return;
+    box.replaceChildren(); const title = document.createElement('b'); title.textContent = 'この操作のあと';
+    const text = document.createElement('span'); text.textContent = info ? info[0] : specs[name].description;
+    box.append(title, text);
+    const next = info && info[1];
+    if (next && specs[next]) { const button = document.createElement('button'); button.type = 'button'; button.className = 'text-button'; button.textContent = `次へ: ${specs[next].title} →`; button.addEventListener('click', () => openOperation(next)); box.append(button); }
+  }
+  function chooseProductId(preferred) {
+    const ids = (lastProducts || []).map((product) => Number(product.id)); const value = Number(preferred);
+    if (Number.isInteger(value) && value > 0 && (!ids.length || ids.includes(value))) return value;
+    return ids[0] || (Number.isInteger(value) && value > 0 ? value : 101);
+  }
+  function renderProductOptions() {
+    const list = $('flow-product-options'); if (!list) return;
+    list.replaceChildren(...(lastProducts || []).map((product) => { const option = document.createElement('option'); option.value = String(product.id); option.textContent = `${product.name || product.code || '製品'} (${product.id})`; option.label = option.textContent; return option; }));
+    const input = $('flow-product-id'); const ids = (lastProducts || []).map((product) => Number(product.id));
+    if (input && ids.length && !ids.includes(Number(input.value))) input.value = String(ids[0]);
+    if (ids.length) $('product-hint').textContent = `選択できます: ${(lastProducts || []).map((product) => `${product.name || product.code} (${product.id})`).join(' / ')}`;
+  }
+  function sampleBody() {
+    try { const value = JSON.parse($('request-body').value || '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? value : specs[current].body; } catch { return specs[current].body; }
+  }
+  function renderSamples() {
+    const op = specs[current]; const url = `${location.origin}${path(current)}`; const pretty = json(sampleBody());
+    const keyValue = op.key === false ? '' : 'YOUR_SUNABAR_API_KEY';
+    const NL = String.fromCharCode(10); const BS = String.fromCharCode(92);
+    const curlLines = [`curl -X ${op.method} '${url}'`, "  -H 'Accept: application/json'"];
+    if (keyValue) curlLines.push(`  -H 'X-Sunabar-API-Key: ${keyValue}'`);
+    if (op.method === 'POST') { curlLines.push("  -H 'Content-Type: application/json'"); curlLines.push(`  -d '${pretty.replace(/'/g, "'" + BS + "''")}'`); }
+    const curl = curlLines.map((line, index) => index === curlLines.length - 1 ? line : line + ' ' + BS).join(NL);
+    const jsHeaders = ["'Accept': 'application/json'", ...(keyValue ? [`'X-Sunabar-API-Key': '${keyValue}'`] : []), ...(op.method === 'POST' ? ["'Content-Type': 'application/json'"] : [])];
+    const js = [`const res = await fetch('${path(current)}', {`, `  method: '${op.method}',`, `  headers: { ${jsHeaders.join(', ')} }${op.method === 'POST' ? ',' : ''}`, ...(op.method === 'POST' ? [`  body: JSON.stringify(${pretty})`] : []), '});', 'const data = await res.json();', 'console.log(data);'].join(NL);
+    const pyHeaders = ['"Accept": "application/json"', ...(keyValue ? [`"X-Sunabar-API-Key": "${keyValue}"`] : [])];
+    const python = ['import requests', '', `url = "${url}"`, `headers = {${pyHeaders.join(', ')}}`, op.method === 'POST' ? `r = requests.post(url, headers=headers, json=${pretty})` : 'r = requests.get(url, headers=headers)', 'print(r.status_code)', 'print(r.json())'].join(NL);
+    const codes = { curl, js, python };
+    document.querySelectorAll('.code-sample').forEach((node) => { node.textContent = codes[node.dataset.code] || ''; });
+  }
+  function openOperation2(name, save = true) {
     if (!specs[name]) return;
     if (save && $('request-body')) drafts[current] = $('request-body').value;
     current = name; const op = specs[name];
@@ -185,6 +268,9 @@
     const risk = $('operation-risk'); risk.textContent = op.risk; risk.classList.toggle('mutation', /CHANGE|ROTATES|CREATE|END/.test(op.risk));
     $('request-hint').textContent = op.key === false ? 'APIキー不要の読み取り操作です。' : (hasKeyHint());
     updateKeyState();
+  }
+  function openOperation(name, save = true) {
+    openOperation2(name, save); renderGuide(name); renderSamples();
   }
   function hasKeyHint() { return readKey() ? '同一タブのSunabar専用キーを使用します。' : '実行前にSunabar専用キーが必要です。'; }
   function switchView(view) {
@@ -238,6 +324,7 @@
   }
   function updateKeyFromResponse(name, request, result) {
     const data = result.body?.data;
+    if (name === 'products' && Array.isArray(data?.products)) { lastProducts = data.products; renderProductOptions(); }
     if (name === 'issue' && data?.license) {
       lastLicense = data.license;
       drafts.verify = json({ license_key: data.license.license_key || data.license.product_key, product_id: data.license.product_id ?? request.product_id });
@@ -286,7 +373,7 @@
   }
   async function runFlow(title, steps) {
     if (flowRunning || busy) return; flowRunning = true; recordFlow(title, steps);
-    $('run-license-flow').disabled = true; $('run-session-flow').disabled = true;
+    ['run-license-flow', 'run-session-flow', 'run-tour', 'load-products'].forEach((id) => { $(id).disabled = true; });
     const summary = $('flow-summary'); let failed = false;
     try {
       for (let i = 0; i < steps.length; i++) {
@@ -296,10 +383,10 @@
         if (result.status < 200 || result.status >= 300 || !result.body?.ok) { setFlowStep(i, 'failed', steps); failed = true; summary.textContent = `「${specs[step.name].title}」で停止しました。応答の診断を確認し、修正してから個別に再実行してください。`; break; }
         setFlowStep(i, 'done', steps);
       }
-      if (!failed) summary.textContent = '全ステップが完了しました。各要求の応答と履歴から、入力と出力のつながりを確認できます。';
+      if (!failed) summary.textContent = title.includes('通し') ? `通し実習が完了しました。発行ライセンスID: ${lastLicense?.license_id || '—'}。履歴から各応答を確認できます。` : '全ステップが完了しました。各要求の応答と履歴から、入力と出力のつながりを確認できます。';
     } catch (error) { failed = true; summary.textContent = error.message; }
     summary.hidden = false; if (failed) summary.style.color = '#aa3b46'; else summary.style.color = '#187653';
-    $('run-license-flow').disabled = false; $('run-session-flow').disabled = false; flowRunning = false;
+    ['run-license-flow', 'run-session-flow', 'run-tour', 'load-products'].forEach((id) => { $(id).disabled = false; }); flowRunning = false;
   }
   async function issueKey() {
     const button = $('issue-api-key'); button.disabled = true; button.textContent = '発行中…'; $('key-message').textContent = '';
@@ -308,14 +395,17 @@
       let response; try { response = await fetch(`${API}key.php`, { method: 'POST', cache: 'no-store', credentials: 'omit', signal: ctl.signal, headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: '{}' }); } finally { clearTimeout(timer); }
       const body = await response.json().catch(() => ({})); if (!response.ok || !body.ok || !body.data?.api_key) throw new Error(body.message || body.error || `HTTP ${response.status}`);
       sessionStorage.setItem(KEY_SLOT, JSON.stringify({ key: body.data.api_key, expires_at: body.data.expires_at })); lastLicense = null; lastSession = null; updateKeyState(); $('api-key-value').type = 'text'; $('key-message').textContent = 'キーを発行しました。このタブの間だけ利用できます。'; $('license-indicator').className = 'metric-dot neutral'; $('license-status').textContent = '未作成'; $('license-detail').textContent = 'このタブで発行したデモライセンス';
-    } catch (err) { $('key-message').textContent = `発行できませんでした: ${err.message}`; }
+      return true;
+    } catch (err) { $('key-message').textContent = `発行できませんでした: ${err.message}`; return false; }
     finally { button.disabled = false; button.textContent = readKey() ? '新しいキーを発行' : '専用キーを発行'; }
   }
+  async function ensureKey() { if (readKey()) return true; await issueKey(); if (!readKey()) $('key-dialog').showModal(); return Boolean(readKey()); }
   function downloadJson(filename, data) {
     const blob = new Blob([json(data)], { type: 'application/json;charset=utf-8' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   function resetAll() {
-    if (busy) return; sessionStorage.removeItem(KEY_SLOT); lastResponse = null; lastLicense = null; lastSession = null; history = []; requestCount = 0; $('request-count').textContent = '0'; Object.keys(drafts).forEach((k) => delete drafts[k]);
+    if (busy) return; sessionStorage.removeItem(KEY_SLOT); lastResponse = null; lastLicense = null; lastSession = null; lastProducts = null; history = []; requestCount = 0; $('request-count').textContent = '0'; Object.keys(drafts).forEach((k) => delete drafts[k]);
+    $('flow-product-id').value = '101'; $('product-hint').textContent = '「一覧」を押すと製品名から選べます。'; renderProductOptions();
     $('license-indicator').className = 'metric-dot neutral'; $('license-status').textContent = '未作成'; $('license-detail').textContent = 'このタブで発行したデモライセンス'; $('device-indicator').className = 'metric-dot neutral'; $('device-status').textContent = '未認証'; $('device-detail').textContent = 'アクセストークンと更新トークンはメモリー内';
     $('response-status').textContent = '未実行'; $('response-status').className = 'status-empty'; $('response-time').textContent = '— ms'; $('response-size').textContent = '— bytes'; $('response-request-id').textContent = 'Request ID —'; $('response-json').textContent = '要求を送ると、HTTP状態・応答・診断情報がここに表示されます。'; $('copy-response').disabled = true; $('response-diagnostic').hidden = true; $('product-key-result').hidden = true; $('flow-progress').hidden = true; renderHistory(); updateKeyState(); openOperation('health', false);
   }
@@ -340,6 +430,34 @@
       { name: 'deactivate', body: () => ({ refresh_token: lastSession?.refresh_token || '', device_id: device }) },
     ]);
   });
+  $('load-products').addEventListener('click', async () => {
+    if (!readKey()) { $('key-dialog').showModal(); $('key-message').textContent = '製品一覧の取得には専用キーが必要です。発行してから再試行してください。'; return; }
+    try {
+      const result = await request('products', {}, { fromFlow: true });
+      if (result.status >= 200 && result.status < 300 && lastProducts?.length) $('product-hint').textContent = `選択できます: ${lastProducts.map((product) => `${product.name || product.code} (${product.id})`).join(' / ')}`;
+    } catch (error) { $('product-hint').textContent = error.message; }
+  });
+  $('run-tour').addEventListener('click', async () => {
+    if (flowRunning || busy) return;
+    if (!await ensureKey()) return;
+    const device = ($('flow-device-id')?.value || '').trim() || 'sunabar-v2-device-01';
+    const preferred = Number($('flow-product-id').value);
+    await runFlow('はじめての通し実習', [
+      { name: 'health', body: {} },
+      { name: 'products', body: {} },
+      { name: 'issue', body: () => ({ product_id: chooseProductId(preferred), license_mode: 'single', label: 'Sunabar tour' }) },
+      { name: 'verify', body: () => ({ license_key: lastLicense?.license_key || lastLicense?.product_key || '', product_id: lastLicense?.product_id ?? chooseProductId(preferred) }) },
+      { name: 'activate', body: () => ({ license_key: lastLicense?.license_key || lastLicense?.product_key || '', device_id: device }) },
+      { name: 'check', body: () => ({ access_token: lastSession?.access_token || '', device_id: device }) },
+      { name: 'refresh', body: () => ({ refresh_token: lastSession?.refresh_token || '', device_id: device }) },
+      { name: 'deactivate', body: () => ({ refresh_token: lastSession?.refresh_token || '', device_id: device }) },
+    ]);
+  });
+  document.querySelectorAll('.code-copy').forEach((button) => button.addEventListener('click', async () => {
+    const node = document.querySelector(`.code-sample[data-code="${button.dataset.code}"]`); if (!node) return;
+    try { await navigator.clipboard.writeText(node.textContent); button.textContent = 'コピーしました'; window.setTimeout(() => { button.textContent = 'コピー'; }, 1500); } catch { button.textContent = '選択してコピー'; }
+  }));
+  $('request-body').addEventListener('input', renderSamples);
   $('send').addEventListener('click', async () => {
     $('form-error').textContent = ''; let body;
     try { body = JSON.parse($('request-body').value || '{}'); if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('JSONのトップレベルはオブジェクトにしてください。'); }
@@ -348,7 +466,7 @@
     await request(current, body);
   });
   $('request-body').addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') $('send').click(); });
-  $('reset-body').addEventListener('click', () => { drafts[current] = json(specs[current].body); $('request-body').value = drafts[current]; $('form-error').textContent = ''; });
+  $('reset-body').addEventListener('click', () => { drafts[current] = json(specs[current].body); $('request-body').value = drafts[current]; $('form-error').textContent = ''; renderSamples(); });
   $('operation-search').addEventListener('input', (e) => { const q = e.target.value.toLowerCase(); document.querySelectorAll('.operation').forEach((b) => { b.hidden = !`${b.textContent} ${specs[b.dataset.operation].group} ${specs[b.dataset.operation].endpoint}`.toLowerCase().includes(q); }); });
   $('history-search').addEventListener('input', renderHistory); $('history-filter').addEventListener('change', renderHistory);
   $('export-history').addEventListener('click', () => downloadJson(`sunabar-v2-history-${new Date().toISOString().slice(0, 10)}.json`, { exported_at: new Date().toISOString(), redacted: true, entries: history }));

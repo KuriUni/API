@@ -7,21 +7,30 @@ import uuid
 from native_http import make_response
 
 
-UPSTREAM = "https://suna.2415.jp/suna/api/v1/"
+UPSTREAM = "https://suna.2415.jp/suna/api/"
 MAX_REQUEST_BYTES = 16 * 1024
 MAX_RESPONSE_BYTES = 1024 * 1024
 ROUTES = {
-    "issue_key": ("key", "POST"),
-    "products": ("products", "GET"),
-    "licenses": ("licenses", "POST"),
-    "license_list": ("licenses/list", "GET"),
-    "license_revoke": ("licenses/revoke", "POST"),
-    "verify": ("verify", "POST"),
-    "health": ("healthz", "GET"),
-    "activate": ("activate", "POST"),
-    "session_check": ("session/check", "POST"),
-    "session_refresh": ("session/refresh", "POST"),
-    "session_deactivate": ("session/deactivate", "POST"),
+    "issue_key": ("v1/key", "POST"),
+    "products": ("v1/products", "GET"),
+    "licenses": ("v1/licenses", "POST"),
+    "license_list": ("v1/licenses/list", "GET"),
+    "license_revoke": ("v1/licenses/revoke", "POST"),
+    "verify": ("v1/verify", "POST"),
+    "health": ("v1/healthz", "GET"),
+    "activate": ("v1/activate", "POST"),
+    "session_check": ("v1/session/check", "POST"),
+    "session_refresh": ("v1/session/refresh", "POST"),
+    "session_deactivate": ("v1/session/deactivate", "POST"),
+    "v4_challenge": ("v4/challenge", "POST"),
+    "v4_activate": ("v4/activate", "POST"),
+    "v4_verify": ("v4/verify", "POST"),
+    "v4_introspect": ("v4/introspect", "POST"),
+    "v4_refresh": ("v4/refresh", "POST"),
+    "v4_revoke": ("v4/revoke", "POST"),
+    "v4_offline_public_key": ("v4/offline-public-key", "GET"),
+    "v4_offline_ticket": ("v4/offline-ticket", "POST"),
+    "v4_migrate": ("v4/migrate", "POST"),
 }
 
 
@@ -83,7 +92,7 @@ def _relay(request, route_name):
         headers["Content-Type"] = content_type
     if api_key:
         headers["X-Sunabar-API-Key"] = api_key[:8192]
-    if authorization and not api_key:
+    if authorization:
         headers["Authorization"] = authorization[:8192]
     upstream_request = urllib.request.Request(
         UPSTREAM + route[0], data=body if method == "POST" else None,
@@ -163,3 +172,39 @@ def session_refresh(request):
 
 def session_deactivate(request):
     return _relay(request, "session_deactivate")
+
+
+def v4_challenge(request):
+    return _relay(request, "v4_challenge")
+
+
+def v4_activate(request):
+    return _relay(request, "v4_activate")
+
+
+def v4_verify(request):
+    return _relay(request, "v4_verify")
+
+
+def v4_introspect(request):
+    return _relay(request, "v4_introspect")
+
+
+def v4_refresh(request):
+    return _relay(request, "v4_refresh")
+
+
+def v4_revoke(request):
+    return _relay(request, "v4_revoke")
+
+
+def v4_offline_public_key(request):
+    return _relay(request, "v4_offline_public_key")
+
+
+def v4_offline_ticket(request):
+    return _relay(request, "v4_offline_ticket")
+
+
+def v4_migrate(request):
+    return _relay(request, "v4_migrate")

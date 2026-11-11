@@ -20,7 +20,7 @@
 
   <main class="app-shell">
     <section class="welcome">
-      <div class="welcome-copy"><p class="eyebrow">SUNABAR · API EMULATOR · V2</p><h1>APIを試す。<span>流れを確かめる。</span></h1><p>キー発行からライセンス・端末セッションまで、実際のAPI要求を安全なデモ環境でつなげて検証できます。</p></div>
+      <div class="welcome-copy"><p class="eyebrow">SUNABAR · API EMULATOR · V2</p><h1>APIを試す。<span>流れを確かめる。</span></h1><p>キー発行からライセンス・端末セッションまで、実際のAPI要求を安全なデモ環境でつなげて検証できます。はじめての方は「通し実習」から順に進めてください。</p></div>
       <div class="welcome-state"><span class="state-icon">↗</span><div><b>本番データには接続しません</b><small>デモ用キーとライセンスは実製品では使えません</small></div></div>
     </section>
 
@@ -40,11 +40,15 @@
         <article class="metric-card"><div class="metric-label">REQUESTS</div><div class="metric-value"><span id="request-count">0</span><span class="metric-unit">件</span></div><small>このタブで実行したAPI要求</small></article>
       </div>
 
+      <article class="tour-card">
+        <div><p class="eyebrow">BEGINNER TOUR</p><h3>はじめての通し実習</h3><p>キー発行 → ライセンス発行 → 検証 → 端末認証 → トークン更新 → セッション終了までを、案内に沿って自動実行します。所要約2分。応答は1件ずつ確認できます。</p></div>
+        <div class="tour-actions"><button id="run-tour" class="button button-primary" type="button">通し実習をはじめる →</button><small>キーが無い場合は自動で発行します</small></div>
+      </article>
       <div class="scenario-grid">
         <article class="scenario-card scenario-primary">
           <div class="scenario-top"><span class="scenario-index">FLOW 01</span><span class="scenario-tag">約1分 · 3 API要求</span></div>
           <div class="scenario-icon license-icon">01</div><h3>デモライセンスを発行して検証</h3><p>製品一覧 → デモ発行 → キー検証までを連続実行。発行キーをこのタブの状態へ安全に引き継ぎます。</p>
-          <label class="input-label" for="flow-product-id">製品ID</label><div class="scenario-input-row"><input id="flow-product-id" value="101" inputmode="numeric" aria-label="製品ID"><input id="flow-label" value="Sunabar v2 practice" maxlength="80" aria-label="デモライセンスのラベル"></div>
+          <label class="input-label" for="flow-product-id">製品</label><div class="scenario-input-row"><input id="flow-product-id" value="101" list="flow-product-options" inputmode="numeric" aria-label="製品ID"><datalist id="flow-product-options"></datalist><button id="load-products" class="button button-light" type="button">一覧</button></div><div class="scenario-input-row"><input id="flow-label" value="Sunabar v2 practice" maxlength="80" aria-label="デモライセンスのラベル"></div><p id="product-hint" class="form-hint">「一覧」を押すと製品名から選べます。</p>
           <button id="run-license-flow" class="button button-primary" type="button">デモ発行フローを実行 <span>→</span></button>
           <div class="flow-steps" aria-label="フローの段階"><span>製品一覧</span><i>›</i><span>発行</span><i>›</i><span>検証</span></div>
         </article>
@@ -73,8 +77,15 @@
         <section class="request-panel" aria-labelledby="operation-title"><div class="request-panel-head"><div><p class="eyebrow" id="operation-category">LICENSE</p><h2 id="operation-title">稼働状態</h2><p id="operation-description"></p></div><span id="method-badge" class="method-badge get">GET</span></div>
           <div class="endpoint-bar"><span id="endpoint-host" class="endpoint-host">2415.jp</span><span id="endpoint-path" class="endpoint-path">/license/api/sunabar/v1/health.php</span><button id="copy-path" class="icon-button" type="button" title="URLをコピー" aria-label="URLをコピー">⧉</button></div>
           <div class="request-controls"><span id="auth-state" class="auth-chip">認証不要</span><span id="operation-risk" class="risk-chip">READ ONLY</span><button id="reset-body" class="text-button" type="button">例を戻す</button></div>
+          <div id="operation-guide" class="operation-guide" aria-live="polite"></div>
           <div class="editor-label"><label for="request-body">REQUEST BODY</label><span>JSON · Ctrl/⌘ + Enterで実行</span></div><textarea id="request-body" spellcheck="false" aria-label="JSONリクエスト本文"></textarea>
           <p id="form-error" class="form-error" role="alert"></p><div class="request-actions"><p id="request-hint">この操作は状態を変更しません。</p><button id="send" class="button button-primary" type="button"><span>▶</span>要求を送る</button></div>
+          <details class="code-samples" id="code-samples"><summary>この操作のコード例（cURL / JavaScript / Python）</summary>
+            <div class="code-block"><div class="code-head"><b>cURL</b><button class="code-copy" type="button" data-code="curl">コピー</button></div><pre class="code-sample" data-code="curl"></pre></div>
+            <div class="code-block"><div class="code-head"><b>JavaScript</b><button class="code-copy" type="button" data-code="js">コピー</button></div><pre class="code-sample" data-code="js"></pre></div>
+            <div class="code-block"><div class="code-head"><b>Python</b><button class="code-copy" type="button" data-code="python">コピー</button></div><pre class="code-sample" data-code="python"></pre></div>
+            <p class="code-note">キーは <code>YOUR_SUNABAR_API_KEY</code> の位置に置き換えてください。デモ用キーを実製品へ使わないでください。</p>
+          </details>
         </section>
         <section class="response-panel" aria-labelledby="response-title"><div class="response-panel-head"><div><p class="eyebrow">LIVE RESPONSE</p><h2 id="response-title">応答インスペクター</h2></div><button id="copy-response" class="icon-button" type="button" title="応答をコピー" aria-label="応答をコピー" disabled>⧉</button></div>
           <div class="response-metrics"><span id="response-status" class="status-empty">未実行</span><span id="response-time">— ms</span><span id="response-size">— bytes</span></div>

@@ -18,6 +18,15 @@ records. It never calls production BaaS or Sandbox APIs.
 - `POST /suna/api/v1/session/refresh` — rotate both tokens using a refresh token.
 - `POST /suna/api/v1/session/deactivate` — revoke a device session using its refresh token.
 
+License API v4 emulation (online sessions only):
+
+- `POST /suna/api/v4/challenge` — issue an activation challenge for a device public key.
+- `POST /suna/api/v4/activate` — verify the challenge signature and issue a v4 session.
+- `POST /suna/api/v4/verify` / `introspect` / `refresh` / `revoke` — signed device-bound session operations.
+- `GET /suna/api/v4/offline-public-key` and offline ticket/migration endpoints return 501; Sunabar emulates online sessions only.
+
+The v4 endpoints require the Sunabar API key in `X-Sunabar-API-Key` and use the v4 token in `Authorization`. Device signatures are verified with the host OpenSSL command; if OpenSSL is unavailable, signed v4 requests return 503.
+
 Authenticated calls use `X-Sunabar-API-Key` or `Authorization: Bearer <key>` and are limited to 120 requests per minute per workspace and client IP. Only hashes of API and license keys are stored in MySQL. Device IDs accept 1–128 ASCII letters, digits, dots, colons, underscores, or hyphens. Session tokens are opaque random values; only SHA-256 hashes are stored. Access TTL is at most one hour, refresh TTL at most seven days, both capped by demo license and API-key expiry. Refresh rotates both tokens, so the previous pair cannot be reused.
 
 Expired API-key hash rows are removed automatically at most once per hour during database-backed requests. The expiry column is indexed so cleanup does not scan the full key table. A workspace can issue at most 20 demo licenses per hour. When a device is activated again, its expired session rows for that license are removed before the device limit is checked. License history is retained for the workspace.
