@@ -781,7 +781,7 @@ def _handle_key_reissue_expired(connection, mode, event_id, event_type, session)
 
 @legacy_compatible(callback_index=1, request_index=0)
 def webhook(request_context):
-    """Handle a signed Stripe webhook without browser or admin credentials."""
+    """Handle signed Stripe Invoice and legacy Checkout webhooks."""
     config = settings()
     if not config.get('webhook_secret'):
         return json_response('503 Service Unavailable', {'ok': False, 'error': 'stripe_webhook_not_configured'})
@@ -803,36 +803,35 @@ def webhook(request_context):
     event_type = str(event.get('type') or '')
     if re.fullmatch(r'[A-Za-z0-9_]{8,120}', event_id) is None:
         return json_response('400 Bad Request', {'ok': False, 'error': 'invalid_event_id'})
-    session = event['data'].get('object')
-    if not isinstance(session, dict):
-        session = {}
+    event_object = event['data'].get('object')
+    if not isinstance(event_object, dict):
+        event_object = {}
     mode = 'live' if event.get('livemode') is True else 'test'
     connection = None
     try:
         connection = database.connect()
         ensure_schema(connection)
-        metadata = session.get('metadata') if isinstance(session.get('metadata'), dict) else {}
+        metadata = event_object.get('metadata') if isinstance(event_object.get('metadata'), dict) else {}
         if str(metadata.get('kind') or '') == 'key_reissue':
-            if event_type == 'invoice.paid':
-            return _handle_invoice_paid(connection, mode, event_id, event_type, session, request_context)
-        if event_type == 'invoice.payment_failed':
-            return _handle_invoice_payment_failed(connection, mode, event_id, event_type, session)
-        if event_type == 'checkout.session.expired':
-                return _handle_key_reissue_expired(connection, mode, event_id, event_type, session)
+            if event_type == 'checkout.session.expired':
+                return _handle_key_reissue_expired(connection, mode, event_id, event_type, event_object)
             if event_type == 'checkout.session.completed':
-                return _handle_key_reissue_completed(connection, config, mode, event_id, event_type, session, request_context)
+                return _handle_key_reissue_completed(connection, config, mode, event_id, event_type, event_object, request_context)
+        if event_type == 'invoice.paid':
+            return _handle_invoice_paid(connection, mode, event_id, event_type, event_object, request_context)
+        if event_type == 'invoice.payment_failed':
+            return _handle_invoice_payment_failed(connection, mode, event_id, event_type, event_object)
         if event_type == 'checkout.session.expired':
-            return _handle_expired(connection, config, mode, event_id, event_type, session, request_context)
+            return _handle_expired(connection, config, mode, event_id, event_type, event_object, request_context)
         if event_type == 'payment_intent.payment_failed':
-            return _handle_payment_failed(connection, config, mode, event_id, event_type, session, request_context)
+            return _handle_payment_failed(connection, config, mode, event_id, event_type, event_object, request_context)
         if event_type != 'checkout.session.completed':
             _record_event(connection, event_id, event_type, mode, 'ignored', 'unsupported_event', processed=True)
             connection.commit()
             return json_response('200 OK', {'ok': True, 'received': True, 'ignored': True})
-        return _handle_completed(connection, config, mode, event_id, event_type, session, request_context)
+        return _handle_completed(connection, config, mode, event_id, event_type, event_object, request_context)
     except StripeError as exc:
-        # A rejected payload is permanent from Stripe's point of view; record it
-        # and answer 200 so the same event is not retried indefinitely.
+        # Invalid or mismatched events are recorded and acknowledged to avoid endless retries.
         if connection is not None:
             try:
                 connection.rollback()
