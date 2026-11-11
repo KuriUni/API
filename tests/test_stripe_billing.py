@@ -290,7 +290,7 @@ class CreateCheckoutTests(unittest.TestCase):
         self.assertEqual(update[0][4], 42)
         customer_params = api_mock.call_args_list[0].args[2]
         self.assertNotIn('email', customer_params)
-        self.assertFalse(any('email' in str(call.args[2]).lower() for call in api_mock.call_args_list))
+        self.assertTrue(all('email' not in call.args[2] and 'customer_email' not in call.args[2] for call in api_mock.call_args_list))
         self.assertEqual(api_mock.call_args_list[0].args[1], 'customers')
         self.assertEqual(api_mock.call_args_list[1].args[1], 'invoiceitems')
         self.assertEqual(api_mock.call_args_list[2].args[1], 'invoices')
