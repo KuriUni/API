@@ -36,6 +36,7 @@ HANDLERS = {
     '/api/sunabar/v4/verify.php': ('sunabar_api', 'v4_verify'),
     '/api/sunabar/v4/introspect.php': ('sunabar_api', 'v4_introspect'),
     '/api/sunabar/v4/refresh.php': ('sunabar_api', 'v4_refresh'),
+    '/api/sunabar/v4/reauth.php': ('sunabar_api', 'v4_reauth'),
     '/api/sunabar/v4/revoke.php': ('sunabar_api', 'v4_revoke'),
     '/api/sunabar/v4/offline-public-key.php': ('sunabar_api', 'v4_offline_public_key'),
     '/api/sunabar/v4/offline-ticket.php': ('sunabar_api', 'v4_offline_ticket'),

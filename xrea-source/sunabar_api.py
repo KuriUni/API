@@ -27,6 +27,7 @@ ROUTES = {
     "v4_verify": ("v4/verify", "POST"),
     "v4_introspect": ("v4/introspect", "POST"),
     "v4_refresh": ("v4/refresh", "POST"),
+    "v4_reauth": ("v4/reauth", "POST"),
     "v4_revoke": ("v4/revoke", "POST"),
     "v4_offline_public_key": ("v4/offline-public-key", "GET"),
     "v4_offline_ticket": ("v4/offline-ticket", "POST"),
@@ -198,6 +199,10 @@ def v4_introspect(request):
 
 def v4_refresh(request):
     return _relay(request, "v4_refresh")
+
+
+def v4_reauth(request):
+    return _relay(request, "v4_reauth")
 
 
 def v4_revoke(request):

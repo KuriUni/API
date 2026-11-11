@@ -22,7 +22,7 @@ License API v4 emulation (online sessions only):
 
 - `POST /suna/api/v4/challenge` — issue an activation challenge for a device public key.
 - `POST /suna/api/v4/activate` — verify the challenge signature and issue a v4 session.
-- `POST /suna/api/v4/verify` / `introspect` / `refresh` / `revoke` — signed device-bound session operations.
+- `POST /suna/api/v4/verify` / `introspect` / `refresh` / `reauth` / `revoke` — signed device-bound session operations.
 - `GET /suna/api/v4/offline-public-key` and offline ticket/migration endpoints return 501; Sunabar emulates online sessions only.
 
 The v4 endpoints require the Sunabar API key in `X-Sunabar-API-Key` and use the v4 token in `Authorization`. Device signatures are verified with the host OpenSSL command; if OpenSSL is unavailable, signed v4 requests return 503.

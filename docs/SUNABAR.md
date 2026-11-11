@@ -45,7 +45,7 @@ SunabarはLicense API v4のオンライン認証フローもエミュレート�
 | 端末認証 | `v4/activate` | `v4/activate.php` | POST |
 | セッション検証 | `v4/verify` | `v4/verify.php` | POST |
 | セッション情報 | `v4/introspect` | `v4/introspect.php` | POST |
-| トークン更新 | `v4/refresh` | `v4/refresh.php` | POST |
+| トークン更新 | `v4/refresh` / `v4/reauth` | `v4/refresh.php` / `v4/reauth.php` | POST |
 | セッション失効 | `v4/revoke` | `v4/revoke.php` | POST |
 | オフライン公開鍵 | `v4/offline-public-key` | `v4/offline-public-key.php` | GET（501） |
 | オフラインチケット・移行 | `v4/offline-ticket`, `v4/migrate` | 同名 | POST（501） |

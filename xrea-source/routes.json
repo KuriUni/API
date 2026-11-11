@@ -1187,6 +1187,11 @@
       "path": "/api/sunabar/v4/migrate.php",
       "source": "api/sunabar/v4/migrate.php",
       "access": "endpoint_or_include"
+    },
+    {
+      "path": "/api/sunabar/v4/reauth.php",
+      "source": "api/sunabar/v4/refresh.php",
+      "access": "endpoint_or_include"
     }
   ]
 }
