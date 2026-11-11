@@ -497,6 +497,9 @@ def create_key_reissue_checkout(connection, client, data, request_context):
             cursor.execute('INSERT INTO tenant_sso_bootstrap_tickets(ticket_hash,subject_hash,oidc_sid,created_at,expires_at) VALUES(%s,%s,%s,UTC_TIMESTAMP(),UTC_TIMESTAMP()+INTERVAL 30 MINUTE)', (hashlib.sha256(return_ticket.encode()).hexdigest(), subject, str(client.get('sso_oidc_sid') or '')))
         base = _portal_base(request_context)
         params = {
+            # Stripe Adaptive Pricing keeps JPY 500 as the base price and lets
+            # the customer choose JPY or an available local presentment currency.
+            'adaptive_pricing[enabled]': 'true',
             'mode': 'payment',
             'line_items[0][price_data][currency]': 'jpy',
             'line_items[0][price_data][unit_amount]': str(KEY_REISSUE_YEN),
