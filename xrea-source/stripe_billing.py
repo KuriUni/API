@@ -422,7 +422,7 @@ def suspend_overdue_invoices(connection, limit=200):
     """Suspend tenant API keys for issued invoices past their inclusive due date.
 
     The due date remains payable through that calendar day. Suspension begins
-    on the following UTC date. Only keys that were active at suspension time
+    at 00:00 JST on the following date. Only keys that were active at suspension time
     are recorded, and a distinct billing_hold state prevents accidental
     reactivation of keys disabled for another reason.
     """
