@@ -397,7 +397,7 @@ def _complete_payment(connection, payment, session, request_context):
                 return 'already_completed'
             # Only an active Checkout Session may settle an invoice. Late or
             # replayed completion events must not revive failed/expired rows.
-            if str(current.get('status')) not in ('open', 'creating'):
+            if str(current.get('status')) != 'open':
                 connection.commit()
                 return 'payment_not_open'
             if str(session.get('id') or '') != str(current.get('checkout_session_id') or ''):
