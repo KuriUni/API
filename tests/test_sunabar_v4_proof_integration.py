@@ -64,11 +64,11 @@ class SunabarV4ProofMySQLTests(unittest.TestCase):
             with connection.cursor() as cursor:
                 cursor.execute("""CREATE TABLE IF NOT EXISTS sunabar_v4_proofs (
                     proof_hash CHAR(64) NOT NULL,
-                    session_id VARCHAR(64) NOT NULL,
-                    action VARCHAR(32) NOT NULL,
+                    session_id CHAR(32) NOT NULL,
+                    action VARCHAR(16) NOT NULL,
                     expires_at BIGINT NOT NULL,
                     PRIMARY KEY (proof_hash)
-                ) ENGINE=InnoDB""")
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
             connection.commit()
 
     @classmethod
@@ -85,7 +85,7 @@ class SunabarV4ProofMySQLTests(unittest.TestCase):
         timestamp = int(time.time()) if timestamp is None else int(timestamp)
         data = {"operation": "verify", "value": "unchanged"} if data is None else data
         token = token or ("v4.a." + ("T" * 50))
-        session_id = "proof-test-" + os.urandom(12).hex()
+        session_id = "proof-test-" + os.urandom(8).hex()
         credential_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
         message = sunabar_v4.request_message(
             "verify", session_id, timestamp, nonce, data, credential_hash)
