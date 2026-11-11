@@ -287,31 +287,47 @@ def create_checkout(connection, client, data, request_context):
         raise StripeError('invoice_amount_too_small')
 
     existing = _open_payment(connection, invoice_id)
-    if existing and existing.get('mode') == config['mode']:
+    payment_id = None
+    if existing:
+        if str(existing.get('mode') or '') != config['mode']:
+            raise StripeError('stripe_mode_mismatch')
+        if int(existing.get('amount_yen') or 0) != amount_yen:
+            raise StripeError('invoice_amount_changed')
+        payment_id = int(existing['id'])
         stripe_invoice_id = str(existing.get('checkout_session_id') or '')
         if stripe_invoice_id:
+            # Never create a replacement invoice when Stripe cannot be reached:
+            # the previous request may have succeeded before the connection failed.
             try:
                 remote = _api('GET', 'invoices/' + stripe_invoice_id, config=config)
             except StripeError:
-                remote = None
-            if remote and remote.get('status') == 'open' and remote.get('hosted_invoice_url'):
+                raise StripeError('stripe_invoice_status_unavailable')
+            remote_status = str(remote.get('status') or '')
+            if remote_status == 'paid':
+                raise StripeError('stripe_invoice_paid_pending_webhook')
+            if remote_status == 'open' and remote.get('hosted_invoice_url'):
                 url = str(remote['hosted_invoice_url'])
                 with connection.cursor() as cursor:
-                    cursor.execute('UPDATE stripe_invoice_payments SET checkout_url=%s,updated_at=UTC_TIMESTAMP() WHERE id=%s', (url[:512], int(existing['id'])))
+                    cursor.execute('UPDATE stripe_invoice_payments SET checkout_url=%s,updated_at=UTC_TIMESTAMP() WHERE id=%s', (url[:512], payment_id))
                 connection.commit()
-                return {'ok': True, 'checkout_url': url, 'payment_id': int(existing['id']),
+                return {'ok': True, 'checkout_url': url, 'payment_id': payment_id,
                         'invoice_id': invoice_id, 'amount_yen': int(existing['amount_yen']),
                         'mode': config['mode'], 'expires_at_utc': _utc_text(existing.get('expires_at')), 'reused': True}
-            if remote and remote.get('status') == 'paid':
-                raise StripeError('stripe_invoice_paid_pending_webhook')
-        with connection.cursor() as cursor:
-            cursor.execute("UPDATE stripe_invoice_payments SET status='expired',updated_at=UTC_TIMESTAMP() WHERE id=%s AND status IN ('creating','open')", (int(existing['id']),))
-        connection.commit()
+            if remote_status in ('void', 'uncollectible'):
+                with connection.cursor() as cursor:
+                    cursor.execute("UPDATE stripe_invoice_payments SET status='expired',updated_at=UTC_TIMESTAMP() WHERE id=%s AND status IN ('creating','open')", (payment_id,))
+                connection.commit()
+                payment_id = None
+            elif remote_status not in ('draft',):
+                raise StripeError('stripe_invoice_status_unavailable')
+        # A 'creating' row without a remote ID is an interrupted operation.
+        # Reuse its primary key so all Stripe requests retain their idempotency keys.
 
-    with connection.cursor() as cursor:
-        cursor.execute('INSERT INTO stripe_invoice_payments(invoice_id,account_tenant_id,payer_tenant_id,amount_yen,currency,mode,status) VALUES(%s,%s,%s,%s,%s,%s,%s)', (invoice_id, account_id, tenant_id, amount_yen, 'jpy', config['mode'], 'creating'))
-        payment_id = int(connection.insert_id())
-    connection.commit()
+    if payment_id is None:
+        with connection.cursor() as cursor:
+            cursor.execute('INSERT INTO stripe_invoice_payments(invoice_id,account_tenant_id,payer_tenant_id,amount_yen,currency,mode,status) VALUES(%s,%s,%s,%s,%s,%s,%s)', (invoice_id, account_id, tenant_id, amount_yen, 'jpy', config['mode'], 'creating'))
+            payment_id = int(connection.insert_id())
+        connection.commit()
 
     try:
         # Deliberately omit email, phone, address, and customer shipping details.
@@ -370,8 +386,20 @@ def create_checkout(connection, client, data, request_context):
                             expires_at.strftime('%Y-%m-%d %H:%M:%S'), payment_id))
         connection.commit()
     except Exception as exc:
+        # A timeout, 5xx, or malformed response may occur after Stripe has
+        # committed the object. Keep the row retryable so the same payment ID
+        # and Stripe idempotency keys can safely resume the operation.
+        error_text = str(exc)
+        retryable = (error_text.startswith('stripe_unreachable:')
+                     or error_text.startswith('stripe_response_invalid')
+                     or error_text.startswith('stripe_response_too_large')
+                     or error_text.startswith('stripe_api_error:429:')
+                     or any(error_text.startswith('stripe_api_error:%d:' % code)
+                            for code in range(500, 600)))
+        next_status = 'creating' if retryable else 'failed'
         with connection.cursor() as cursor:
-            cursor.execute("UPDATE stripe_invoice_payments SET status='failed',failure_code=%s,updated_at=UTC_TIMESTAMP() WHERE id=%s", (str(exc)[:64], payment_id))
+            cursor.execute("UPDATE stripe_invoice_payments SET status=%s,failure_code=%s,updated_at=UTC_TIMESTAMP() WHERE id=%s",
+                           (next_status, error_text[:64], payment_id))
         connection.commit()
         raise
     return {'ok': True, 'checkout_url': url, 'payment_id': payment_id, 'invoice_id': invoice_id,
