@@ -94,6 +94,10 @@ def _relay(request, route_name):
         headers["X-Sunabar-API-Key"] = api_key[:8192]
     if authorization:
         headers["Authorization"] = authorization[:8192]
+    for name in ("X-License-Session", "X-License-Timestamp", "X-License-Nonce", "X-License-Proof"):
+        value = str(request.get("header:" + name.lower()) or "").strip()
+        if value:
+            headers[name] = value[:8192]
     upstream_request = urllib.request.Request(
         UPSTREAM + route[0], data=body if method == "POST" else None,
         headers=headers, method=method,
