@@ -115,6 +115,7 @@ def ensure_schema(connection):
             invoice_id BIGINT UNSIGNED NOT NULL,
             tenant_id BIGINT UNSIGNED NOT NULL,
             client_id BIGINT UNSIGNED NOT NULL,
+            previous_status VARCHAR(16) NOT NULL DEFAULT 'active',
             suspended_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             restored_at DATETIME NULL DEFAULT NULL,
             PRIMARY KEY (id),
@@ -122,6 +123,9 @@ def ensure_schema(connection):
             KEY idx_stripe_billing_suspension_client (client_id, restored_at),
             KEY idx_stripe_billing_suspension_invoice (invoice_id, restored_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
+        cursor.execute("SHOW COLUMNS FROM stripe_billing_key_suspensions LIKE 'previous_status'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE stripe_billing_key_suspensions ADD COLUMN previous_status VARCHAR(16) NOT NULL DEFAULT 'active' AFTER client_id")
         cursor.execute("""CREATE TABLE IF NOT EXISTS stripe_key_reissue_payments (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             tenant_id BIGINT UNSIGNED NOT NULL,
