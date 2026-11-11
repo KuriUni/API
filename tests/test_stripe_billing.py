@@ -261,9 +261,10 @@ class CreateCheckoutTests(unittest.TestCase):
         connection = FakeConnection(responses)
         config = {'enabled': True, 'mode': 'test', 'secret_key': 'sk_test_x', 'webhook_secret': 'whsec_x'}
         api_calls = [
-            {'id': 'cus_privacy_1'},
-            {'id': 'in_test_1', 'status': 'draft'},
-            {'id': 'in_test_1', 'status': 'open', 'hosted_invoice_url': 'https://invoice.stripe.com/i/acct/test'},
+            {'id': 'cusPrivacy1'},
+            {'id': 'ii_test1'},
+            {'id': 'in_test1', 'status': 'draft'},
+            {'id': 'in_test1', 'status': 'open', 'hosted_invoice_url': 'https://invoice.stripe.com/i/acct/test'},
         ]
         with mock.patch.object(stripe_billing, 'settings', return_value=config), \
                 mock.patch.object(stripe_billing, 'ensure_schema'), \
@@ -285,7 +286,7 @@ class CreateCheckoutTests(unittest.TestCase):
         insert = [params for sql, params in connection.statements if sql.startswith('INSERT INTO stripe_invoice_payments')]
         self.assertEqual(insert[0][:4], (11, 7, 7, 501))
         update = [params for sql, params in connection.statements if 'SET checkout_session_id' in sql]
-        self.assertEqual(update[0][0], 'in_test_1')
+        self.assertEqual(update[0][0], 'in_test1')
         self.assertEqual(update[0][4], 42)
         customer_params = api_mock.call_args_list[0].args[2]
         self.assertNotIn('email', customer_params)
@@ -293,7 +294,7 @@ class CreateCheckoutTests(unittest.TestCase):
         self.assertEqual(api_mock.call_args_list[0].args[1], 'customers')
         self.assertEqual(api_mock.call_args_list[1].args[1], 'invoiceitems')
         self.assertEqual(api_mock.call_args_list[2].args[1], 'invoices')
-        self.assertEqual(api_mock.call_args_list[3].args[1], 'invoices/in_test_1/finalize')
+        self.assertEqual(api_mock.call_args_list[3].args[1], 'invoices/in_test1/finalize')
         invoice_params = api_mock.call_args_list[2].args[2]
         self.assertEqual(invoice_params['collection_method'], 'send_invoice')
         self.assertEqual(invoice_params['auto_advance'], 'false')
