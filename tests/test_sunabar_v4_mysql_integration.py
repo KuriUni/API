@@ -297,6 +297,88 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertEqual(response["error_code"], "DEVICE_SIGNATURE_INVALID")
 
+    def test_challenge_cannot_be_used_from_another_workspace(self):
+        def reply(status, payload):
+            return status, payload
+
+        other_workspace = "another-workspace"
+        thumbprint = sunabar_v4.normalize_public_key(self.public_key_pem)["thumbprint"]
+        status, challenge_reply = sunabar_v4.handle_v4(
+            "challenge", {"workspace": other_workspace},
+            {"purpose": "activate", "device_public_key": self.public_key_pem},
+            {}, self.connect, reply, "foreign-workspace-challenge")
+        self.assertEqual(status, 200)
+        challenge = challenge_reply["challenge"]
+        data = {
+            "license_key": self.license_key,
+            "device_fingerprint": "c" * 64,
+            "device_public_key": self.public_key_pem,
+            "challenge_id": challenge["challenge_id"],
+            "nonce": challenge["nonce"],
+            "signature": "placeholder",
+        }
+        message = sunabar_v4.activation_message(
+            data, challenge["challenge_id"], challenge["nonce"], thumbprint)
+        signature = subprocess.run(
+            ["openssl", "dgst", "-sha256", "-sign", self.private_key_path],
+            input=message.encode("utf-8"), check=True, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, timeout=10).stdout
+        data["signature"] = base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
+
+        status, response = sunabar_v4.handle_v4(
+            "activate", {"workspace": self.workspace}, data, {},
+            self.connect, reply, "foreign-challenge-activation")
+        self.assertEqual(status, 400)
+        self.assertEqual(response["error_code"], "CHALLENGE_INVALID")
+
+    def test_license_key_from_another_workspace_cannot_be_activated(self):
+        def reply(status, payload):
+            return status, payload
+
+        other_license_key = "SUNABAR-OTHER-AAAA-BBBB-CCCC-DDDDD"
+        connection = self.connect()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO sunabar_licenses(license_id,key_hash,workspace_id,product_id,"
+                    "product_name,license_mode,max_devices,label,issued_at,expires_at,status) "
+                    "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    ("other-license-001", sunabar_v4._hash(other_license_key), "another-workspace",
+                     1, "別テナント試験", "online", 3, "別テナント", self.now,
+                     self.now + 86400, "active"))
+            connection.commit()
+        finally:
+            connection.close()
+
+        thumbprint = sunabar_v4.normalize_public_key(self.public_key_pem)["thumbprint"]
+        status, challenge_reply = sunabar_v4.handle_v4(
+            "challenge", {"workspace": self.workspace},
+            {"purpose": "activate", "device_public_key": self.public_key_pem},
+            {}, self.connect, reply, "tenant-license-challenge")
+        self.assertEqual(status, 200)
+        challenge = challenge_reply["challenge"]
+        data = {
+            "license_key": other_license_key,
+            "device_fingerprint": "e" * 64,
+            "device_public_key": self.public_key_pem,
+            "challenge_id": challenge["challenge_id"],
+            "nonce": challenge["nonce"],
+            "signature": "placeholder",
+        }
+        message = sunabar_v4.activation_message(
+            data, challenge["challenge_id"], challenge["nonce"], thumbprint)
+        signature = subprocess.run(
+            ["openssl", "dgst", "-sha256", "-sign", self.private_key_path],
+            input=message.encode("utf-8"), check=True, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, timeout=10).stdout
+        data["signature"] = base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
+
+        status, response = sunabar_v4.handle_v4(
+            "activate", {"workspace": self.workspace}, data, {},
+            self.connect, reply, "foreign-license-activation")
+        self.assertEqual(status, 401)
+        self.assertEqual(response["error_code"], "LICENSE_UNAVAILABLE")
+
     def signed_session_headers(self, action, data, token):
         timestamp = int(sunabar_v4.time.time())
         nonce = "sessionproof_" + os.urandom(18).hex()
