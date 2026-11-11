@@ -436,7 +436,7 @@ def suspend_overdue_invoices(connection, limit=200):
     with connection.cursor() as cursor:
         cursor.execute(
             "SELECT id,account_tenant_id FROM api_billing_invoices "
-            "WHERE status='issued' AND due_date<UTC_DATE() "
+            "WHERE status='issued' AND due_date<DATE(UTC_TIMESTAMP() + INTERVAL 9 HOUR) "
             "ORDER BY due_date,id LIMIT %s",
             (batch_limit,),
         )
@@ -450,7 +450,7 @@ def suspend_overdue_invoices(connection, limit=200):
             with connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT id,account_tenant_id,status,due_date FROM api_billing_invoices "
-                    "WHERE id=%s AND status='issued' AND due_date<UTC_DATE() FOR UPDATE", (invoice_id,))
+                    "WHERE id=%s AND status='issued' AND due_date<DATE(UTC_TIMESTAMP() + INTERVAL 9 HOUR) FOR UPDATE", (invoice_id,))
                 current = cursor.fetchone()
                 if (not current or int(current.get('account_tenant_id') or 0) != tenant_id
                         or str(current.get('status') or '') != 'issued'):
@@ -503,7 +503,7 @@ def restore_billing_suspended_keys(connection, invoice_id):
                 " SELECT 1 FROM stripe_billing_key_suspensions s2 "
                 " JOIN api_billing_invoices i2 ON i2.id=s2.invoice_id "
                 " WHERE s2.client_id=c.id AND s2.restored_at IS NULL "
-                " AND i2.status='issued' AND i2.due_date<UTC_DATE()"
+                " AND i2.status='issued' AND i2.due_date<DATE(UTC_TIMESTAMP() + INTERVAL 9 HOUR)"
                 ")",
                 (invoice_id,),
             )
