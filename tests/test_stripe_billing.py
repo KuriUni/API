@@ -619,3 +619,58 @@ class StripeInvoiceTransientFailureTests(unittest.TestCase):
         retry_updates = [(sql, params) for sql, params in connection.statements
                          if "SET status=%s,failure_code=%s" in sql]
         self.assertEqual(retry_updates[-1][1][0], 'creating')
+
+
+class OverdueInvoiceKeySuspensionTests(unittest.TestCase):
+    def test_overdue_invoice_places_active_keys_on_billing_hold(self):
+        connection = FakeConnection([
+            ('SELECT id,account_tenant_id FROM api_billing_invoices',
+             [{'id': 71, 'account_tenant_id': 7}]),
+            ('SELECT id,account_tenant_id,status,due_date FROM api_billing_invoices',
+             [{'id': 71, 'account_tenant_id': 7, 'status': 'issued', 'due_date': '2026-11-10'}]),
+        ])
+        with mock.patch.object(stripe_billing, 'ensure_schema'), \\
+                mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
+            result = stripe_billing.suspend_overdue_invoices(connection)
+        self.assertEqual(result['overdue_invoices_checked'], 1)
+        self.assertEqual(result['keys_suspended'], 1)
+        insert = [sql for sql, _ in connection.statements
+                  if sql.startswith('INSERT IGNORE INTO stripe_billing_key_suspensions')]
+        update = [sql for sql, _ in connection.statements
+                  if sql.startswith('UPDATE tenant_api_clients c')]
+        self.assertTrue(insert)
+        self.assertIn("c.status IN ('active','billing_hold')", insert[0])
+        self.assertTrue(update)
+        self.assertIn("SET c.status='billing_hold'", update[0])
+        self.assertIn("c.status='active'", update[0])
+
+    def test_restore_only_reactivates_billing_held_keys(self):
+        connection = FakeConnection([])
+        with mock.patch.object(stripe_billing, 'ensure_schema'), \\
+                mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
+            restored = stripe_billing.restore_billing_suspended_keys(connection, 71)
+        self.assertEqual(restored, 1)
+        updates = [sql for sql, _ in connection.statements
+                   if sql.startswith('UPDATE tenant_api_clients c')]
+        self.assertTrue(updates)
+        self.assertIn("c.status='billing_hold'", updates[0])
+        self.assertIn("SET c.status='active'", updates[0])
+        self.assertIn("i2.due_date<DATE(UTC_TIMESTAMP() + INTERVAL 9 HOUR)", updates[0])
+
+    def test_overdue_webhook_requires_matching_payment_and_mode(self):
+        payment = {'id': 9, 'invoice_id': 71, 'account_tenant_id': 7,
+                   'checkout_session_id': 'in_test71', 'mode': 'test'}
+        connection = FakeConnection([
+            ('FROM stripe_invoice_payments WHERE id', [payment]),
+            ('FROM stripe_webhook_events WHERE event_id', []),
+        ])
+        invoice = {'id': 'in_test71', 'status': 'open',
+                   'metadata': {'payment_id': '9', 'invoice_id': '71',
+                                'account_tenant_id': '7'}}
+        with mock.patch.object(stripe_billing, 'suspend_overdue_invoices',
+                               return_value={'keys_suspended': 2}) as suspend, \\
+                mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
+            response = stripe_billing._handle_invoice_overdue(
+                connection, 'test', 'evt_overdue_71', 'invoice.overdue', invoice)
+        suspend.assert_called_once()
+        self.assertIn('200 OK', response.status)
