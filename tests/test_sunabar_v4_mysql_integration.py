@@ -3,7 +3,11 @@
 実行には SUNABAR_V4_MYSQL_* 環境変数と、専用DB sunabar_test が必要。
 本番DBへの接続を誤って行わないよう、DB名は sunabar_test に固定する。
 """
+import base64
 import os
+import shutil
+import subprocess
+import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -41,6 +45,20 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
             "autocommit": False,
             "cursorclass": pymysql.cursors.DictCursor,
         }
+        if not shutil.which("openssl"):
+            raise unittest.SkipTest("OpenSSLが利用できません")
+        cls.key_dir = tempfile.TemporaryDirectory(prefix="sunabar-v4-activation-test-")
+        cls.private_key_path = os.path.join(cls.key_dir.name, "private.pem")
+        subprocess.run(
+            ["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048",
+             "-out", cls.private_key_path],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+        with open(cls.private_key_path, "rb") as key_file:
+            private_key = key_file.read()
+        public = subprocess.run(
+            ["openssl", "pkey", "-pubout"], input=private_key, check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10)
+        cls.public_key_pem = public.stdout.decode("ascii")
         connection = cls.connect()
         try:
             with connection.cursor() as cursor:
@@ -126,6 +144,11 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
             connection.close()
 
     @classmethod
+    def tearDownClass(cls):
+        if hasattr(cls, "key_dir"):
+            cls.key_dir.cleanup()
+
+    @classmethod
     def connect(cls):
         return pymysql.connect(**cls.connection_args)
 
@@ -136,6 +159,7 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
         self.session_id = "integration-session"
         self.family_id = "integration-family"
         self.device_id = 1
+        self.license_key = "SUNABAR-AAAAA-BBBBB-CCCCC-DDDDD-EEEEE"
         connection = self.connect()
         try:
             with connection.cursor() as cursor:
@@ -144,9 +168,10 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
                               "sunabar_v4_devices", "sunabar_licenses"):
                     cursor.execute("DELETE FROM " + table)
                 cursor.execute(
-                    "INSERT INTO sunabar_licenses(license_id,workspace_id,status,expires_at) "
-                    "VALUES(%s,%s,%s,%s)",
-                    ("integration-license", self.workspace, "active", self.now + 86400))
+                    "INSERT INTO sunabar_licenses(license_id,workspace_id,status,expires_at,key_hash,max_devices) "
+                    "VALUES(%s,%s,%s,%s,%s,%s)",
+                    ("integration-license", self.workspace, "active", self.now + 86400,
+                     sunabar_v4._hash(self.license_key), 3))
                 cursor.execute(
                     "INSERT INTO sunabar_v4_devices(id,device_hash,public_key_pem,key_thumbprint,"
                     "key_algorithm,revoked_at,last_seen_at) VALUES(%s,%s,%s,%s,%s,NULL,%s)",
@@ -171,6 +196,119 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
         return sunabar_v4.handle_v4(
             "refresh", {"workspace": self.workspace}, {"refresh_token": token},
             {"x-license-session": self.session_id}, self.connect, reply, "mysql-test")
+
+    def test_real_signed_activation_consumes_challenge_and_is_tenant_scoped(self):
+        def reply(status, payload):
+            return status, payload
+
+        thumbprint = sunabar_v4.normalize_public_key(self.public_key_pem)["thumbprint"]
+        # 同じlicense_idの別テナント端末は、端末上限にも鍵重複判定にも影響しない。
+        connection = self.connect()
+        try:
+            with connection.cursor() as cursor:
+                for index in range(3):
+                    cursor.execute(
+                        "INSERT INTO sunabar_v4_devices(workspace_id,license_id,device_hash,"
+                        "public_key_pem,key_thumbprint,key_algorithm,last_seen_at) "
+                        "VALUES(%s,%s,%s,%s,%s,%s,%s)",
+                        ("another-workspace", "integration-license", str(index) * 64,
+                         self.public_key_pem, thumbprint, "RSA-SHA256", self.now))
+            connection.commit()
+        finally:
+            connection.close()
+
+        status, challenge_reply = sunabar_v4.handle_v4(
+            "challenge", {"workspace": self.workspace},
+            {"purpose": "activate", "device_public_key": self.public_key_pem},
+            {}, self.connect, reply, "activation-challenge")
+        self.assertEqual(status, 200)
+        challenge = challenge_reply["challenge"]
+        data = {
+            "license_key": self.license_key,
+            "device_fingerprint": "a" * 64,
+            "device_public_key": self.public_key_pem,
+            "challenge_id": challenge["challenge_id"],
+            "nonce": challenge["nonce"],
+            "device_label": "統合試験端末",
+            "app_version": "test",
+            "signature": "placeholder",
+        }
+        message = sunabar_v4.activation_message(
+            data, challenge["challenge_id"], challenge["nonce"], thumbprint)
+        signature = subprocess.run(
+            ["openssl", "dgst", "-sha256", "-sign", self.private_key_path],
+            input=message.encode("utf-8"), check=True, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, timeout=10).stdout
+        data["signature"] = base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
+
+        status, activated = sunabar_v4.handle_v4(
+            "activate", {"workspace": self.workspace}, data, {},
+            self.connect, reply, "activation-real-signature")
+        self.assertEqual(status, 200, activated)
+        self.assertTrue(activated["success"])
+        self.assertEqual(activated["session"]["token_version"], 1)
+        self.assertEqual(activated["device"]["key_thumbprint"], thumbprint)
+
+        connection = self.connect()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT consumed_at FROM sunabar_v4_challenges WHERE challenge_id=%s",
+                               (challenge["challenge_id"],))
+                consumed = cursor.fetchone()
+                cursor.execute("SELECT COUNT(*) AS count FROM sunabar_v4_devices "
+                               "WHERE workspace_id=%s AND license_id=%s",
+                               (self.workspace, "integration-license"))
+                device_count = cursor.fetchone()["count"]
+                cursor.execute("SELECT COUNT(*) AS count FROM sunabar_v4_sessions "
+                               "WHERE workspace_id=%s AND license_id=%s",
+                               (self.workspace, "integration-license"))
+                session_count = cursor.fetchone()["count"]
+            self.assertIsNotNone(consumed["consumed_at"])
+            self.assertEqual(device_count, 1)
+            self.assertEqual(session_count, 1)
+        finally:
+            connection.close()
+
+        replay_status, replay = sunabar_v4.handle_v4(
+            "activate", {"workspace": self.workspace}, data, {},
+            self.connect, reply, "activation-replay")
+        self.assertEqual(replay_status, 409)
+        self.assertEqual(replay["error_code"], "CHALLENGE_ALREADY_USED")
+
+    def test_activation_signature_cannot_be_reused_after_body_tampering(self):
+        def reply(status, payload):
+            return status, payload
+
+        thumbprint = sunabar_v4.normalize_public_key(self.public_key_pem)["thumbprint"]
+        status, challenge_reply = sunabar_v4.handle_v4(
+            "challenge", {"workspace": self.workspace},
+            {"purpose": "activate", "device_public_key": self.public_key_pem},
+            {}, self.connect, reply, "activation-tamper-challenge")
+        self.assertEqual(status, 200)
+        challenge = challenge_reply["challenge"]
+        data = {
+            "license_key": self.license_key,
+            "device_fingerprint": "b" * 64,
+            "device_public_key": self.public_key_pem,
+            "challenge_id": challenge["challenge_id"],
+            "nonce": challenge["nonce"],
+            "device_label": "署名時のラベル",
+            "signature": "placeholder",
+        }
+        message = sunabar_v4.activation_message(
+            data, challenge["challenge_id"], challenge["nonce"], thumbprint)
+        signature = subprocess.run(
+            ["openssl", "dgst", "-sha256", "-sign", self.private_key_path],
+            input=message.encode("utf-8"), check=True, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, timeout=10).stdout
+        data["signature"] = base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
+        data["device_label"] = "改ざん後のラベル"
+
+        status, response = sunabar_v4.handle_v4(
+            "activate", {"workspace": self.workspace}, data, {},
+            self.connect, reply, "activation-tampered-body")
+        self.assertEqual(status, 401)
+        self.assertEqual(response["error_code"], "DEVICE_SIGNATURE_INVALID")
 
     def test_refresh_rotates_token_and_persists_only_hashes(self):
         with patch.object(sunabar_v4, "_require_proof", return_value=None):
