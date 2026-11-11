@@ -310,6 +310,69 @@ class SunabarV4MySQLRefreshTests(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertEqual(response["error_code"], "DEVICE_SIGNATURE_INVALID")
 
+    def signed_session_headers(self, action, data, token):
+        timestamp = int(sunabar_v4.time.time())
+        nonce = "sessionproof_" + os.urandom(18).hex()
+        credential_hash = sunabar_v4._token_hash(token)
+        message = sunabar_v4.request_message(
+            action, self.session_id, timestamp, nonce, data, credential_hash)
+        signature = subprocess.run(
+            ["openssl", "dgst", "-sha256", "-sign", self.private_key_path],
+            input=message.encode("utf-8"), check=True, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, timeout=10).stdout
+        return {
+            "authorization": "Bearer " + token,
+            "x-license-session": self.session_id,
+            "x-license-timestamp": str(timestamp),
+            "x-license-nonce": nonce,
+            "x-license-proof": base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii"),
+        }
+
+    def test_real_access_proof_verify_then_family_revoke(self):
+        def reply(status, payload):
+            return status, payload
+
+        token = "v4.a." + ("V" * 64)
+        thumbprint = sunabar_v4.normalize_public_key(self.public_key_pem)["thumbprint"]
+        connection = self.connect()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE sunabar_v4_devices SET public_key_pem=%s,key_thumbprint=%s,"
+                    "key_algorithm='RSA-SHA256' WHERE id=%s",
+                    (self.public_key_pem, thumbprint, self.device_id))
+                cursor.execute("UPDATE sunabar_v4_sessions SET access_hash=%s WHERE session_id=%s",
+                               (sunabar_v4._token_hash(token), self.session_id))
+            connection.commit()
+        finally:
+            connection.close()
+
+        verify_data = {"check": "session"}
+        verify_headers = self.signed_session_headers("verify", verify_data, token)
+        status, verified = sunabar_v4.handle_v4(
+            "verify", {"workspace": self.workspace}, verify_data, verify_headers,
+            self.connect, reply, "real-proof-verify")
+        self.assertEqual(status, 200, verified)
+        self.assertTrue(verified["valid"])
+        self.assertEqual(verified["session"]["session_id"], self.session_id)
+
+        revoke_data = {"scope": "family"}
+        revoke_headers = self.signed_session_headers("revoke", revoke_data, token)
+        status, revoked = sunabar_v4.handle_v4(
+            "revoke", {"workspace": self.workspace}, revoke_data, revoke_headers,
+            self.connect, reply, "real-proof-revoke")
+        self.assertEqual(status, 200, revoked)
+        self.assertTrue(revoked["revoked"])
+        self.assertEqual(revoked["scope"], "family")
+        self.assertEqual(revoked["affected_sessions"], 1)
+
+        after_revoke_headers = self.signed_session_headers("verify", verify_data, token)
+        status, rejected = sunabar_v4.handle_v4(
+            "verify", {"workspace": self.workspace}, verify_data, after_revoke_headers,
+            self.connect, reply, "verify-after-revoke")
+        self.assertEqual(status, 401)
+        self.assertEqual(rejected["error_code"], "SESSION_REVOKED")
+
     def test_refresh_rotates_token_and_persists_only_hashes(self):
         with patch.object(sunabar_v4, "_require_proof", return_value=None):
             status, payload = self.invoke_refresh(self.old_refresh)
