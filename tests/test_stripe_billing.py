@@ -681,7 +681,7 @@ class ManualInvoicePaymentRecoveryTests(unittest.TestCase):
         connection = FakeConnection([
             ('SELECT DISTINCT s.invoice_id', [{'invoice_id': 71}]),
         ])
-        with mock.patch.object(stripe_billing, 'ensure_schema'), \\
+        with mock.patch.object(stripe_billing, 'ensure_schema'), \
                 mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
             result = stripe_billing.restore_paid_invoice_keys(connection)
         self.assertEqual(result['paid_invoices_checked'], 1)
