@@ -177,6 +177,50 @@ class SunabarV4ProofMySQLTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_future_timestamp_is_rejected(self):
+        session, data, headers, token = self.make_request(timestamp=int(time.time()) + 61)
+        connection = self.connect()
+        try:
+            with self.assertRaises(sunabar_v4.V4Error) as raised:
+                sunabar_v4._require_proof(connection, session, "verify", data, headers, token)
+            self.assertEqual(raised.exception.code, "PROOF_TIMESTAMP_INVALID")
+            connection.rollback()
+        finally:
+            connection.close()
+
+    def test_signature_is_bound_to_action_and_session(self):
+        session, data, headers, token = self.make_request()
+        connection = self.connect()
+        try:
+            with self.assertRaises(sunabar_v4.V4Error) as raised:
+                sunabar_v4._require_proof(connection, session, "revoke", data, headers, token)
+            self.assertEqual(raised.exception.code, "PROOF_SIGNATURE_INVALID")
+            connection.rollback()
+        finally:
+            connection.close()
+
+        wrong_session = dict(session, session_id="different-session-id")
+        connection = self.connect()
+        try:
+            with self.assertRaises(sunabar_v4.V4Error) as raised:
+                sunabar_v4._require_proof(connection, wrong_session, "verify", data, headers, token)
+            self.assertEqual(raised.exception.code, "PROOF_REQUIRED")
+            connection.rollback()
+        finally:
+            connection.close()
+
+    def test_malformed_proof_headers_are_rejected(self):
+        session, data, headers, token = self.make_request()
+        headers["x-license-nonce"] = "short"
+        connection = self.connect()
+        try:
+            with self.assertRaises(sunabar_v4.V4Error) as raised:
+                sunabar_v4._require_proof(connection, session, "verify", data, headers, token)
+            self.assertEqual(raised.exception.code, "PROOF_REQUIRED")
+            connection.rollback()
+        finally:
+            connection.close()
+
     def test_concurrent_identical_proof_has_only_one_winner(self):
         session, data, headers, token = self.make_request()
         barrier = threading.Barrier(2)
