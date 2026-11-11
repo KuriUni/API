@@ -199,6 +199,89 @@ if __name__ == '__main__':
     unittest.main()
 
 
+class StripeSecurityRegressionTests(unittest.TestCase):
+    def test_api_error_does_not_expose_stripe_response_body(self):
+        secret_detail = 'customer@example.invalid sensitive-response-detail'
+
+        def fake_urlopen(request, timeout=None, context=None):
+            body = ('{"error":{"message":"' + secret_detail + '"}}').encode()
+            raise urllib.error.HTTPError(request.full_url, 402, 'payment failed', {}, io.BytesIO(body))
+
+        with mock.patch.object(stripe_billing, 'urlopen', fake_urlopen):
+            with self.assertRaises(stripe_billing.StripeError) as caught:
+                stripe_billing._api('POST', 'checkout/sessions', {'mode': 'payment'},
+                                    config={'secret_key': 'sk_test_abc'})
+        self.assertEqual(str(caught.exception), 'stripe_api_error:402')
+        self.assertNotIn(secret_detail, str(caught.exception))
+
+    def test_webhook_event_record_uses_atomic_upsert(self):
+        connection = FakeConnection([])
+        stripe_billing._record_event(connection, 'evt_test_12345678',
+                                     'checkout.session.completed', 'test',
+                                     'processed', 'paid', 11, 42, True)
+        sql = connection.statements[-1][0].upper()
+        self.assertIn('INSERT INTO STRIPE_WEBHOOK_EVENTS', sql)
+        self.assertIn('ON DUPLICATE KEY UPDATE', sql)
+        self.assertNotIn('SELECT EVENT_ID', sql)
+
+    def test_only_open_payment_can_be_completed_by_webhook(self):
+        for status in ('expired', 'failed', 'creating'):
+            with self.subTest(status=status):
+                payment = dict(CompletePaymentTests.payment, status=status)
+                connection = FakeConnection([
+                    ('FROM api_billing_invoices WHERE id', [{'id': 11, 'status': 'issued',
+                                                             'account_tenant_id': 7}]),
+                    ('FROM stripe_invoice_payments WHERE id', [payment]),
+                ])
+                with mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
+                    result = stripe_billing._complete_payment(
+                        connection, payment, CompletePaymentTests.session, {})
+                self.assertEqual(result, 'payment_not_open')
+                self.assertFalse([sql for sql, _ in connection.statements
+                                  if 'api_billing_invoices SET status' in sql])
+
+    def test_mismatched_checkout_session_cannot_settle_payment(self):
+        payment = dict(CompletePaymentTests.payment)
+        session = dict(CompletePaymentTests.session, id='cs_attacker_controlled')
+        connection = FakeConnection([
+            ('FROM api_billing_invoices WHERE id', [{'id': 11, 'status': 'issued',
+                                                     'account_tenant_id': 7}]),
+            ('FROM stripe_invoice_payments WHERE id', [payment]),
+        ])
+        with mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
+            with self.assertRaises(stripe_billing.StripeError) as caught:
+                stripe_billing._complete_payment(connection, payment, session, {})
+        self.assertEqual(str(caught.exception), 'stripe_session_mismatch')
+        self.assertFalse([sql for sql, _ in connection.statements
+                          if 'api_billing_invoices SET status' in sql])
+
+    def test_checkout_does_not_create_second_session_while_first_is_initializing(self):
+        connection = FakeConnection([
+            ('FROM api_billing_invoices', [{'id': 11, 'invoice_number': 'API-202611-000007',
+                                            'account_tenant_id': 7, 'total_units': 500500,
+                                            'status': 'issued'}]),
+            ('FROM stripe_invoice_payments WHERE invoice_id', [{
+                'id': 41, 'invoice_id': 11, 'account_tenant_id': 7, 'payer_tenant_id': 7,
+                'amount_yen': 501, 'mode': 'test', 'status': 'creating',
+                'checkout_session_id': None, 'expires_at': None,
+            }]),
+        ])
+        config = {'enabled': True, 'mode': 'test', 'secret_key': 'sk_test_x',
+                  'webhook_secret': 'whsec_x'}
+        with mock.patch.object(stripe_billing, 'settings', return_value=config), \
+                mock.patch.object(stripe_billing, 'ensure_schema'), \
+                mock.patch.object(stripe_billing, '_api') as api_mock, \
+                mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
+            with self.assertRaises(stripe_billing.StripeError) as caught:
+                stripe_billing.create_checkout(
+                    connection, CreateCheckoutTests()._client(), {'invoice_id': '11'},
+                    {'header:host': '2415.jp', 'https': 'on'})
+        self.assertEqual(str(caught.exception), 'stripe_checkout_initializing')
+        api_mock.assert_not_called()
+        self.assertFalse([sql for sql, _ in connection.statements
+                          if sql.startswith('INSERT INTO stripe_invoice_payments')])
+
+
 class FakeCursor:
     def __init__(self, owner):
         self.owner = owner
@@ -303,7 +386,7 @@ class CreateCheckoutTests(unittest.TestCase):
 
 
 class CompletePaymentTests(unittest.TestCase):
-    payment = {'id': 42, 'invoice_id': 11, 'account_tenant_id': 7, 'amount_yen': 501, 'status': 'open', 'mode': 'test'}
+    payment = {'id': 42, 'invoice_id': 11, 'account_tenant_id': 7, 'amount_yen': 501, 'status': 'open', 'mode': 'test', 'checkout_session_id': 'cs_test_1'}
     session = {'id': 'cs_test_1', 'payment_intent': 'pi_test_1', 'amount_total': 501, 'currency': 'jpy', 'payment_status': 'paid'}
 
     def test_completing_marks_invoice_paid(self):
@@ -436,3 +519,19 @@ class ReconcileReissueTests(unittest.TestCase):
         with mock.patch.object(stripe_billing, '_api', return_value={'id': 'cs_test_2', 'status': 'open'}):
             refreshed = stripe_billing._reconcile_key_reissue(connection, row, {'enabled': True})
         self.assertEqual(refreshed['status'], 'pending')
+
+
+class KeyReissuePaymentGateTests(unittest.TestCase):
+    def test_pending_checkout_cannot_issue_replacement_key(self):
+        pending = {'id': 9, 'tenant_id': 7, 'source_client_id': 3,
+                   'environment': 'production', 'status': 'pending'}
+        connection = FakeConnection([
+            ('SELECT id,status FROM tenants WHERE id', [{'id': 7, 'status': 'active'}]),
+            ('SELECT * FROM stripe_key_reissue_payments WHERE id', [pending]),
+        ])
+        with mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
+            result = stripe_billing._issue_key_reissue(
+                connection, pending, {'payment_intent': 'pi_unpaid'}, {})
+        self.assertEqual(result, 'ignored')
+        self.assertFalse([sql for sql, _ in connection.statements
+                          if sql.startswith('INSERT INTO tenant_api_clients')])

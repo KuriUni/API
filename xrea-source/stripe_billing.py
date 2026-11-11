@@ -192,14 +192,16 @@ def _api(method, path, params=None, config=None, idempotency_key=''):
         with urlopen(request, timeout=20, context=ssl.create_default_context()) as response:
             raw = response.read(1024 * 1024 + 1)
     except urllib.error.HTTPError as exc:
-        detail = ''
+        # Do not propagate Stripe's response body: it can contain customer or
+        # account details and is not needed by callers to handle the failure.
         try:
-            detail = str(exc.read(4096).decode('utf-8', 'replace'))
+            exc.read(4096)
         except Exception:
-            detail = ''
-        raise StripeError('stripe_api_error:' + str(getattr(exc, 'code', '')) + ':' + detail[:200])
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        raise StripeError('stripe_unreachable:' + str(exc)[:120])
+            pass
+        raise StripeError('stripe_api_error:' + str(getattr(exc, 'code', '')))
+    except (urllib.error.URLError, OSError, ValueError):
+        # Network exception strings may include internal host/proxy details.
+        raise StripeError('stripe_unreachable')
     if len(raw) > 1024 * 1024:
         raise StripeError('stripe_response_too_large')
     try:
@@ -275,42 +277,56 @@ def create_checkout(connection, client, data, request_context):
         raise StripeError('stripe_live_sandbox_blocked')
     _assert_write_fence(connection)
     ensure_schema(connection)
-    with connection.cursor() as cursor:
-        cursor.execute('SELECT id,invoice_number,account_tenant_id,total_units,status FROM api_billing_invoices WHERE id=%s LIMIT 1', (invoice_id,))
-        invoice = cursor.fetchone()
-    if not invoice or int(invoice.get('account_tenant_id') or 0) != account_id:
-        raise StripeError('invoice_not_found')
-    if str(invoice.get('status')) != 'issued':
-        raise StripeError('invoice_not_payable')
-    amount_yen = checkout_amount_yen(invoice.get('total_units'))
-    if amount_yen < MIN_CHECKOUT_YEN:
-        raise StripeError('invoice_amount_too_small')
-
-    existing = _open_payment(connection, invoice_id)
-    if existing and existing.get('mode') == config['mode']:
-        if existing.get('checkout_session_id') and not _expired(existing):
-            try:
-                session = _api('GET', 'checkout/sessions/' + str(existing['checkout_session_id']), config=config)
-            except StripeError:
-                session = None
-            if session and session.get('status') == 'open' and session.get('url'):
-                with connection.cursor() as cursor:
-                    cursor.execute('UPDATE stripe_invoice_payments SET checkout_url=%s,updated_at=UTC_TIMESTAMP() WHERE id=%s', (str(session['url'])[:512], int(existing['id'])))
-                connection.commit()
-                return {'ok': True, 'checkout_url': str(session['url']), 'payment_id': int(existing['id']),
-                        'invoice_id': invoice_id, 'amount_yen': int(existing['amount_yen']),
-                        'mode': config['mode'], 'expires_at_utc': _utc_text(existing.get('expires_at')), 'reused': True}
-            if session and session.get('status') == 'complete':
-                raise StripeError('stripe_checkout_completed')
+    # Serialize checkout creation per invoice. The invoice row is the stable
+    # lock target, including the first request when no payment row exists yet.
+    connection.begin()
+    try:
         with connection.cursor() as cursor:
-            cursor.execute("UPDATE stripe_invoice_payments SET status='expired',updated_at=UTC_TIMESTAMP() WHERE id=%s AND status IN ('creating','open')", (int(existing['id']),))
-        connection.commit()
+            cursor.execute('SELECT id,invoice_number,account_tenant_id,total_units,status FROM api_billing_invoices WHERE id=%s FOR UPDATE', (invoice_id,))
+            invoice = cursor.fetchone()
+        if not invoice or int(invoice.get('account_tenant_id') or 0) != account_id:
+            raise StripeError('invoice_not_found')
+        if str(invoice.get('status')) != 'issued':
+            raise StripeError('invoice_not_payable')
+        amount_yen = checkout_amount_yen(invoice.get('total_units'))
+        if amount_yen < MIN_CHECKOUT_YEN:
+            raise StripeError('invoice_amount_too_small')
 
-    base = _portal_base(request_context)
-    with connection.cursor() as cursor:
-        cursor.execute('INSERT INTO stripe_invoice_payments(invoice_id,account_tenant_id,payer_tenant_id,amount_yen,currency,mode,status) VALUES(%s,%s,%s,%s,%s,%s,%s)', (invoice_id, account_id, tenant_id, amount_yen, 'jpy', config['mode'], 'creating'))
-        payment_id = int(connection.insert_id())
-    connection.commit()
+        existing = _open_payment(connection, invoice_id)
+        if existing:
+            if str(existing.get('mode') or '') != config['mode']:
+                raise StripeError('stripe_payment_mode_conflict')
+            if not existing.get('checkout_session_id'):
+                # An in-flight or inconsistent row must be reconciled, not
+                # bypassed by creating another chargeable Checkout Session.
+                raise StripeError('stripe_checkout_initializing')
+            if not _expired(existing):
+                try:
+                    session = _api('GET', 'checkout/sessions/' + str(existing['checkout_session_id']), config=config)
+                except StripeError:
+                    raise StripeError('stripe_checkout_status_unavailable')
+                if session.get('status') == 'open' and session.get('url'):
+                    with connection.cursor() as cursor:
+                        cursor.execute('UPDATE stripe_invoice_payments SET checkout_url=%s,updated_at=UTC_TIMESTAMP() WHERE id=%s', (str(session['url'])[:512], int(existing['id'])))
+                    connection.commit()
+                    return {'ok': True, 'checkout_url': str(session['url']), 'payment_id': int(existing['id']),
+                            'invoice_id': invoice_id, 'amount_yen': int(existing['amount_yen']),
+                            'mode': config['mode'], 'expires_at_utc': _utc_text(existing.get('expires_at')), 'reused': True}
+                if session.get('status') == 'complete':
+                    raise StripeError('stripe_checkout_completed')
+                if session.get('status') != 'expired':
+                    raise StripeError('stripe_checkout_status_unavailable')
+            with connection.cursor() as cursor:
+                cursor.execute("UPDATE stripe_invoice_payments SET status='expired',updated_at=UTC_TIMESTAMP() WHERE id=%s AND status IN ('creating','open')", (int(existing['id']),))
+
+        base = _portal_base(request_context)
+        with connection.cursor() as cursor:
+            cursor.execute('INSERT INTO stripe_invoice_payments(invoice_id,account_tenant_id,payer_tenant_id,amount_yen,currency,mode,status) VALUES(%s,%s,%s,%s,%s,%s,%s)', (invoice_id, account_id, tenant_id, amount_yen, 'jpy', config['mode'], 'creating'))
+            payment_id = int(connection.insert_id())
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
 
     params = {
         'mode': 'payment',
@@ -348,12 +364,18 @@ def create_checkout(connection, client, data, request_context):
 
 
 def _record_event(connection, event_id, event_type, mode, status='received', message='', invoice_id=None, payment_id=None, processed=False):
+    # The event_id primary key is the concurrency boundary. A single
+    # INSERT..ON DUPLICATE KEY UPDATE avoids the SELECT-then-INSERT race when
+    # Stripe retries the same event concurrently on multiple workers.
+    processed_at = _now().strftime('%Y-%m-%d %H:%M:%S') if processed else None
     with connection.cursor() as cursor:
-        cursor.execute('SELECT event_id FROM stripe_webhook_events WHERE event_id=%s LIMIT 1', (event_id,))
-        if cursor.fetchone():
-            cursor.execute('UPDATE stripe_webhook_events SET status=%s,message=%s,invoice_id=%s,payment_id=%s,processed_at=UTC_TIMESTAMP() WHERE event_id=%s', (status, message[:255], invoice_id, payment_id, event_id))
-        else:
-            cursor.execute('INSERT INTO stripe_webhook_events(event_id,event_type,mode,status,message,invoice_id,payment_id,processed_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)', (event_id, event_type[:80], mode, status, message[:255], invoice_id, payment_id, (_now().strftime('%Y-%m-%d %H:%M:%S') if processed else None)))
+        cursor.execute(
+            'INSERT INTO stripe_webhook_events(event_id,event_type,mode,status,message,invoice_id,payment_id,processed_at) '
+            'VALUES(%s,%s,%s,%s,%s,%s,%s,%s) '
+            'ON DUPLICATE KEY UPDATE event_type=VALUES(event_type),mode=VALUES(mode),status=VALUES(status),'
+            'message=VALUES(message),invoice_id=VALUES(invoice_id),payment_id=VALUES(payment_id),'
+            'processed_at=COALESCE(VALUES(processed_at),processed_at)',
+            (event_id, event_type[:80], mode, status, message[:255], invoice_id, payment_id, processed_at))
 
 
 def _complete_payment(connection, payment, session, request_context):
@@ -373,6 +395,13 @@ def _complete_payment(connection, payment, session, request_context):
             if str(current.get('status')) == 'completed':
                 connection.commit()
                 return 'already_completed'
+            # Only an active Checkout Session may settle an invoice. Late or
+            # replayed completion events must not revive failed/expired rows.
+            if str(current.get('status')) != 'open':
+                connection.commit()
+                return 'payment_not_open'
+            if str(session.get('id') or '') != str(current.get('checkout_session_id') or ''):
+                raise StripeError('stripe_session_mismatch')
             if str(invoice.get('status')) == 'paid':
                 cursor.execute("UPDATE stripe_invoice_payments SET status='completed',completed_at=COALESCE(completed_at,UTC_TIMESTAMP()),updated_at=UTC_TIMESTAMP() WHERE id=%s", (int(payment['id']),))
                 connection.commit()
@@ -643,7 +672,10 @@ def _issue_key_reissue(connection, row, session, request_context):
             if str(current.get('status')) == 'issued':
                 connection.commit()
                 return 'already_issued'
-            if str(current.get('status')) not in ('paid', 'pending', 'creating'):
+            # Key issuance is permitted only after the webhook/reconciliation
+            # path has persisted a verified paid state. Never treat a merely
+            # pending/creating Checkout as proof of payment.
+            if str(current.get('status')) != 'paid':
                 connection.commit()
                 return 'ignored'
             cursor.execute("SELECT * FROM tenant_api_clients WHERE id=%s AND tenant_id=%s AND status='active' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP()) FOR UPDATE", (source_id, tenant))
