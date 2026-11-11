@@ -629,7 +629,7 @@ class OverdueInvoiceKeySuspensionTests(unittest.TestCase):
             ('SELECT id,account_tenant_id,status,due_date FROM api_billing_invoices',
              [{'id': 71, 'account_tenant_id': 7, 'status': 'issued', 'due_date': '2026-11-10'}]),
         ])
-        with mock.patch.object(stripe_billing, 'ensure_schema'), \\
+        with mock.patch.object(stripe_billing, 'ensure_schema'), \
                 mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
             result = stripe_billing.suspend_overdue_invoices(connection)
         self.assertEqual(result['overdue_invoices_checked'], 1)
@@ -646,7 +646,7 @@ class OverdueInvoiceKeySuspensionTests(unittest.TestCase):
 
     def test_restore_only_reactivates_billing_held_keys(self):
         connection = FakeConnection([])
-        with mock.patch.object(stripe_billing, 'ensure_schema'), \\
+        with mock.patch.object(stripe_billing, 'ensure_schema'), \
                 mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
             restored = stripe_billing.restore_billing_suspended_keys(connection, 71)
         self.assertEqual(restored, 1)
@@ -668,7 +668,7 @@ class OverdueInvoiceKeySuspensionTests(unittest.TestCase):
                    'metadata': {'payment_id': '9', 'invoice_id': '71',
                                 'account_tenant_id': '7'}}
         with mock.patch.object(stripe_billing, 'suspend_overdue_invoices',
-                               return_value={'keys_suspended': 2}) as suspend, \\
+                               return_value={'keys_suspended': 2}) as suspend, \
                 mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
             response = stripe_billing._handle_invoice_overdue(
                 connection, 'test', 'evt_overdue_71', 'invoice.overdue', invoice)
