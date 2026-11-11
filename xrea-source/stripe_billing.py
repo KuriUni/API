@@ -386,8 +386,20 @@ def create_checkout(connection, client, data, request_context):
                             expires_at.strftime('%Y-%m-%d %H:%M:%S'), payment_id))
         connection.commit()
     except Exception as exc:
+        # A timeout, 5xx, or malformed response may occur after Stripe has
+        # committed the object. Keep the row retryable so the same payment ID
+        # and Stripe idempotency keys can safely resume the operation.
+        error_text = str(exc)
+        retryable = (error_text.startswith('stripe_unreachable:')
+                     or error_text.startswith('stripe_response_invalid')
+                     or error_text.startswith('stripe_response_too_large')
+                     or error_text.startswith('stripe_api_error:429:')
+                     or any(error_text.startswith('stripe_api_error:%d:' % code)
+                            for code in range(500, 600)))
+        next_status = 'creating' if retryable else 'failed'
         with connection.cursor() as cursor:
-            cursor.execute("UPDATE stripe_invoice_payments SET status='failed',failure_code=%s,updated_at=UTC_TIMESTAMP() WHERE id=%s", (str(exc)[:64], payment_id))
+            cursor.execute("UPDATE stripe_invoice_payments SET status=%s,failure_code=%s,updated_at=UTC_TIMESTAMP() WHERE id=%s",
+                           (next_status, error_text[:64], payment_id))
         connection.commit()
         raise
     return {'ok': True, 'checkout_url': url, 'payment_id': payment_id, 'invoice_id': invoice_id,
