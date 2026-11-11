@@ -62,6 +62,27 @@ function Get-XreaDifferentialPlan {
     [pscustomobject]@{ Root = $root; Files = $files; Changed = $changed; State = $state; StateFile = $stateFile }
 }
 
+function Save-XreaDifferentialState {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][hashtable] $State,
+        [Parameter(Mandatory = $true)][string] $StateFile
+    )
+
+    $tempFile = $StateFile + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    try {
+        $json = $State | ConvertTo-Json -Depth 5
+        $encoding = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($tempFile, $json, $encoding)
+        Move-Item -LiteralPath $tempFile -Destination $StateFile -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $tempFile -PathType Leaf) {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Invoke-XreaDifferentialUpload {
     [CmdletBinding()]
     param(
@@ -71,64 +92,107 @@ function Invoke-XreaDifferentialUpload {
         [Parameter(Mandatory = $true)][string] $StateKey,
         [Parameter(Mandatory = $true)] $TransferOptions,
         [string[]] $ExcludePatterns = @(),
-        [switch] $PreserveUnselectedState
+        [switch] $PreserveUnselectedState,
+        [ValidateRange(0, 300)][int] $LockTimeoutSeconds = 0
     )
 
     $stateRoot = Join-Path $env:LOCALAPPDATA 'XreaDeploy\sync-state'
     if (-not (Test-Path -LiteralPath $stateRoot -PathType Container)) {
         New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
     }
-    $plan = Get-XreaDifferentialPlan -LocalRoot $LocalRoot -StateKey $StateKey -ExcludePatterns $ExcludePatterns
-    $stateFile = $plan.StateFile
-    $state = $plan.State
-    $files = $plan.Files
-    $changed = $plan.Changed
-    $root = $plan.Root
 
-    $base = $RemoteRoot.TrimEnd('/')
-    $checkedDirectories = @{}
-    foreach ($item in $changed) {
-        $segments = @($item.Relative.Split('/'))
-        $directory = $base
-        for ($i = 0; $i -lt ($segments.Count - 1); $i++) {
-            $directory += '/' + $segments[$i]
-            if (-not $checkedDirectories.ContainsKey($directory)) {
-                try { [void]$Session.ListDirectory($directory) }
-                catch { $Session.CreateDirectory($directory) }
-                $checkedDirectories[$directory] = $true
+    # The OS releases this exclusive handle even if PowerShell is terminated.
+    # This prevents concurrent runs from overwriting each other's state or
+    # interleaving uploads to the same destination/state key.
+    $keyBytes = [System.Text.Encoding]::UTF8.GetBytes($StateKey)
+    $keyHasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $keyHash = $keyHasher.ComputeHash($keyBytes)
+        $stateName = (($keyHash | ForEach-Object { $_.ToString('x2') }) -join '') + '.json'
+    } finally { $keyHasher.Dispose() }
+    $lockFile = Join-Path $stateRoot ($stateName + '.lock')
+    $lockStream = $null
+    $deadline = [DateTime]::UtcNow.AddSeconds($LockTimeoutSeconds)
+    do {
+        try {
+            $lockStream = [System.IO.File]::Open(
+                $lockFile,
+                [System.IO.FileMode]::OpenOrCreate,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None
+            )
+        } catch [System.IO.IOException] {
+            if ([DateTime]::UtcNow -ge $deadline) {
+                throw "Another deployment is using this destination/state key. Lock: $lockFile. Wait for it to finish, then retry."
+            }
+            Start-Sleep -Milliseconds 250
+        }
+    } while ($null -eq $lockStream)
+
+    try {
+        $plan = Get-XreaDifferentialPlan -LocalRoot $LocalRoot -StateKey $StateKey -ExcludePatterns $ExcludePatterns
+        $stateFile = $plan.StateFile
+        $state = $plan.State
+        $files = $plan.Files
+        $changed = $plan.Changed
+        $root = $plan.Root
+
+        $base = $RemoteRoot.TrimEnd('/')
+        if ([string]::IsNullOrWhiteSpace($base)) { throw 'RemoteRoot must not be empty or root-only.' }
+        $checkedDirectories = @{}
+        foreach ($item in $changed) {
+            $segments = @($item.Relative.Split('/'))
+            $directory = $base
+            for ($i = 0; $i -lt ($segments.Count - 1); $i++) {
+                $directory += '/' + $segments[$i]
+                if (-not $checkedDirectories.ContainsKey($directory)) {
+                    try { [void]$Session.ListDirectory($directory) }
+                    catch { $Session.CreateDirectory($directory) }
+                    $checkedDirectories[$directory] = $true
+                }
+            }
+            $remoteFile = $base + '/' + $item.Relative
+
+            # Do not mark a transfer as synchronized until the source is proven
+            # unchanged across the upload. If it changed mid-transfer, the next
+            # run must retry it rather than trusting a stale hash.
+            $currentHash = Get-XreaSha256 -Path $item.File.FullName
+            if ($currentHash -ne $item.Hash) {
+                throw "Local source changed after planning; rerun deployment: $($item.Relative)"
+            }
+            $transfer = $Session.PutFiles($item.File.FullName, $remoteFile, $false, $TransferOptions)
+            $transfer.Check()
+            $postUploadHash = Get-XreaSha256 -Path $item.File.FullName
+            if ($postUploadHash -ne $item.Hash) {
+                throw "Local source changed during upload; state was not advanced. Rerun deployment: $($item.Relative)"
+            }
+            $state[$item.Relative] = $item.Hash
+            Save-XreaDifferentialState -State $state -StateFile $stateFile
+        }
+
+        $removedStateEntries = 0
+        if (-not $PreserveUnselectedState) {
+            # Prune only after all uploads succeeded. This cleans local bookkeeping
+            # for deleted/excluded files without deleting anything from the server.
+            $activeFiles = @{}
+            foreach ($file in $files) {
+                $relative = $file.FullName.Substring(($root + [System.IO.Path]::DirectorySeparatorChar).Length).Replace('\', '/')
+                $activeFiles[$relative] = $true
+            }
+            foreach ($key in @($state.Keys)) {
+                if (-not $activeFiles.ContainsKey([string]$key)) {
+                    [void]$state.Remove([string]$key)
+                    $removedStateEntries++
+                }
+            }
+            if ($removedStateEntries -gt 0) {
+                Save-XreaDifferentialState -State $state -StateFile $stateFile
             }
         }
-        $remoteFile = $base + '/' + $item.Relative
-        $transfer = $Session.PutFiles($item.File.FullName, $remoteFile, $false, $TransferOptions)
-        $transfer.Check()
-        $state[$item.Relative] = $item.Hash
-        $tempFile = $stateFile + '.tmp'
-        $state | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $tempFile -Encoding utf8
-        Move-Item -LiteralPath $tempFile -Destination $stateFile -Force
-    }
 
-    $removedStateEntries = 0
-    if (-not $PreserveUnselectedState) {
-        # Prune only after all uploads succeeded. This cleans local bookkeeping
-        # for deleted/excluded files without deleting anything from the server.
-        $activeFiles = @{}
-        foreach ($file in $files) {
-            $relative = $file.FullName.Substring(($root + [System.IO.Path]::DirectorySeparatorChar).Length).Replace('\', '/')
-            $activeFiles[$relative] = $true
-        }
-        foreach ($key in @($state.Keys)) {
-            if (-not $activeFiles.ContainsKey([string]$key)) {
-                [void]$state.Remove([string]$key)
-                $removedStateEntries++
-            }
-        }
-        if ($removedStateEntries -gt 0) {
-            $tempFile = $stateFile + '.tmp'
-            $state | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $tempFile -Encoding utf8
-            Move-Item -LiteralPath $tempFile -Destination $stateFile -Force
-        }
+        [pscustomobject]@{ Uploaded = $changed.Count; CheckedLocal = $files.Count; PrunedStateEntries = $removedStateEntries; StateFile = $stateFile }
     }
-
-    [pscustomobject]@{ Uploaded = $changed.Count; CheckedLocal = $files.Count; PrunedStateEntries = $removedStateEntries; StateFile = $stateFile }
+    finally {
+        if ($null -ne $lockStream) { $lockStream.Dispose() }
+    }
 }
-
