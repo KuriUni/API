@@ -1,4 +1,4 @@
--- Stripe Checkout payments for issued BaaS invoices.
+-- Stripe hosted invoice payments for issued BaaS invoices (no email collection).
 -- These tables stay outside the schema 039 plan; `POST /ha/migrate.php`
 -- with {"scope":"stripe"} runs the same statements through stripe_billing.ensure_schema.
 
@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS `stripe_invoice_payments` (
   `invoice_id` bigint(20) unsigned NOT NULL,
   `account_tenant_id` bigint(20) unsigned NOT NULL,
   `payer_tenant_id` bigint(20) unsigned NOT NULL,
-  `checkout_session_id` varchar(120) DEFAULT NULL,
+  `checkout_session_id` varchar(120) DEFAULT NULL COMMENT 'Legacy column: stores Stripe Invoice ID (in_...) for invoice payments',
   `payment_intent_id` varchar(120) DEFAULT NULL,
   `amount_yen` int(10) unsigned NOT NULL,
   `currency` char(3) NOT NULL DEFAULT 'jpy',
