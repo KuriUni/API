@@ -497,6 +497,9 @@ def create_key_reissue_checkout(connection, client, data, request_context):
             cursor.execute('INSERT INTO tenant_sso_bootstrap_tickets(ticket_hash,subject_hash,oidc_sid,created_at,expires_at) VALUES(%s,%s,%s,UTC_TIMESTAMP(),UTC_TIMESTAMP()+INTERVAL 30 MINUTE)', (hashlib.sha256(return_ticket.encode()).hexdigest(), subject, str(client.get('sso_oidc_sid') or '')))
         base = _portal_base(request_context)
         params = {
+            # Stripe Adaptive Pricing keeps JPY 500 as the base price and lets
+            # the customer choose JPY or an available local presentment currency.
+            'adaptive_pricing[enabled]': 'true',
             'mode': 'payment',
             'line_items[0][price_data][currency]': 'jpy',
             'line_items[0][price_data][unit_amount]': str(KEY_REISSUE_YEN),
@@ -602,11 +605,7 @@ def _reconcile_key_reissue(connection, row, config):
             cursor.execute("UPDATE stripe_key_reissue_payments SET status='expired',updated_at=UTC_TIMESTAMP() WHERE id=%s AND status IN ('creating','pending')", (int(row['id']),))
         connection.commit()
     elif status == 'complete' and str(session.get('payment_status') or '') == 'paid':
-        try:
-            paid_total = int(session.get('amount_total'))
-        except (TypeError, ValueError):
-            paid_total = -1
-        if str(session.get('currency') or '').lower() == 'jpy' and paid_total == int(row.get('amount_yen') or 0):
+        if _key_reissue_session_matches(row, session):
             with connection.cursor() as cursor:
                 cursor.execute("UPDATE stripe_key_reissue_payments SET status='paid',payment_intent_id=%s,updated_at=UTC_TIMESTAMP() WHERE id=%s AND status IN ('creating','pending')", (str(session.get('payment_intent') or '')[:120], int(row['id'])))
             connection.commit()
@@ -680,6 +679,34 @@ def _key_reissue_by_session(connection, session_id):
     return dict(found) if found else None
 
 
+def _key_reissue_session_matches(row, session):
+    """Bind a Stripe Session to the exact server-created 500 JPY reissue request.
+
+    Adaptive Pricing changes the presentment currency and amount, so the
+    original JPY amount cannot be compared with amount_total after conversion.
+    The persisted Checkout Session ID and immutable server-created metadata
+    identify the exact 500 JPY base-price session instead.
+    """
+    metadata = session.get('metadata') if isinstance(session.get('metadata'), dict) else {}
+    try:
+        row_id = int(row.get('id') or 0)
+        tenant_id = int(row.get('tenant_id') or 0)
+    except (TypeError, ValueError):
+        return False
+    expected_hash = str(row.get('request_hash') or '')
+    actual_hash = str(metadata.get('request_hash') or '')
+    return bool(
+        row_id > 0 and tenant_id > 0
+        and str(session.get('id') or '') == str(row.get('checkout_session_id') or '')
+        and str(session.get('client_reference_id') or '') == 'reissue-%d' % row_id
+        and str(metadata.get('kind') or '') == 'key_reissue'
+        and str(metadata.get('reissue_id') or '') == str(row_id)
+        and str(metadata.get('tenant_id') or '') == str(tenant_id)
+        and expected_hash and actual_hash
+        and hmac.compare_digest(expected_hash, actual_hash)
+    )
+
+
 def _handle_key_reissue_completed(connection, config, mode, event_id, event_type, session, request_context):
     row = _key_reissue_by_session(connection, str(session.get('id') or ''))
     if not row:
@@ -688,14 +715,10 @@ def _handle_key_reissue_completed(connection, config, mode, event_id, event_type
         return json_response('200 OK', {'ok': True, 'received': True, 'ignored': True})
     if str(row.get('mode')) != mode:
         raise StripeError('stripe_mode_mismatch')
-    try:
-        paid_total = int(session.get('amount_total'))
-    except (TypeError, ValueError):
-        paid_total = -1
-    if str(session.get('currency') or '').lower() != 'jpy' or paid_total != KEY_REISSUE_YEN:
-        _record_event(connection, event_id, event_type, mode, 'failed', 'amount_mismatch', None, int(row['id']), processed=True)
+    if not _key_reissue_session_matches(row, session):
+        _record_event(connection, event_id, event_type, mode, 'failed', 'session_identity_mismatch', None, int(row['id']), processed=True)
         connection.commit()
-        raise StripeError('stripe_amount_mismatch')
+        raise StripeError('stripe_session_mismatch')
     if str(session.get('payment_status') or '') != 'paid':
         _record_event(connection, event_id, event_type, mode, 'pending', 'payment_status_' + str(session.get('payment_status'))[:32], None, int(row['id']), processed=True)
         connection.commit()

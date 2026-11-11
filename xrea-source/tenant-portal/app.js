@@ -117,22 +117,22 @@
     host.replaceChildren();
     const price = element('div', 'reissue-price'); const priceCopy = element('div');
     priceCopy.append(element('b', '', 'APIキー再発行料'), element('small', '', immediate ? 'カードで即時決済' : '月次請求書に加算'));
-    const amount = element('strong', '', '¥500'); amount.append(element('span', '', ' / 回・税込'));
+    const amount = element('strong', '', immediate ? '¥500相当' : '¥500'); amount.append(element('span', '', ' / 回・税込'));
     price.append(priceCopy, amount); host.append(price);
     host.append(element('p', '', immediate
-      ? '元のAPIキーは再表示できないため、新しいAPIキーを発行します。再発行料500円（税込）をStripeで即時決済し、決済完了後に新しいキーを表示します。Sandboxも同額です。'
+      ? '元のAPIキーは再表示できないため、新しいAPIキーを発行します。日本円500円を基準に、Stripe決済画面で日本円または対応する現地通貨を選んで即時決済できます。決済完了後に新しいキーを表示します。Sandboxも同額です。'
       : '元のAPIキーは再表示できないため、新しいAPIキーを発行します。再発行料は1回500円（税込）で、月次請求書に加算されます。Sandboxも同額です。'));
     host.append(element('p', '', '旧キーは60分後に無効になります（元の有効期限が先に来る場合はその期限まで）。利用中のアプリのAPIキーを切り替えてください。新しいキーの権限・有効期限は引き継ぎます。'));
     host.append(element('p', 'form-foot', immediate
-      ? 'SSO ID認証から5分以内に実行してください。決済後にWebhookでキーが有効化され、この画面にキーが表示されます。通信に失敗しても、同じリクエストIDで結果を取得できます。'
+      ? 'SSO ID認証から5分以内に実行してください。Stripe決済画面で支払通貨を選択できます。日本円500円を基準にStripeが換算し、現地通貨での支払いにはStripeの換算手数料（通常2～4%）が含まれる場合があります。決済後にWebhookでキーが有効化され、この画面にキーが表示されます。通信に失敗しても、同じリクエストIDで結果を取得できます。'
       : 'SSO ID認証から5分以内に実行してください。キーはこの画面で確認・コピーし、安全に保管してください。閉じると画面から消去します。通信に失敗した場合は、同じSSO IDで10分以内に再試行すると追加請求せず結果を取得できます。'));
     if (pending) host.append(element('p', 'invoice-test-warning', immediate ? '前回の決済が残っています。同じリクエストの再試行では追加請求されません。' : '前回の再発行結果を確認します。同じリクエストの再試行では追加の500円は発生しません。'));
     const agreement = element('label', 'checkbox-confirm'); const checkbox = element('input'); checkbox.type = 'checkbox';
-    agreement.append(checkbox, element('span', '', immediate ? '500円（税込）の即時決済と、旧キーの切替期限を確認しました。' : '再発行料500円（税込）の月次請求への加算と、旧キーの切替期限を確認しました。'));
+    agreement.append(checkbox, element('span', '', immediate ? '日本円500円相当の即時決済（選択通貨により為替換算手数料が加算される場合があります）と、旧キーの切替期限を確認しました。' : '再発行料500円（税込）の月次請求への加算と、旧キーの切替期限を確認しました。'));
     host.append(agreement);
     const errorBox = element('p', 'form-error'); errorBox.setAttribute('role', 'alert');
     let reauthArmed = false;
-    const submit = button(immediate ? (pending ? '前回の決済結果を確認' : '500円を支払って再発行') : (pending ? '前回の結果を再取得' : '500円で再発行する'), async () => {
+    const submit = button(immediate ? (pending ? '前回の決済結果を確認' : '500円相当を支払って再発行') : (pending ? '前回の結果を再取得' : '500円で再発行する'), async () => {
       if (state.reissueBusy || !state.tenantSsoSession || !checkbox.checked) return;
       if (reauthArmed) { startSsoReauth(); return; }
       if (immediate && pending) { openKeyReissueResult(pending); return; }
