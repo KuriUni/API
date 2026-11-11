@@ -56,7 +56,7 @@ class SunabarV4ProofMySQLTests(unittest.TestCase):
         with open(cls.private_key_path, "rb") as key_file:
             private_key = key_file.read()
         public = subprocess.run(
-            ["openssl", "pkey", "-pubout", "-out", cls.public_key_path],
+            ["openssl", "pkey", "-pubout"],
             input=private_key, check=True, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, timeout=10)
         cls.public_key_pem = public.stdout.decode("ascii")
