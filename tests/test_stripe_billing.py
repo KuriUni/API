@@ -639,10 +639,10 @@ class OverdueInvoiceKeySuspensionTests(unittest.TestCase):
         update = [sql for sql, _ in connection.statements
                   if sql.startswith('UPDATE tenant_api_clients c')]
         self.assertTrue(insert)
-        self.assertIn("c.status IN ('active','billing_hold')", insert[0])
+        self.assertIn("c.status IN ('active','retiring','billing_hold')", insert[0])
         self.assertTrue(update)
         self.assertIn("SET c.status='billing_hold'", update[0])
-        self.assertIn("c.status='active'", update[0])
+        self.assertIn("c.status IN ('active','retiring')", update[0])
 
     def test_restore_only_reactivates_billing_held_keys(self):
         connection = FakeConnection([])
@@ -654,7 +654,7 @@ class OverdueInvoiceKeySuspensionTests(unittest.TestCase):
                    if sql.startswith('UPDATE tenant_api_clients c')]
         self.assertTrue(updates)
         self.assertIn("c.status='billing_hold'", updates[0])
-        self.assertIn("SET c.status='active'", updates[0])
+        self.assertIn("SET c.status=s.previous_status", updates[0])
         self.assertIn("i2.due_date<DATE(UTC_TIMESTAMP() + INTERVAL 9 HOUR)", updates[0])
 
     def test_overdue_webhook_requires_matching_payment_and_mode(self):
