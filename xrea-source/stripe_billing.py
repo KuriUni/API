@@ -519,6 +519,28 @@ def restore_billing_suspended_keys(connection, invoice_id):
         raise
 
 
+def restore_paid_invoice_keys(connection, limit=1000):
+    """Restore billing-held keys for invoices paid through any supported path."""
+    ensure_schema(connection)
+    try:
+        batch_limit = max(1, min(1000, int(limit)))
+    except (TypeError, ValueError):
+        batch_limit = 1000
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT DISTINCT s.invoice_id FROM stripe_billing_key_suspensions s "
+            "JOIN api_billing_invoices i ON i.id=s.invoice_id "
+            "WHERE i.status='paid' AND s.restored_at IS NULL "
+            "ORDER BY s.invoice_id LIMIT %s",
+            (batch_limit,),
+        )
+        invoice_ids = [int(row['invoice_id']) for row in (cursor.fetchall() or [])]
+    restored = 0
+    for invoice_id in invoice_ids:
+        restored += restore_billing_suspended_keys(connection, invoice_id)
+    return {'paid_invoices_checked': len(invoice_ids), 'keys_restored': restored}
+
+
 def _record_event(connection, event_id, event_type, mode, status='received', message='', invoice_id=None, payment_id=None, processed=False):
     with connection.cursor() as cursor:
         cursor.execute('SELECT event_id FROM stripe_webhook_events WHERE event_id=%s LIMIT 1', (event_id,))

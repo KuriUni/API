@@ -7,7 +7,7 @@ import json
 import sys
 
 import database
-from stripe_billing import suspend_overdue_invoices
+from stripe_billing import suspend_overdue_invoices, restore_paid_invoice_keys
 
 
 def main():
@@ -15,7 +15,8 @@ def main():
     try:
         connection = database.connect()
         result = suspend_overdue_invoices(connection, limit=1000)
-        print(json.dumps({'ok': True, **result}, ensure_ascii=False, separators=(',', ':')))
+        recovery = restore_paid_invoice_keys(connection, limit=1000)
+        print(json.dumps({'ok': True, **result, **recovery}, ensure_ascii=False, separators=(',', ':')))
         return 0
     except Exception as exc:
         # Keep credentials and SQL details out of cron output.

@@ -674,3 +674,17 @@ class OverdueInvoiceKeySuspensionTests(unittest.TestCase):
                 connection, 'test', 'evt_overdue_71', 'invoice.overdue', invoice)
         suspend.assert_called_once()
         self.assertEqual(response.status_code, 200)
+
+
+class ManualInvoicePaymentRecoveryTests(unittest.TestCase):
+    def test_worker_restores_keys_when_admin_marks_invoice_paid(self):
+        connection = FakeConnection([
+            ('SELECT DISTINCT s.invoice_id', [{'invoice_id': 71}]),
+        ])
+        with mock.patch.object(stripe_billing, 'ensure_schema'), \
+                mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
+            result = stripe_billing.restore_paid_invoice_keys(connection)
+        self.assertEqual(result['paid_invoices_checked'], 1)
+        self.assertEqual(result['keys_restored'], 1)
+        self.assertTrue(any("SET c.status=s.previous_status" in sql
+                            for sql, _ in connection.statements))
