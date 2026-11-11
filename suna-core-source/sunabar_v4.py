@@ -333,11 +333,11 @@ def _load_session(connection, workspace, token, kind, lock=False):
         # ロックし、同じ旧Refresh Tokenの並行更新でデッドロックを招くため分離する。
         with connection.cursor() as cursor:
             cursor.execute(
-                'SELECT id FROM sunabar_v4_sessions '
-                'WHERE workspace_id=%s AND ' + column + '=%s LIMIT 1 FOR UPDATE',
-                (workspace, _token_hash(token)))
+                'SELECT id,workspace_id FROM sunabar_v4_sessions '
+                'WHERE ' + column + '=%s LIMIT 1 FOR UPDATE',
+                (_token_hash(token),))
             locked = cursor.fetchone()
-        if not locked:
+        if not locked or str(locked['workspace_id']) != str(workspace):
             return None
         session_id = int(locked['id'])
         with connection.cursor() as cursor:
