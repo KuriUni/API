@@ -591,3 +591,28 @@ class StripeInvoiceRetryStabilityTests(unittest.TestCase):
                 stripe_billing.create_checkout(
                     connection, self._client(), {'invoice_id': '11'}, {})
         self.assertEqual(str(caught.exception), 'invoice_amount_changed')
+
+
+class StripeInvoiceTransientFailureTests(unittest.TestCase):
+    def test_network_timeout_keeps_payment_retryable(self):
+        connection = FakeConnection([
+            ('FROM api_billing_invoices', [{'id': 11, 'invoice_number': 'API-11',
+                                            'account_tenant_id': 7, 'total_units': 500000,
+                                            'status': 'issued', 'due_date': '2026-12-10'}]),
+            ('FROM stripe_invoice_payments WHERE invoice_id', []),
+        ])
+        client = {'key_kind': 'tenant_sso', 'tenant_sso_session_id': 'x' * 43,
+                  'tenant_id': 7, 'parent_tenant_id': None,
+                  'tenant_environment': 'production'}
+        config = {'enabled': True, 'mode': 'test', 'secret_key': 'sk_test_x',
+                  'webhook_secret': 'whsec_x'}
+        with mock.patch.object(stripe_billing, 'settings', return_value=config), \\
+                mock.patch.object(stripe_billing, 'ensure_schema'), \\
+                mock.patch.object(stripe_billing, '_api',
+                                  side_effect=stripe_billing.StripeError('stripe_unreachable:timeout')), \\
+                mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
+            with self.assertRaises(stripe_billing.StripeError):
+                stripe_billing.create_checkout(connection, client, {'invoice_id': '11'}, {})
+        retry_updates = [(sql, params) for sql, params in connection.statements
+                         if "SET status=%s,failure_code=%s" in sql]
+        self.assertEqual(retry_updates[-1][1][0], 'creating')
