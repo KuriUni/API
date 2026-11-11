@@ -289,7 +289,7 @@ def create_checkout(connection, client, data, request_context):
     existing = _open_payment(connection, invoice_id)
     if existing and existing.get('mode') == config['mode']:
         stripe_invoice_id = str(existing.get('checkout_session_id') or '')
-        if stripe_invoice_id and not _expired(existing):
+        if stripe_invoice_id:
             try:
                 remote = _api('GET', 'invoices/' + stripe_invoice_id, config=config)
             except StripeError:
