@@ -330,7 +330,10 @@ class CreateCheckoutTests(unittest.TestCase):
                 mock.patch.dict(sys.modules, {'v3_handlers': mock.MagicMock()}):
             with self.assertRaises(stripe_billing.StripeError):
                 stripe_billing.create_checkout(connection, self._client(), {'invoice_id': '11'}, {})
-        self.assertTrue(any("status='failed'" in sql for sql, _ in connection.statements))
+        failure_updates = [(sql, params) for sql, params in connection.statements
+                           if "SET status=%s,failure_code=%s" in sql]
+        self.assertTrue(failure_updates)
+        self.assertEqual(failure_updates[-1][1][0], 'failed')
 
 
 class CompletePaymentTests(unittest.TestCase):
