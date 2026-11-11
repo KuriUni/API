@@ -255,7 +255,7 @@ def _expired(row):
 
 @legacy_compatible(callback_index=None, request_index=0)
 def create_checkout(connection, client, data, request_context):
-    """Create or reuse a Stripe Checkout Session for one issued invoice."""
+    """Create a Stripe-hosted invoice without collecting or sending an email address."""
     from v3_handlers import _assert_write_fence
     config = settings()
     if not config['enabled']:
@@ -276,7 +276,7 @@ def create_checkout(connection, client, data, request_context):
     _assert_write_fence(connection)
     ensure_schema(connection)
     with connection.cursor() as cursor:
-        cursor.execute('SELECT id,invoice_number,account_tenant_id,total_units,status FROM api_billing_invoices WHERE id=%s LIMIT 1', (invoice_id,))
+        cursor.execute('SELECT id,invoice_number,account_tenant_id,total_units,status,due_date FROM api_billing_invoices WHERE id=%s LIMIT 1', (invoice_id,))
         invoice = cursor.fetchone()
     if not invoice or int(invoice.get('account_tenant_id') or 0) != account_id:
         raise StripeError('invoice_not_found')
@@ -288,54 +288,86 @@ def create_checkout(connection, client, data, request_context):
 
     existing = _open_payment(connection, invoice_id)
     if existing and existing.get('mode') == config['mode']:
-        if existing.get('checkout_session_id') and not _expired(existing):
+        stripe_invoice_id = str(existing.get('checkout_session_id') or '')
+        if stripe_invoice_id:
             try:
-                session = _api('GET', 'checkout/sessions/' + str(existing['checkout_session_id']), config=config)
+                remote = _api('GET', 'invoices/' + stripe_invoice_id, config=config)
             except StripeError:
-                session = None
-            if session and session.get('status') == 'open' and session.get('url'):
+                remote = None
+            if remote and remote.get('status') == 'open' and remote.get('hosted_invoice_url'):
+                url = str(remote['hosted_invoice_url'])
                 with connection.cursor() as cursor:
-                    cursor.execute('UPDATE stripe_invoice_payments SET checkout_url=%s,updated_at=UTC_TIMESTAMP() WHERE id=%s', (str(session['url'])[:512], int(existing['id'])))
+                    cursor.execute('UPDATE stripe_invoice_payments SET checkout_url=%s,updated_at=UTC_TIMESTAMP() WHERE id=%s', (url[:512], int(existing['id'])))
                 connection.commit()
-                return {'ok': True, 'checkout_url': str(session['url']), 'payment_id': int(existing['id']),
+                return {'ok': True, 'checkout_url': url, 'payment_id': int(existing['id']),
                         'invoice_id': invoice_id, 'amount_yen': int(existing['amount_yen']),
                         'mode': config['mode'], 'expires_at_utc': _utc_text(existing.get('expires_at')), 'reused': True}
-            if session and session.get('status') == 'complete':
-                raise StripeError('stripe_checkout_completed')
+            if remote and remote.get('status') == 'paid':
+                raise StripeError('stripe_invoice_paid_pending_webhook')
         with connection.cursor() as cursor:
             cursor.execute("UPDATE stripe_invoice_payments SET status='expired',updated_at=UTC_TIMESTAMP() WHERE id=%s AND status IN ('creating','open')", (int(existing['id']),))
         connection.commit()
 
-    base = _portal_base(request_context)
     with connection.cursor() as cursor:
         cursor.execute('INSERT INTO stripe_invoice_payments(invoice_id,account_tenant_id,payer_tenant_id,amount_yen,currency,mode,status) VALUES(%s,%s,%s,%s,%s,%s,%s)', (invoice_id, account_id, tenant_id, amount_yen, 'jpy', config['mode'], 'creating'))
         payment_id = int(connection.insert_id())
     connection.commit()
 
-    params = {
-        'mode': 'payment',
-        'line_items[0][price_data][currency]': 'jpy',
-        'line_items[0][price_data][unit_amount]': str(int(amount_yen)),
-        'line_items[0][price_data][product_data][name]': ('TUTI BaaS 請求書 ' + str(invoice.get('invoice_number') or invoice_id))[:250],
-        'line_items[0][quantity]': '1',
-        'client_reference_id': str(invoice_id),
-        'metadata[invoice_id]': str(invoice_id),
-        'metadata[payment_id]': str(payment_id),
-        'metadata[account_tenant_id]': str(account_id),
-        'success_url': base + '/tenant-portal/#stripe=success&invoice=' + str(invoice_id),
-        'cancel_url': base + '/tenant-portal/#stripe=cancel&invoice=' + str(invoice_id),
-        'locale': 'ja',
-    }
     try:
-        session = _api('POST', 'checkout/sessions', params, config=config,
-                       idempotency_key='tuti-invoice-%d-payment-%d' % (invoice_id, payment_id))
-        url = str(session.get('url') or '')
+        # Deliberately omit email, phone, address, and customer shipping details.
+        customer = _api('POST', 'customers', {
+            'metadata[account_tenant_id]': str(account_id),
+            'metadata[privacy_profile]': 'no_email',
+        }, config=config, idempotency_key='tuti-invoice-customer-%d' % payment_id)
+        customer_id = str(customer.get('id') or '')
+        if not re.fullmatch(r'cus_[A-Za-z0-9]+', customer_id):
+            raise StripeError('stripe_response_invalid')
+
+        _api('POST', 'invoiceitems', {
+            'customer': customer_id,
+            'amount': str(amount_yen),
+            'currency': 'jpy',
+            'description': ('TUTI BaaS 請求書 ' + str(invoice.get('invoice_number') or invoice_id))[:250],
+            'metadata[invoice_id]': str(invoice_id),
+            'metadata[payment_id]': str(payment_id),
+            'metadata[account_tenant_id]': str(account_id),
+        }, config=config, idempotency_key='tuti-invoice-item-%d' % payment_id)
+
+        due = invoice.get('due_date')
+        if isinstance(due, datetime):
+            due_timestamp = int(due.replace(tzinfo=timezone.utc).timestamp())
+        else:
+            try:
+                due_timestamp = int(datetime.strptime(str(due), '%Y-%m-%d').replace(tzinfo=timezone.utc).timestamp())
+            except (TypeError, ValueError):
+                due_timestamp = int((_now() + timedelta(days=30)).timestamp())
+        remote = _api('POST', 'invoices', {
+            'customer': customer_id,
+            'collection_method': 'send_invoice',
+            'due_date': str(due_timestamp),
+            'auto_advance': 'false',
+            'pending_invoice_items_behavior': 'include',
+            'metadata[invoice_id]': str(invoice_id),
+            'metadata[payment_id]': str(payment_id),
+            'metadata[account_tenant_id]': str(account_id),
+            'metadata[privacy_profile]': 'no_email',
+        }, config=config, idempotency_key='tuti-invoice-%d-payment-%d' % (invoice_id, payment_id))
+        stripe_invoice_id = str(remote.get('id') or '')
+        if not re.fullmatch(r'in_[A-Za-z0-9]+', stripe_invoice_id):
+            raise StripeError('stripe_response_invalid')
+        if remote.get('status') == 'draft':
+            remote = _api('POST', 'invoices/' + stripe_invoice_id + '/finalize', {
+                'auto_advance': 'false',
+            }, config=config, idempotency_key='tuti-invoice-finalize-%d' % payment_id)
+        url = str(remote.get('hosted_invoice_url') or '')
         if not url.startswith('https://'):
             raise StripeError('stripe_response_invalid')
-        expires = session.get('expires_at')
-        expires_at = datetime.fromtimestamp(int(expires), timezone.utc) if expires else (_now() + timedelta(minutes=CHECKOUT_TTL_MINUTES))
+        expires_at = _now() + timedelta(days=30)
         with connection.cursor() as cursor:
-            cursor.execute("UPDATE stripe_invoice_payments SET checkout_session_id=%s,checkout_url=%s,expires_at=%s,status='open',updated_at=UTC_TIMESTAMP() WHERE id=%s", (str(session.get('id') or '')[:120], url[:512], expires_at.strftime('%Y-%m-%d %H:%M:%S'), payment_id))
+            # Legacy column name retained for compatibility with existing installations.
+            cursor.execute("UPDATE stripe_invoice_payments SET checkout_session_id=%s,checkout_url=%s,payment_intent_id=%s,expires_at=%s,status='open',updated_at=UTC_TIMESTAMP() WHERE id=%s",
+                           (stripe_invoice_id[:120], url[:512], str(remote.get('payment_intent') or '')[:120],
+                            expires_at.strftime('%Y-%m-%d %H:%M:%S'), payment_id))
         connection.commit()
     except Exception as exc:
         with connection.cursor() as cursor:
@@ -345,7 +377,6 @@ def create_checkout(connection, client, data, request_context):
     return {'ok': True, 'checkout_url': url, 'payment_id': payment_id, 'invoice_id': invoice_id,
             'amount_yen': int(amount_yen), 'mode': config['mode'],
             'expires_at_utc': expires_at.strftime('%Y-%m-%d %H:%M:%S'), 'reused': False}
-
 
 def _record_event(connection, event_id, event_type, mode, status='received', message='', invoice_id=None, payment_id=None, processed=False):
     with connection.cursor() as cursor:
@@ -750,7 +781,7 @@ def _handle_key_reissue_expired(connection, mode, event_id, event_type, session)
 
 @legacy_compatible(callback_index=1, request_index=0)
 def webhook(request_context):
-    """Handle a signed Stripe webhook without browser or admin credentials."""
+    """Handle signed Stripe Invoice and legacy Checkout webhooks."""
     config = settings()
     if not config.get('webhook_secret'):
         return json_response('503 Service Unavailable', {'ok': False, 'error': 'stripe_webhook_not_configured'})
@@ -772,32 +803,35 @@ def webhook(request_context):
     event_type = str(event.get('type') or '')
     if re.fullmatch(r'[A-Za-z0-9_]{8,120}', event_id) is None:
         return json_response('400 Bad Request', {'ok': False, 'error': 'invalid_event_id'})
-    session = event['data'].get('object')
-    if not isinstance(session, dict):
-        session = {}
+    event_object = event['data'].get('object')
+    if not isinstance(event_object, dict):
+        event_object = {}
     mode = 'live' if event.get('livemode') is True else 'test'
     connection = None
     try:
         connection = database.connect()
         ensure_schema(connection)
-        metadata = session.get('metadata') if isinstance(session.get('metadata'), dict) else {}
+        metadata = event_object.get('metadata') if isinstance(event_object.get('metadata'), dict) else {}
         if str(metadata.get('kind') or '') == 'key_reissue':
             if event_type == 'checkout.session.expired':
-                return _handle_key_reissue_expired(connection, mode, event_id, event_type, session)
+                return _handle_key_reissue_expired(connection, mode, event_id, event_type, event_object)
             if event_type == 'checkout.session.completed':
-                return _handle_key_reissue_completed(connection, config, mode, event_id, event_type, session, request_context)
+                return _handle_key_reissue_completed(connection, config, mode, event_id, event_type, event_object, request_context)
+        if event_type == 'invoice.paid':
+            return _handle_invoice_paid(connection, mode, event_id, event_type, event_object, request_context)
+        if event_type == 'invoice.payment_failed':
+            return _handle_invoice_payment_failed(connection, mode, event_id, event_type, event_object)
         if event_type == 'checkout.session.expired':
-            return _handle_expired(connection, config, mode, event_id, event_type, session, request_context)
+            return _handle_expired(connection, config, mode, event_id, event_type, event_object, request_context)
         if event_type == 'payment_intent.payment_failed':
-            return _handle_payment_failed(connection, config, mode, event_id, event_type, session, request_context)
+            return _handle_payment_failed(connection, config, mode, event_id, event_type, event_object, request_context)
         if event_type != 'checkout.session.completed':
             _record_event(connection, event_id, event_type, mode, 'ignored', 'unsupported_event', processed=True)
             connection.commit()
             return json_response('200 OK', {'ok': True, 'received': True, 'ignored': True})
-        return _handle_completed(connection, config, mode, event_id, event_type, session, request_context)
+        return _handle_completed(connection, config, mode, event_id, event_type, event_object, request_context)
     except StripeError as exc:
-        # A rejected payload is permanent from Stripe's point of view; record it
-        # and answer 200 so the same event is not retried indefinitely.
+        # Invalid or mismatched events are recorded and acknowledged to avoid endless retries.
         if connection is not None:
             try:
                 connection.rollback()
@@ -827,6 +861,72 @@ def _payment_by_session(connection, session_id):
     with connection.cursor() as cursor:
         cursor.execute('SELECT * FROM stripe_invoice_payments WHERE checkout_session_id=%s LIMIT 1', (str(session_id)[:120],))
         return _payment_row(cursor.fetchone())
+
+
+def _handle_invoice_paid(connection, mode, event_id, event_type, invoice, request_context):
+    """Accept only the exact server-created Stripe invoice and amount."""
+    metadata = invoice.get('metadata') if isinstance(invoice.get('metadata'), dict) else {}
+    try:
+        payment_id = int(metadata.get('payment_id') or 0)
+        invoice_id = int(metadata.get('invoice_id') or 0)
+        account_id = int(metadata.get('account_tenant_id') or 0)
+    except (TypeError, ValueError):
+        payment_id = invoice_id = account_id = 0
+    stripe_invoice_id = str(invoice.get('id') or '')
+    with connection.cursor() as cursor:
+        cursor.execute('SELECT * FROM stripe_invoice_payments WHERE id=%s AND invoice_id=%s AND account_tenant_id=%s AND checkout_session_id=%s LIMIT 1',
+                       (payment_id, invoice_id, account_id, stripe_invoice_id[:120]))
+        payment = _payment_row(cursor.fetchone())
+    if not payment:
+        _record_event(connection, event_id, event_type, mode, 'ignored', 'invoice_payment_not_found', invoice_id or None, payment_id or None, processed=True)
+        connection.commit()
+        return json_response('200 OK', {'ok': True, 'received': True, 'ignored': True})
+    if str(payment.get('mode')) != mode:
+        raise StripeError('stripe_mode_mismatch')
+    if str(invoice.get('status') or '') != 'paid':
+        _record_event(connection, event_id, event_type, mode, 'pending', 'invoice_not_paid', invoice_id, payment_id, processed=True)
+        connection.commit()
+        return json_response('200 OK', {'ok': True, 'received': True, 'pending': True})
+    try:
+        amount_paid = int(invoice.get('amount_paid'))
+    except (TypeError, ValueError):
+        amount_paid = -1
+    if str(invoice.get('currency') or '').lower() != 'jpy' or amount_paid != int(payment['amount_yen']):
+        _record_event(connection, event_id, event_type, mode, 'failed', 'amount_mismatch', invoice_id, payment_id, processed=True)
+        connection.commit()
+        raise StripeError('stripe_amount_mismatch')
+    normalized = {'amount_total': amount_paid, 'currency': invoice.get('currency'), 'payment_intent': invoice.get('payment_intent')}
+    message = _complete_payment(connection, payment, normalized, request_context)
+    _record_event(connection, event_id, event_type, mode, 'processed' if message == 'paid' else 'ignored', message, invoice_id, payment_id, processed=True)
+    connection.commit()
+    if message in ('paid', 'invoice_already_paid'):
+        from ha_handlers import _append_ha_audit, ha_sync_peer
+        _append_ha_audit('api_billing_invoice_paid', {'invoice_id': invoice_id, 'payment_id': payment_id, 'provider': 'stripe_invoice', 'mode': mode, 'amount_yen': amount_paid}, request_context)
+        ha_sync_peer('api_billing_invoice_paid', request_context)
+    return json_response('200 OK', {'ok': True, 'received': True, 'result': message})
+
+
+def _handle_invoice_payment_failed(connection, mode, event_id, event_type, invoice):
+    metadata = invoice.get('metadata') if isinstance(invoice.get('metadata'), dict) else {}
+    try:
+        payment_id = int(metadata.get('payment_id') or 0)
+        invoice_id = int(metadata.get('invoice_id') or 0)
+    except (TypeError, ValueError):
+        payment_id = invoice_id = 0
+    stripe_invoice_id = str(invoice.get('id') or '')
+    with connection.cursor() as cursor:
+        cursor.execute('SELECT * FROM stripe_invoice_payments WHERE id=%s AND invoice_id=%s AND checkout_session_id=%s LIMIT 1',
+                       (payment_id, invoice_id, stripe_invoice_id[:120]))
+        payment = cursor.fetchone()
+        if payment and str(payment.get('mode')) == mode:
+            cursor.execute("UPDATE stripe_invoice_payments SET status='failed',failure_code='invoice_payment_failed',updated_at=UTC_TIMESTAMP() WHERE id=%s AND status<>'completed'",
+                           (payment_id,))
+    if payment and str(payment.get('mode')) == mode:
+        _record_event(connection, event_id, event_type, mode, 'processed', 'invoice_payment_failed', invoice_id, payment_id, processed=True)
+    else:
+        _record_event(connection, event_id, event_type, mode, 'ignored', 'invoice_payment_not_found', processed=True)
+    connection.commit()
+    return json_response('200 OK', {'ok': True, 'received': True})
 
 
 def _handle_completed(connection, config, mode, event_id, event_type, session, request_context):
