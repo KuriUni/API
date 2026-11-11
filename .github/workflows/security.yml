@@ -13,6 +13,25 @@ jobs:
   python-tests:
     name: Python regression tests
     runs-on: ubuntu-latest
+    env:
+      SUNABAR_V4_MYSQL_HOST: 127.0.0.1
+      SUNABAR_V4_MYSQL_PORT: "3306"
+      SUNABAR_V4_MYSQL_USER: root
+      SUNABAR_V4_MYSQL_PASSWORD: root
+      SUNABAR_V4_MYSQL_DATABASE: sunabar_test
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: sunabar_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -24,7 +43,7 @@ jobs:
           cache-dependency-path: xrea-source/requirements.txt
       - name: Install API dependencies
         run: python -m pip install -r xrea-source/requirements.txt
-      - name: Run regression tests
+      - name: Run regression tests and Sunabar V4 MySQL integration tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
 
   dependency-audit:
