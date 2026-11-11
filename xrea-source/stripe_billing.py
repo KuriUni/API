@@ -426,6 +426,8 @@ def suspend_overdue_invoices(connection, limit=200):
     are recorded, and a distinct billing_hold state prevents accidental
     reactivation of keys disabled for another reason.
     """
+    from v3_handlers import _assert_write_fence
+    _assert_write_fence(connection)
     ensure_schema(connection)
     try:
         batch_limit = max(1, min(1000, int(limit)))
@@ -448,7 +450,7 @@ def suspend_overdue_invoices(connection, limit=200):
             with connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT id,account_tenant_id,status,due_date FROM api_billing_invoices "
-                    "WHERE id=%s FOR UPDATE", (invoice_id,))
+                    "WHERE id=%s AND status='issued' AND due_date<UTC_DATE() FOR UPDATE", (invoice_id,))
                 current = cursor.fetchone()
                 if (not current or int(current.get('account_tenant_id') or 0) != tenant_id
                         or str(current.get('status') or '') != 'issued'):
@@ -457,7 +459,7 @@ def suspend_overdue_invoices(connection, limit=200):
                 cursor.execute(
                     "INSERT IGNORE INTO stripe_billing_key_suspensions(invoice_id,tenant_id,client_id) "
                     "SELECT %s,c.tenant_id,c.id FROM tenant_api_clients c "
-                    "WHERE c.tenant_id=%s AND c.status='active' AND c.revoked_at IS NULL",
+                    "WHERE c.tenant_id=%s AND c.status IN ('active','billing_hold') AND c.revoked_at IS NULL",
                     (invoice_id, tenant_id),
                 )
                 cursor.execute(
@@ -483,6 +485,8 @@ def restore_billing_suspended_keys(connection, invoice_id):
         return 0
     if invoice_id < 1:
         return 0
+    from v3_handlers import _assert_write_fence
+    _assert_write_fence(connection)
     ensure_schema(connection)
     connection.begin()
     try:
@@ -1033,6 +1037,9 @@ def _handle_invoice_paid(connection, mode, event_id, event_type, invoice, reques
     normalized = {'amount_total': amount_paid, 'currency': invoice.get('currency'), 'payment_intent': invoice.get('payment_intent')}
     message = _complete_payment(connection, payment, normalized, request_context)
     if message in ('paid', 'invoice_already_paid'):
+        # Register any other overdue invoices before deciding whether keys
+        # can safely be restored.
+        suspend_overdue_invoices(connection, limit=1000)
         restore_billing_suspended_keys(connection, invoice_id)
     _record_event(connection, event_id, event_type, mode, 'processed' if message == 'paid' else 'ignored', message, invoice_id, payment_id, processed=True)
     connection.commit()
