@@ -328,14 +328,21 @@ def _load_session(connection, workspace, token, kind, lock=False):
         return None
     column = 'refresh_hash' if kind == 'refresh' else 'access_hash'
     if lock:
-        # Refresh時はセッション行だけを先にロックする。
-        # JOIN ... FOR UPDATE は端末・ライセンス行やインデックス範囲まで
-        # ロックし、同じ旧Refresh Tokenの並行更新でデッドロックを招くため分離する。
+        # 同一Refresh Tokenの要求を接続単位の名前付きロックで直列化してから
+        # セッション行をロックする。InnoDBの副索引・履歴行を同時に取得する
+        # 並行要求がデッドロックするのを防ぐ。ロックは接続終了時に解放される。
+        token_hash = _token_hash(token)
+        lock_name = 'sunabar-v4-refresh:' + token_hash[:40]
         with connection.cursor() as cursor:
+            cursor.execute('SELECT GET_LOCK(%s, 10) AS acquired', (lock_name,))
+            lock_row = cursor.fetchone()
+            if not lock_row or int(lock_row.get('acquired') or 0) != 1:
+                raise V4Error(503, 'REFRESH_LOCK_UNAVAILABLE',
+                              'The refresh request could not be serialized. Retry the request.')
             cursor.execute(
                 'SELECT id,workspace_id FROM sunabar_v4_sessions '
                 'WHERE ' + column + '=%s LIMIT 1 FOR UPDATE',
-                (_token_hash(token),))
+                (token_hash,))
             locked = cursor.fetchone()
         if not locked or str(locked['workspace_id']) != str(workspace):
             return None
