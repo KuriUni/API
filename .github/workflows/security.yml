@@ -68,3 +68,32 @@ jobs:
           fi
           rm -f gitleaks-report.json
           echo "No historical secrets detected."
+
+  powershell-regression:
+    name: PowerShell stability regression tests
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Install Pester
+        shell: pwsh
+        run: Install-Module -Name Pester -MinimumVersion 5.0.0 -Force -Scope CurrentUser -SkipPublisherCheck
+      - name: Parse changed PowerShell scripts
+        shell: pwsh
+        run: |
+          $paths = @(
+            "operations/Xrea/Invoke-XreaDifferentialUpload.ps1",
+            "tests/powershell/Invoke-XreaDifferentialUpload.Tests.ps1"
+          )
+          foreach ($path in $paths) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $path), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_.Message }
+              exit 1
+            }
+          }
+      - name: Run PowerShell regression tests
+        shell: pwsh
+        run: Invoke-Pester -Path tests/powershell -Output Detailed
