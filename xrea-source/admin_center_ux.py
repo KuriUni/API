@@ -162,6 +162,18 @@ JS = r'''
   'use strict';
   const byId = (id) => document.getElementById(id);
   const typing = (target) => target && (target.matches('input, textarea, select') || target.isContentEditable);
+  function focusables(container) {
+    return [...container.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+      .filter((element) => !element.disabled && !element.hidden && element.getClientRects().length > 0);
+  }
+  function trapTab(event, container) {
+    if (event.key !== 'Tab') return;
+    const items = focusables(container);
+    if (!items.length) { event.preventDefault(); return; }
+    const first = items[0], last = items[items.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  }
 
   // Toast notifications for existing status elements -----------------------
   const toastRegion = byId('toast-region');
@@ -433,6 +445,7 @@ JS = r'''
   }
   function openPalette() {
     if (!cmdk) return;
+    if (detail && !detail.hidden) closeDetail(false);
     previousFocus = document.activeElement;
     cmdk.hidden = false;
     cmdkInput.value = '';
@@ -449,6 +462,7 @@ JS = r'''
     cmdk.querySelectorAll('[data-cmdk-close]').forEach((element) => element.addEventListener('click', closePalette));
     cmdkInput.addEventListener('input', () => renderPalette(cmdkInput.value));
     cmdk.addEventListener('keydown', (event) => {
+      trapTab(event, cmdk);
       if (event.key === 'Escape') { event.preventDefault(); closePalette(); return; }
       if (event.key === 'ArrowDown') { event.preventDefault(); selectPalette(selected + 1); return; }
       if (event.key === 'ArrowUp') { event.preventDefault(); selectPalette(selected - 1); return; }
@@ -479,13 +493,19 @@ JS = r'''
   // License detail drawer -------------------------------------------------
   const detail = byId('license-detail');
   const detailBody = byId('license-detail-body');
-  function closeDetail() {
+  let detailPreviousFocus = null;
+  function closeDetail(restoreFocus = true) {
     if (!detail) return;
     detail.hidden = true;
     document.body.classList.remove('drawer-open');
+    if (restoreFocus && detailPreviousFocus && document.contains(detailPreviousFocus)) {
+      detailPreviousFocus.focus({ preventScroll: true });
+    }
+    detailPreviousFocus = null;
   }
   async function showLicenseDetail(id) {
     if (!detail || !detailBody) return;
+    detailPreviousFocus = document.activeElement;
     detail.hidden = false;
     document.body.classList.add('drawer-open');
     detailBody.replaceChildren();
@@ -517,7 +537,7 @@ JS = r'''
       devices.type = 'button';
       devices.textContent = 'このライセンスの端末を表示';
       devices.addEventListener('click', () => {
-        closeDetail();
+        closeDetail(false);
         const field = byId('license');
         if (field) field.value = String(license.id || id);
         const section = byId('device-management');
@@ -548,6 +568,8 @@ JS = r'''
       } else {
         detailBody.append(grid);
       }
+      const closeButton = detail.querySelector('.detail-head [data-detail-close]');
+      if (closeButton) closeButton.focus({ preventScroll: true });
     } catch (error) {
       detailBody.replaceChildren();
       const message = document.createElement('p');
@@ -558,7 +580,8 @@ JS = r'''
   }
   window.showLicenseDetail = showLicenseDetail;
   if (detail) {
-    detail.querySelectorAll('[data-detail-close]').forEach((element) => element.addEventListener('click', closeDetail));
+    detail.querySelectorAll('[data-detail-close]').forEach((element) => element.addEventListener('click', () => closeDetail()));
+    detail.addEventListener('keydown', (event) => trapTab(event, detail));
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && !detail.hidden) { event.preventDefault(); closeDetail(); }
     });

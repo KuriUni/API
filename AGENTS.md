@@ -21,7 +21,7 @@
 ## 開発・検証
 
 - Python: 各サブプロジェクトで venv を作成し、`business-ops/requirements.txt` は完全固定バージョン。依存更新はレビュー前提で行う。
-- テスト: `python -m unittest discover -s tests`（Node 側は `node tests/test_bulk_jobs.cjs` など個別実行）。
+- テスト: `$env:PYTHONPATH='tools/vendor/pymysql-1.2.3-py3-none-any.whl'; python -m unittest discover -s tests`（PowerShell。Node 側は `node tests/test_bulk_jobs.cjs` など個別実行）。管理画面のE2EはEdge/Chromeが見つかる場合のみ実行し、無い環境では自動skip。
 - デスクトップアプリ: `cd XreaOperationsDesktop/rust && cargo check` / `cargo run --release --target x86_64-pc-windows-msvc`。
 - 起動: `business-ops` は `py -m uvicorn main:app --host 127.0.0.1 --port 8765`（環境変数は README 参照）。
 

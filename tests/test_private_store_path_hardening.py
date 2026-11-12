@@ -13,6 +13,18 @@ import migration_config
 import passkey_handlers
 
 
+def _can_create_symlinks():
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            target = pathlib.Path(folder) / "target"
+            target.mkdir()
+            (pathlib.Path(folder) / "link").symlink_to(target, target_is_directory=True)
+        return True
+    except (OSError, NotImplementedError):
+        return False
+
+
+@unittest.skipUnless(_can_create_symlinks(), "symlink creation is not permitted on this platform")
 class PrivateRuntimeSymlinkTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

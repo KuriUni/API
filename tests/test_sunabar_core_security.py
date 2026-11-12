@@ -1,6 +1,10 @@
 import importlib.util
+import os
 import pathlib
 import unittest
+
+if os.name == "nt":
+    raise unittest.SkipTest("The Sunabar Core uses fcntl, which is unavailable on Windows.")
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CORE_PATH = ROOT / "suna-core-source" / "main.py"
