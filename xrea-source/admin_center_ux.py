@@ -595,7 +595,7 @@ def enhance_admin_center(page, role_label, passkey_recent, step_up_url):
          '<div class="query-actions"><button id="license-query-run" type="button">検索</button><button id="license-query-clear" type="button" class="secondary">解除</button></div>'
          '</div>'
          '<div class="pager" id="license-pagination" hidden><button id="license-prev" type="button" class="secondary">前へ</button><span id="license-page-info" class="muted"></span><button id="license-next" type="button" class="secondary">次へ</button></div>'
-         '<div class="list-tools"><label for="license-filter">表示中の行を絞り込む</label>'
+         '<div class="list-tools" id="license-filter-tools"><label for="license-filter">表示中の行を絞り込む</label>'
          '<input id="license-filter" type="search" autocomplete="off" placeholder="ID・ラベル・状態・操作名で検索">'
          '<span id="license-filter-count" class="muted" role="status"></span></div>'
          '<div id="license-results"></div>').encode('utf-8'),
