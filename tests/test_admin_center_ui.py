@@ -126,7 +126,7 @@ class AdminCenterBrowserTests(unittest.TestCase):
         self.addCleanup(self._stop_browser)
         self.target = self._wait_for_target()
         from websockets.sync.client import connect
-        self.websocket = connect(self.target["webSocketDebuggerUrl"], legacy=True)
+        self.websocket = connect(self.target["webSocketDebuggerUrl"])
         self.addCleanup(self.websocket.close)
         self.counter = 0
         self.errors = []
