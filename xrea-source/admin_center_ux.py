@@ -31,6 +31,14 @@ CSS = '''
 .list-tools label{margin:0;white-space:nowrap}
 .list-tools input{flex:1 1 240px;min-width:0}
 #license-results{max-height:70vh;overflow:auto;border-radius:4px}
+.license-query{display:grid;grid-template-columns:minmax(220px,2fr) repeat(3,minmax(120px,1fr)) auto;align-items:end;gap:9px;margin:14px 0 0;padding:12px;border:1px solid #dce9e6;border-radius:12px;background:#f7fbfa}
+.license-query label{display:flex;flex-direction:column;gap:4px;margin:0;font-size:12px;color:#45666a}
+.license-query input,.license-query select{width:100%;min-height:38px;padding:7px 9px}
+.license-query .query-actions{display:flex;gap:6px;flex-wrap:wrap}
+.license-query .query-actions button{min-height:38px;padding:7px 12px}
+.pager{display:flex;align-items:center;gap:9px;margin:10px 0 0}
+.pager .muted{min-width:70px;text-align:center;font-size:12px}
+.pager button{min-height:34px;padding:5px 11px}
 #license-results thead th{position:sticky;top:0;z-index:1;background:#eef5f3;box-shadow:inset 0 -1px 0 #dbe8e5}
 #license-results td button{margin:2px}
 #license-results tbody tr:hover{background:#f8fbfa}
@@ -59,6 +67,24 @@ CSS = '''
 .cmdk-item .go{color:#7a9694;font-size:13px}
 .cmdk-help{padding:9px 16px;border-top:1px solid #e6efed;color:#74898a;font-size:11px}
 .cmdk-help kbd{padding:0 4px;border:1px solid #dbe6e4;border-radius:4px;background:#f6f9f8;font:10px/1.6 ui-monospace,monospace}
+body.drawer-open{overflow:hidden}
+.detail-drawer{position:fixed;inset:0;z-index:1050}
+.detail-drawer[hidden]{display:none}
+.detail-backdrop{position:absolute;inset:0;background:#0c2226a8;backdrop-filter:blur(2px)}
+.detail-panel{position:absolute;top:0;right:0;bottom:0;width:min(520px,100%);display:flex;flex-direction:column;background:#fff;box-shadow:-16px 0 50px #061c2033;animation:detail-in .18s ease-out}
+@keyframes detail-in{from{transform:translateX(22px);opacity:.6}to{transform:none;opacity:1}}
+.detail-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid #e1ebe8}
+.detail-head h2{margin:0;font-size:18px}
+.detail-head button{min-height:32px;padding:4px 10px;border:1px solid #cfddda;border-radius:8px;background:#f4f8f7;color:#31575b;font:inherit;font-size:18px;line-height:1;cursor:pointer}
+.detail-body{flex:1;overflow:auto;padding:16px 18px 28px}
+.detail-actions{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px}
+.detail-grid{display:grid;grid-template-columns:minmax(120px,.8fr) minmax(0,1.2fr);gap:0;margin:0;border:1px solid #e3ecea;border-radius:10px;overflow:hidden}
+.detail-grid dt,.detail-grid dd{margin:0;padding:9px 11px;border-bottom:1px solid #edf2f0;overflow-wrap:anywhere;font-size:13px}
+.detail-grid dt{background:#f5f9f8;color:#567073;font-weight:700}
+.detail-grid dd{background:#fff}
+.detail-grid dt:last-of-type,.detail-grid dd:last-of-type{border-bottom:0}
+.detail-empty{padding:20px 0;color:#718589}
+@media(max-width:760px){.detail-panel{width:100%}.detail-head{padding:13px 14px}.detail-body{padding:12px 14px 24px}.detail-grid{grid-template-columns:1fr}.detail-grid dt{border-bottom:0}.detail-grid dd{padding-top:2px}}
 #back-top{position:fixed;right:18px;bottom:82px;z-index:900;display:grid;place-items:center;width:40px;height:40px;border:1px solid #c7dcd8;border-radius:999px;background:#fffffff2;color:#255d5d;font-size:18px;box-shadow:0 6px 20px #17343b1f;cursor:pointer}
 #back-top[hidden]{display:none}
 #back-top:hover{background:#effaf7}
@@ -75,6 +101,9 @@ CSS = '''
  .cmdk-panel{max-height:84vh}
  .list-tools{gap:6px}
  .list-tools input{flex:1 1 100%}
+ .license-query{grid-template-columns:1fr 1fr;padding:10px}
+ .license-query label:first-child{grid-column:1/-1}
+ .license-query .query-actions{grid-column:1/-1}
  #license-results{max-height:none}
  .quick-nav{display:flex;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}
  .quick-nav a{flex:0 0 165px}
@@ -118,6 +147,13 @@ def _overlay_html():
   </div>
 </div>
 <button id="back-top" type="button" hidden aria-label="ページ上部へ戻る">↑</button>
+<div class="detail-drawer" id="license-detail" hidden>
+  <div class="detail-backdrop" data-detail-close></div>
+  <aside class="detail-panel" role="dialog" aria-modal="true" aria-labelledby="license-detail-title">
+    <div class="detail-head"><h2 id="license-detail-title">ライセンス詳細</h2><button type="button" data-detail-close aria-label="閉じる">×</button></div>
+    <div class="detail-body" id="license-detail-body"></div>
+  </aside>
+</div>
 '''
 
 
@@ -160,6 +196,8 @@ JS = r'''
     new MutationObserver(check).observe(el, { childList: true, characterData: true, subtree: true });
     check();
   }
+  const initialAuditFilters = byId('audit-filters');
+  if (initialAuditFilters) initialAuditFilters.hidden = true;
   watchStatus('status');
   watchStatus('license-status');
   watchStatus('tenant-status');
@@ -438,6 +476,94 @@ JS = r'''
     }
   });
 
+  // License detail drawer -------------------------------------------------
+  const detail = byId('license-detail');
+  const detailBody = byId('license-detail-body');
+  function closeDetail() {
+    if (!detail) return;
+    detail.hidden = true;
+    document.body.classList.remove('drawer-open');
+  }
+  async function showLicenseDetail(id) {
+    if (!detail || !detailBody) return;
+    detail.hidden = false;
+    document.body.classList.add('drawer-open');
+    detailBody.replaceChildren();
+    const loading = document.createElement('p');
+    loading.className = 'detail-empty';
+    loading.textContent = 'ライセンス情報を取得しています…';
+    detailBody.append(loading);
+    try {
+      if (typeof window.api !== 'function') throw new Error('管理APIを利用できません。ページを再読み込みしてください。');
+      const data = await window.api('get_license', { license_id: Number(id) });
+      const license = data.license || {};
+      const usage = data.usage || {};
+      const values = Object.assign({}, license, usage);
+      const labels = [
+        ['id', 'ライセンスID'], ['label', 'ラベル'], ['tenant_name', 'テナント'], ['tenant_id', 'テナントID'],
+        ['product_name', '製品'], ['product_id', '製品ID'], ['license_mode', '種別'], ['max_devices', '最大端末数'],
+        ['active', '状態'], ['active_sessions', '有効セッション'], ['expires_at', '有効期限'], ['created_at', '作成日時'],
+        ['last_activated_at', '最終認証'], ['last_seen_at', '最終利用'], ['revoked_at', '失効日時'], ['deleted_at', '削除日時']
+      ];
+      detailBody.replaceChildren();
+      const actions = document.createElement('div');
+      actions.className = 'detail-actions';
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'secondary';
+      copy.textContent = 'ライセンスIDをコピー';
+      copy.addEventListener('click', () => copyText(String(license.id || id)));
+      const devices = document.createElement('button');
+      devices.type = 'button';
+      devices.textContent = 'このライセンスの端末を表示';
+      devices.addEventListener('click', () => {
+        closeDetail();
+        const field = byId('license');
+        if (field) field.value = String(license.id || id);
+        const section = byId('device-management');
+        if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const loadButton = byId('load');
+        if (loadButton) loadButton.click();
+      });
+      actions.append(copy, devices);
+      detailBody.append(actions);
+      const grid = document.createElement('dl');
+      grid.className = 'detail-grid';
+      for (const [key, label] of labels) {
+        let value = values[key];
+        if (value === undefined || value === null || value === '') continue;
+        if (key === 'active') value = value === true || value === 1 || value === '1' ? '有効' : '停止';
+        if (typeof value === 'object') continue;
+        const term = document.createElement('dt');
+        term.textContent = label;
+        const description = document.createElement('dd');
+        description.textContent = String(value);
+        grid.append(term, description);
+      }
+      if (!grid.children.length) {
+        const empty = document.createElement('p');
+        empty.className = 'detail-empty';
+        empty.textContent = '表示できる詳細情報がありません。';
+        detailBody.append(empty);
+      } else {
+        detailBody.append(grid);
+      }
+    } catch (error) {
+      detailBody.replaceChildren();
+      const message = document.createElement('p');
+      message.className = 'error';
+      message.textContent = error.message || 'ライセンス情報を取得できませんでした。';
+      detailBody.append(message);
+    }
+  }
+  window.showLicenseDetail = showLicenseDetail;
+  if (detail) {
+    detail.querySelectorAll('[data-detail-close]').forEach((element) => element.addEventListener('click', closeDetail));
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !detail.hidden) { event.preventDefault(); closeDetail(); }
+    });
+  }
+
   // Back to top ------------------------------------------------------------
   const backTop = byId('back-top');
   if (backTop) {
@@ -461,7 +587,15 @@ def enhance_admin_center(page, role_label, passkey_recent, step_up_url):
     )
     page = page.replace(
         b'<div id="license-results"></div>',
-        ('<div class="list-tools"><label for="license-filter">表示中の行を絞り込む</label>'
+        ('<div class="license-query" id="license-query" hidden>'
+         '<label>検索<input id="license-q" type="search" autocomplete="off" placeholder="ID・ラベル・テナント・製品"></label>'
+         '<label>状態<select id="license-state"><option value="">すべて</option><option value="active">有効</option><option value="paused">一時停止</option><option value="revoked">失効</option><option value="expired">期限切れ</option><option value="expiring">30日以内に期限</option></select></label>'
+         '<label>テナントID<input id="license-tenant" type="number" min="1" inputmode="numeric"></label>'
+         '<label>製品ID<input id="license-product" type="number" min="1" inputmode="numeric"></label>'
+         '<div class="query-actions"><button id="license-query-run" type="button">検索</button><button id="license-query-clear" type="button" class="secondary">解除</button></div>'
+         '</div>'
+         '<div class="pager" id="license-pagination" hidden><button id="license-prev" type="button" class="secondary">前へ</button><span id="license-page-info" class="muted"></span><button id="license-next" type="button" class="secondary">次へ</button></div>'
+         '<div class="list-tools"><label for="license-filter">表示中の行を絞り込む</label>'
          '<input id="license-filter" type="search" autocomplete="off" placeholder="ID・ラベル・状態・操作名で検索">'
          '<span id="license-filter-count" class="muted" role="status"></span></div>'
          '<div id="license-results"></div>').encode('utf-8'),
