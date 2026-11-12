@@ -1,7 +1,7 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param([ValidateSet('Both','Primary','Backup')][string] $Target = 'Both',
-      [ValidateSet('V8','License','LicenseV4','ApiUsage')][string] $Profile = 'V8')
+      [ValidateSet('V8','License','LicenseV4','ApiUsage','Stripe')][string] $Profile = 'V8')
 $ErrorActionPreference = 'Stop'
 $base = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $source = Join-Path $base 'xrea-source'
@@ -11,7 +11,7 @@ Add-Type -Path (Join-Path $install 'netstandard2.0\WinSCPnet.dll')
 Add-Type -AssemblyName System.Security.Cryptography.ProtectedData
 $credentials = Import-Clixml -LiteralPath (Join-Path $env:LOCALAPPDATA 'XreaDeploy\credentials.xml')
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$series = if ($Profile -eq 'ApiUsage') { 'api-usage-limits' } elseif ($Profile -eq 'LicenseV4') { 'license-v4-auth' } elseif ($Profile -eq 'License') { 'license-auth' } else { 'v8-cutover' }
+$series = if ($Profile -eq 'Stripe') { 'stripe-billing' } elseif ($Profile -eq 'ApiUsage') { 'api-usage-limits' } elseif ($Profile -eq 'LicenseV4') { 'license-v4-auth' } elseif ($Profile -eq 'License') { 'license-auth' } else { 'v8-cutover' }
 $backupRoot = Join-Path $base "deploy-backups\$series-$stamp"
 $privateRoot = Join-Path $env:LOCALAPPDATA "XreaDeploy\private-backups\$series-$stamp"
 # Dependencies precede dispatchers and browser assets. Only these known paths are queried.
@@ -31,6 +31,27 @@ if ($Profile -eq 'ApiUsage') {
     $files = @('api_usage_limits.py','ha_migrate.py','ha_export.py','ha_snapshot.py','ha_handlers.py',
         'baas_handlers.py','baas_issuance_handlers.py','baas_v7_handlers.py','baas_v8_handlers.py',
         'ha_tenant_admin.py','tenant-portal/app.js','tenant-portal/index.html')
+}
+if ($Profile -eq 'Stripe') {
+    $files = @('app.py','baas_handlers.py','db/install.sql','db/migrations/030_stripe_billing.sql',
+        'db/migrations/031_stripe_billing_key_state.sql','ha_export.py','ha_handlers.py','ha_migrate.py',
+        'ha_snapshot.py','migration_config.py','native_routes.py','routes.json','stripe_billing.py',
+        'stripe_overdue_worker.py','tenant-portal/app.js','tenant-portal/index.html')
+    $stageRoot = Join-Path $env:TEMP "xrea-stripe-deploy-$stamp"
+    New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
+    foreach ($file in $files) {
+        $staged = Join-Path $stageRoot $file
+        New-Item -ItemType Directory -Path (Split-Path -Parent $staged) -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $source $file) -Destination $staged -Force
+    }
+    # The active worktree may contain uncommitted Sunabar V4 routes. Deploy
+    # only the synchronized route maps while keeping the Stripe files current.
+    foreach ($file in @('native_routes.py','routes.json')) {
+        $content = & git -C $base show "HEAD:xrea-source/$file"
+        if ($LASTEXITCODE -ne 0) { throw "Could not read committed route map: $file" }
+        [IO.File]::WriteAllText((Join-Path $stageRoot $file), (($content -join "`n") + "`n"), [Text.UTF8Encoding]::new($false))
+    }
+    $source = $stageRoot
 }
 foreach ($file in $files) {
     if (-not (Test-Path -LiteralPath (Join-Path $source $file))) { throw "Missing source: $file" }
@@ -152,6 +173,13 @@ foreach ($destination in $targets) {
             if ([int]$migration.StatusCode -ne 200 -or -not $result.ok -or -not $result.monthly_api_limits) { throw 'API usage limit schema installation failed.' }
             Write-Host "$($destination.Name): additive API usage limit schema installation completed."
         }
+        if ($Profile -eq 'Stripe') {
+            Write-Host "$($destination.Name): installing additive Stripe billing tables."
+            $migration = Invoke-WebRequest -Uri "https://$domain/license/ha/migrate.php" -Method Post -Headers $headers -ContentType 'application/json' -Body '{"scope":"stripe"}' -TimeoutSec 120 -SkipHttpErrorCheck
+            $result = $migration.Content | ConvertFrom-Json
+            if ([int]$migration.StatusCode -ne 200 -or -not $result.ok -or -not $result.stripe_billing) { throw 'Stripe billing schema installation failed.' }
+            Write-Host "$($destination.Name): additive Stripe billing schema installation completed."
+        }
 
         Write-Host "$($destination.Name): capturing post-migration database snapshot."
         $after = Save-PrivateSnapshot $exportUrl $headers (Join-Path $privateRoot ($destination.Name + '-after.dpapi'))
@@ -188,6 +216,21 @@ foreach ($destination in $targets) {
             $asset = Invoke-WebRequest -Uri "https://$domain/license/tenant-portal/app.js?v=20261110-api-limits-1" -TimeoutSec 30
             if (-not ([string]$asset.Content).Contains('api_monthly_limit_reached')) { throw 'Monthly API limit response message is not available.' }
             Write-Host "$($destination.Name): $($uploaded.Count) changed files hash-verified; API usage limit schema and portal are ready."
+            continue
+        }
+        if ($Profile -eq 'Stripe') {
+            foreach ($table in @('stripe_invoice_payments','stripe_webhook_events','stripe_key_reissue_payments','stripe_billing_key_suspensions')) {
+                if ($table -notin $after.Tables) { throw "Stripe table missing from HA snapshot: $table" }
+            }
+            $webhook = Invoke-WebRequest -Uri "https://$domain/license/api/stripe/webhook.php" -TimeoutSec 30 -SkipHttpErrorCheck
+            if ([int]$webhook.StatusCode -ne 405) { throw "Stripe webhook route readiness failed: HTTP $($webhook.StatusCode)" }
+            $portal = Invoke-WebRequest -Uri "https://$domain/license/tenant-portal/" -TimeoutSec 30
+            if (-not ([string]$portal.Content).Contains('20261110-stripe-reauth-1')) { throw 'Stripe tenant portal asset version not updated.' }
+            $asset = Invoke-WebRequest -Uri "https://$domain/license/tenant-portal/app.js?v=20261110-stripe-reauth-1" -TimeoutSec 30
+            if (-not ([string]$asset.Content).Contains('stripe_not_configured')) { throw 'Stripe portal payment flow is not available.' }
+            $stripeKeyConfigured = -not [string]::IsNullOrWhiteSpace([string]$secrets.stripe_secret_key)
+            $stripeWebhookConfigured = -not [string]::IsNullOrWhiteSpace([string]$secrets.stripe_webhook_secret)
+            Write-Host "$($destination.Name): $($uploaded.Count) files verified; Stripe schema/routes ready; API key configured=$stripeKeyConfigured, webhook secret configured=$stripeWebhookConfigured."
             continue
         }
         foreach ($table in @('product_key_v8_jobs','product_key_v8_items')) {
@@ -240,3 +283,10 @@ foreach ($destination in $targets) {
 Write-Host "Code backups: $backupRoot"
 Write-Host "Database snapshots (Windows current-user DPAPI): $privateRoot"
 & (Join-Path $PSScriptRoot '..\Prune-DeployBackups.ps1')
+if ($Profile -eq 'Stripe' -and $stageRoot -and (Test-Path -LiteralPath $stageRoot -PathType Container)) {
+    $resolvedStage = [IO.Path]::GetFullPath($stageRoot)
+    $tempPrefix = [IO.Path]::GetFullPath($env:TEMP).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if ($resolvedStage.StartsWith($tempPrefix, [StringComparison]::OrdinalIgnoreCase) -and (Split-Path -Leaf $resolvedStage) -like 'xrea-stripe-deploy-*') {
+        Remove-Item -LiteralPath $resolvedStage -Recurse -Force
+    } else { Write-Warning "Temporary Stripe staging folder was kept because its path failed validation: $resolvedStage" }
+}

@@ -4,6 +4,21 @@
 
 コードは `xrea-source/stripe_billing.py`、ポータル操作は `/api/baas/v1/tenant-sso.php` の `create_invoice_checkout`、Webhookは `/api/stripe/webhook.php` です。決済状態は `stripe_invoice_payments` と `stripe_webhook_events` に保存し、スキーマ039の47表には含めません。
 
+## APIカタログと操作
+
+OpenAPIカタログ（version 1.20.0）には、契約者SSO操作、請求書一覧、Stripe Webhookを掲載しています。公開カタログは `/api-catalog/index.php?document=openapi.json`、ポータルから呼ぶ契約者SSO APIは `/api/baas/v1/tenant-sso.php` です。
+
+| 操作 | HTTP / action | 認証・要点 |
+| --- | --- | --- |
+| 利用可能な決済方法 | `POST tenant-sso.php` / `billing_methods` | 許可Originと有効なSSOセッションが必要 |
+| 請求書決済を開始 | `POST tenant-sso.php` / `create_invoice_checkout` | `tenant:read` APIキー、SSOセッション、発行済み請求書の `invoice_id` が必要。成功時にHosted Invoice URLを返す |
+| APIキー再発行決済 | `POST tenant-sso.php` / `create_key_reissue_checkout` | APIキーとSSOセッションに加え、`Idempotency-Key` と `confirm_fee_yen: 500` が必要。再発行時はSSO再認証を求める場合がある |
+| 再発行結果を取得 | `POST tenant-sso.php` / `key_reissue_result` | 同一の `request_id` で取得。新しいキーは一度だけ返るため、受信後すぐに安全な保管先へ保存 |
+| 請求書一覧 | `GET /api/baas/v1/invoices.php` | `tenant:read`。任意の `period=YYYY-MM` で月を指定。発行済み・支払済みを最大120件返す |
+| Stripe通知 | `POST /api/stripe/webhook.php` | Stripe専用。生本文と `Stripe-Signature` を検証するため、手動呼び出しや本文の再整形をしない |
+
+`tenant-sso.php` の `Origin` は `https://2415.jp`、`https://backup.2415.jp`、`https://main.2415.jp` のいずれかに限られます。SSOセッションとAPIキーは秘密情報として扱い、ログ・URL・画面共有へ出さないでください。実際のエンドポイント定義とエラー応答はOpenAPIカタログを参照してください。
+
 ## 前提
 
 - Stripeのアカウントとテスト用APIキー（`sk_test_`）、Webhook署名シークレット（`whsec_`）

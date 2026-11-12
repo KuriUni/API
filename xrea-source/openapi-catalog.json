@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "2415.jp API (V8 independent product-key issuance)",
-    "version": "1.19.0",
+    "version": "1.20.0",
     "description": "License API V4にV2セッションからの端末鍵移行を追加。V2/V3との互換性を維持します。"
   },
   "paths": {
@@ -4210,7 +4210,7 @@
     },
     "/api/baas/v1/invoices.php": {
       "get": {
-        "summary": "確定済み・支払済み請求書を取得",
+        "summary": "発行済み請求書とStripe決済状態を取得",
         "tags": [
           "監査・請求"
         ],
@@ -4266,7 +4266,8 @@
             "description": "APIキー認証では必要に応じ指定。管理者セッション認証では対象Tenantと一致させます。"
           }
         ],
-        "operationId": "get_api_baas_v1_invoices_php"
+        "operationId": "get_api_baas_v1_invoices_php",
+        "description": "tenant:read 権限が必要です。period=YYYY-MM を指定すると対象月で絞り込みます。発行済み・支払済み請求書を最大120件返します。Stripe決済情報は決済開始後に含まれ、Hosted Invoice URLは契約者ポータル経由で取得してください。"
       }
     },
     "/ha/release.php": {
@@ -6421,6 +6422,253 @@
           }
         }
       }
+    },
+    "/api/baas/v1/tenant-sso.php": {
+      "post": {
+        "operationId": "post_api_baas_v1_tenant_sso_php",
+        "summary": "契約者SSOセッションと請求書決済を操作",
+        "description": "許可Origin（https://2415.jp、https://backup.2415.jp、https://main.2415.jp）からのみ利用できます。全リクエストでOriginが必要です。SSOセッション操作は X-Tenant-SSO-Session を使用します。請求書決済およびキー再発行操作には tenant:read の X-Tenant-API-Key と有効な X-Tenant-SSO-Session が必要です。秘密のセッション値やAPIキーをログへ記録しないでください。",
+        "tags": [
+          "契約者・請求"
+        ],
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "https://2415.jp",
+                "https://backup.2415.jp",
+                "https://main.2415.jp"
+              ]
+            }
+          },
+          {
+            "name": "X-Tenant-SSO-Session",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "bootstrap後に発行される短期セッション。bootstrap以外のセッション操作で必要。"
+          },
+          {
+            "name": "X-Tenant-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "tenant:readスコープの契約者APIキー。請求書決済・キー再発行操作で必要。"
+          },
+          {
+            "name": "X-BaaS-Environment",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sandbox",
+                "production"
+              ]
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "create_key_reissue_checkoutで必須。再発行要求の一意なリクエストID。"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "action",
+                      "ticket"
+                    ],
+                    "properties": {
+                      "action": {
+                        "const": "bootstrap"
+                      },
+                      "ticket": {
+                        "type": "string",
+                        "description": "一度限りのSSO bootstrap ticket"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "action"
+                    ],
+                    "properties": {
+                      "action": {
+                        "const": "billing_methods"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "action",
+                      "invoice_id"
+                    ],
+                    "properties": {
+                      "action": {
+                        "const": "create_invoice_checkout"
+                      },
+                      "invoice_id": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "action",
+                      "confirm_fee_yen"
+                    ],
+                    "properties": {
+                      "action": {
+                        "const": "create_key_reissue_checkout"
+                      },
+                      "confirm_fee_yen": {
+                        "const": 500
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "action",
+                      "request_id"
+                    ],
+                    "properties": {
+                      "action": {
+                        "const": "key_reissue_result"
+                      },
+                      "request_id": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "action"
+                    ],
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "enum": [
+                          "logout",
+                          "memberships",
+                          "switch_tenant",
+                          "link_tenant"
+                        ]
+                      },
+                      "tenant_id": {
+                        "type": "integer"
+                      },
+                      "select_tenant": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "操作成功。決済作成時は checkout_url と payment_id を返します。key_reissue_result は新しいAPIキーを一度だけ返すため、応答を安全に保管してください."
+          },
+          "400": {
+            "description": "リクエスト形式またはactionが不正です。"
+          },
+          "401": {
+            "description": "SSOセッション、ticket、または認証情報が無効です。"
+          },
+          "403": {
+            "description": "Originまたはテナント権限が拒否されました。"
+          },
+          "409": {
+            "description": "請求書・再発行要求の状態が処理条件を満たしません。"
+          },
+          "428": {
+            "description": "キー再発行にはSSO再認証が必要です。"
+          },
+          "503": {
+            "description": "DBまたは決済サービスが利用できません。"
+          }
+        }
+      }
+    },
+    "/api/stripe/webhook.php": {
+      "post": {
+        "operationId": "post_api_stripe_webhook_php",
+        "summary": "Stripe署名済みWebhookを受信",
+        "description": "Stripeダッシュボードからのサーバー間通知専用です。Stripe-Signatureを生のHTTP本文に対して検証します。APIキーやBearer認証は使用しません。手動実行せず、登録イベントは invoice.paid、invoice.payment_failed、invoice.overdue、checkout.session.completed、checkout.session.expired、payment_intent.payment_failed です。",
+        "tags": [
+          "契約者・請求"
+        ],
+        "security": [],
+        "parameters": [
+          {
+            "name": "Stripe-Signature",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Stripeが送信する署名。"
+          },
+          {
+            "name": "Content-Type",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "application/json"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "Stripe Event。署名検証のため本文は加工せず送信してください。"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "署名検証後にイベントを受理または重複として確認しました。"
+          },
+          "400": {
+            "description": "本文または署名が不正です。"
+          },
+          "503": {
+            "description": "Webhook設定または内部処理が利用できません。"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -6524,6 +6772,10 @@
     },
     {
       "name": "統合サービスAPI"
+    },
+    {
+      "name": "契約者・請求",
+      "description": "契約者SSO、請求書取得、Stripe決済・Webhook"
     }
   ],
   "x-catalog-source": {
