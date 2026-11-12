@@ -56,8 +56,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm -v "${{ github.workspace }}:/repo" zricethezav/gitleaks:v8.24.3 \\
-            detect --source /repo --log-opts="--all" --redact \\
+          docker run --rm -v "${{ github.workspace }}:/repo" zricethezav/gitleaks:v8.24.3 \
+            detect --source /repo --log-opts="--all" --redact \
             --report-format json --report-path /repo/gitleaks-report.json --exit-code=0
           findings="$(jq 'length' gitleaks-report.json)"
           if [ "$findings" -gt 0 ]; then
