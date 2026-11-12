@@ -1,0 +1,2 @@
+# Browser-only dependencies for the admin-center E2E tests.
+websockets==15.0.1
