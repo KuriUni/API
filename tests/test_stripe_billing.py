@@ -195,8 +195,6 @@ class StripeApiTests(unittest.TestCase):
                              'https://2415.jp/license')
 
 
-if __name__ == '__main__':
-    unittest.main()
 
 
 class StripeSecurityRegressionTests(unittest.TestCase):
@@ -535,3 +533,7 @@ class KeyReissuePaymentGateTests(unittest.TestCase):
         self.assertEqual(result, 'ignored')
         self.assertFalse([sql for sql, _ in connection.statements
                           if sql.startswith('INSERT INTO tenant_api_clients')])
+
+
+if __name__ == '__main__':
+    unittest.main()
