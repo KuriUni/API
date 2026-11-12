@@ -176,7 +176,7 @@ def _challenge(connection, workspace, data):
     challenge_id = secrets.token_hex(16)
     nonce = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b'=').decode('ascii')
     with connection.cursor() as cursor:
-        cursor.execute('DELETE FROM sunabar_v4_challenges WHERE expires_at<=%s', (now,))
+        cursor.execute('DELETE FROM sunabar_v4_challenges WHERE workspace_id=%s AND expires_at<=%s', (workspace, now))
         cursor.execute('INSERT INTO sunabar_v4_challenges(challenge_id,workspace_id,purpose,nonce_hash,key_thumbprint,expires_at) VALUES(%s,%s,%s,%s,%s,%s)',
                        (challenge_id, workspace, purpose, _hash(nonce), public_key['thumbprint'], now + 120))
     connection.commit()
@@ -290,13 +290,13 @@ def _activate(connection, workspace, data):
         cursor.execute('SELECT * FROM sunabar_v4_devices WHERE workspace_id=%s AND license_id=%s AND device_hash=%s LIMIT 1 FOR UPDATE',
                        (workspace, str(license_row['license_id']), device_hash))
         device = cursor.fetchone()
-        cursor.execute('SELECT id FROM sunabar_v4_devices WHERE license_id=%s AND key_thumbprint=%s AND device_hash<>%s LIMIT 1',
-                       (str(license_row['license_id']), public_key['thumbprint'], device_hash))
+        cursor.execute('SELECT id FROM sunabar_v4_devices WHERE workspace_id=%s AND license_id=%s AND key_thumbprint=%s AND device_hash<>%s LIMIT 1',
+                       (workspace, str(license_row['license_id']), public_key['thumbprint'], device_hash))
         if cursor.fetchone():
             raise V4Error(409, 'DEVICE_KEY_ALREADY_BOUND', 'This device key is already bound to another device.')
         if device is None:
-            cursor.execute('SELECT COUNT(*) AS count FROM sunabar_v4_devices WHERE license_id=%s AND revoked_at IS NULL',
-                           (str(license_row['license_id']),))
+            cursor.execute('SELECT COUNT(*) AS count FROM sunabar_v4_devices WHERE workspace_id=%s AND license_id=%s AND revoked_at IS NULL',
+                           (workspace, str(license_row['license_id'])))
             if int(cursor.fetchone()['count']) >= int(license_row['max_devices']):
                 raise V4Error(409, 'DEVICE_LIMIT_REACHED', 'This license reached its device limit.')
             cursor.execute('INSERT INTO sunabar_v4_devices(workspace_id,license_id,device_hash,public_key_pem,key_thumbprint,key_algorithm,device_label,app_version,bound_at,last_seen_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
@@ -327,13 +327,42 @@ def _load_session(connection, workspace, token, kind, lock=False):
     if not isinstance(token, str) or len(token) > 200 or not token.startswith(prefix):
         return None
     column = 'refresh_hash' if kind == 'refresh' else 'access_hash'
+    if lock:
+        # 同一Refresh Tokenの要求を接続単位の名前付きロックで直列化してから
+        # セッション行をロックする。InnoDBの副索引・履歴行を同時に取得する
+        # 並行要求がデッドロックするのを防ぐ。ロックは接続終了時に解放される。
+        token_hash = _token_hash(token)
+        lock_name = 'sunabar-v4-refresh:' + token_hash[:40]
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT GET_LOCK(%s, 10) AS acquired', (lock_name,))
+            lock_row = cursor.fetchone()
+            if not lock_row or int(lock_row.get('acquired') or 0) != 1:
+                raise V4Error(503, 'REFRESH_LOCK_UNAVAILABLE',
+                              'The refresh request could not be serialized. Retry the request.')
+            cursor.execute(
+                'SELECT id,workspace_id FROM sunabar_v4_sessions '
+                'WHERE ' + column + '=%s LIMIT 1 FOR UPDATE',
+                (token_hash,))
+            locked = cursor.fetchone()
+        if not locked or str(locked['workspace_id']) != str(workspace):
+            return None
+        session_id = int(locked['id'])
+        with connection.cursor() as cursor:
+            cursor.execute(
+                'SELECT s.*,d.device_hash,d.public_key_pem,d.key_thumbprint,d.key_algorithm,'
+                'd.revoked_at AS device_revoked_at,l.status AS license_status,'
+                'l.expires_at AS license_expires_at '
+                'FROM sunabar_v4_sessions s '
+                'JOIN sunabar_v4_devices d ON d.id=s.device_id '
+                'JOIN sunabar_licenses l ON l.license_id=s.license_id AND l.workspace_id=s.workspace_id '
+                'WHERE s.id=%s AND s.workspace_id=%s LIMIT 1',
+                (session_id, workspace))
+            return cursor.fetchone()
     sql = ('SELECT s.*,d.device_hash,d.public_key_pem,d.key_thumbprint,d.key_algorithm,d.revoked_at AS device_revoked_at,'
            'l.status AS license_status,l.expires_at AS license_expires_at '
            'FROM sunabar_v4_sessions s JOIN sunabar_v4_devices d ON d.id=s.device_id '
            'JOIN sunabar_licenses l ON l.license_id=s.license_id AND l.workspace_id=s.workspace_id '
            'WHERE s.workspace_id=%s AND s.' + column + '=%s LIMIT 1')
-    if lock:
-        sql += ' FOR UPDATE'
     with connection.cursor() as cursor:
         cursor.execute(sql, (workspace, _token_hash(token)))
         return cursor.fetchone()
@@ -356,11 +385,23 @@ def _require_proof(connection, session, action, data, headers, token):
         raise V4Error(401, 'PROOF_SIGNATURE_INVALID', 'The request proof signature is not valid.')
     proof_hash = _hash(session_id + '|' + nonce)
     now = int(time.time())
+    # 同一セッションのProof消費を直列化し、期限切れ行の掃除とINSERTが
+    # 同時に走ってInnoDBのギャップロック競合を起こすことを防ぐ。
+    # 名前付きロックは接続が閉じられるまで保持される。
+    lock_name = 'sunabar-v4-proof:' + hashlib.sha256(session_id.encode('utf-8')).hexdigest()[:40]
     try:
         with connection.cursor() as cursor:
-            cursor.execute('DELETE FROM sunabar_v4_proofs WHERE expires_at<=%s', (now,))
+            cursor.execute('SELECT GET_LOCK(%s, 5) AS acquired', (lock_name,))
+            lock_row = cursor.fetchone()
+            if not lock_row or int(lock_row.get('acquired') or 0) != 1:
+                raise V4Error(503, 'PROOF_LOCK_UNAVAILABLE',
+                              'The request proof could not be serialized. Retry the request.')
+            cursor.execute('DELETE FROM sunabar_v4_proofs WHERE session_id=%s AND expires_at<=%s',
+                           (session_id, now))
             cursor.execute('INSERT INTO sunabar_v4_proofs(proof_hash,session_id,action,expires_at) VALUES(%s,%s,%s,%s)',
                            (proof_hash, session_id, action, now + 120))
+    except V4Error:
+        raise
     except Exception as exc:
         if getattr(exc, 'args', [None])[0] == 1062:
             raise V4Error(401, 'PROOF_REPLAYED', 'This request proof was already used.')
