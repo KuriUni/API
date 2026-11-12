@@ -564,6 +564,52 @@ JS = r'''
     });
   }
 
+  // Selected license CSV export -------------------------------------------
+  function csrfToken() {
+    const match = document.cookie.match(/(?:^|;\s*)tuti_python_migration_admin_csrf=([^;]+)/);
+    return match ? decodeURIComponent(match[1]) : '';
+  }
+  async function exportSelectedLicenses() {
+    const button = byId('export-license-csv');
+    const ids = [...document.querySelectorAll('#license-results .license-pick:checked')].map((item) => item.value);
+    if (!ids.length) { toast('CSV出力するライセンスを選択してください。', 'error'); return; }
+    if (ids.length > 200) { toast('CSV出力は一度に200件までです。', 'error'); return; }
+    if (button) button.disabled = true;
+    try {
+      const response = await fetch('admin_api.php', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() },
+        body: JSON.stringify({ action: 'export_license_csv', license_ids: ids.join(',') })
+      });
+      if (!response.ok) {
+        let message = 'CSVを出力できませんでした。';
+        try {
+          const data = await response.json();
+          message = data.message || data.error || message;
+        } catch (error) { /* non-JSON */ }
+        throw new Error(message);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'tuti-licenses-' + new Date().toISOString().slice(0, 10) + '.csv';
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast(ids.length + '件のライセンスCSVをダウンロードしました。', 'success');
+    } catch (error) {
+      toast(error.message || 'CSVを出力できませんでした。', 'error');
+    } finally {
+      if (typeof window.updateBulkButton === 'function') window.updateBulkButton();
+      else if (button) button.disabled = false;
+    }
+  }
+  const exportButton = byId('export-license-csv');
+  if (exportButton) exportButton.addEventListener('click', exportSelectedLicenses);
+
   // Back to top ------------------------------------------------------------
   const backTop = byId('back-top');
   if (backTop) {

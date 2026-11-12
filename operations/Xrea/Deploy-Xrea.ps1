@@ -27,6 +27,15 @@ if ([string]::IsNullOrWhiteSpace($LocalPath)) {
 }
 $resolvedLocalPath = [System.IO.Path]::GetFullPath($LocalPath)
 if (-not (Test-Path -LiteralPath $resolvedLocalPath -PathType Container)) { throw "Source folder not found: $resolvedLocalPath" }
+try {
+    $dirtyPaths = @(& git -C $resolvedLocalPath status --porcelain -- . 2>$null)
+} catch {
+    $dirtyPaths = @()
+}
+if ($dirtyPaths.Count -gt 0) {
+    Write-Warning "The working tree has $($dirtyPaths.Count) uncommitted path(s); they will be included in this deployment."
+    $dirtyPaths | Select-Object -First 20 | ForEach-Object { Write-Warning "  $_" }
+}
 
 $winScpInstallCandidates = @(
     (Join-Path $env:LOCALAPPDATA 'Programs\WinSCP\WinSCPnet.dll'),
