@@ -75,7 +75,7 @@ def _request_hash(data):
     return v4_crypto.body_hash(data, omit_signature=True)
 
 
-def _issue_challenge(connection, purpose, public_key, ip_hash):
+def _create_challenge(connection, purpose, public_key, ip_hash):
     challenge_id = os.urandom(16).hex()
     nonce = v3_crypto.b64url_encode(os.urandom(32))
     expires = datetime.now(timezone.utc) + timedelta(seconds=120)
@@ -260,7 +260,7 @@ def _issue_challenge(data, remote_addr, rid):
                            ('v4_challenge', 'ip', ip_hash))
             if int(cursor.fetchone()['n']) >= 60:
                 raise domain.V3Error(429, 'RATE_LIMITED', '試行回数が多すぎます。')
-            result = _issue_challenge(connection, purpose, public_key, ip_hash)
+            result = _create_challenge(connection, purpose, public_key, ip_hash)
             cursor.execute('INSERT INTO auth_attempts(ip_hash,action,subject_type,subject_hash,success,error_code,attempted_at) VALUES(%s,%s,%s,%s,1,%s,UTC_TIMESTAMP())',
                            (ip_hash, 'v4_challenge', 'ip', ip_hash, 'ok'))
         connection.commit()

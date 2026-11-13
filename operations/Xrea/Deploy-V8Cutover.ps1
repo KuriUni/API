@@ -23,7 +23,7 @@ if ($Profile -eq 'License') {
     $files = @('http_utils.py','v3_handlers.py','native_v3.py','v2_handlers.py','openapi-catalog.json','api-catalog/openapi.json')
 }
 if ($Profile -eq 'LicenseV4') {
-    $files = @('schema39_storage.py','v4_crypto.py','license_v4_storage.py','v3_handlers.py','native_v4.py','mnsl_app_sso.py','asgi.py',
+    $files = @('schema39_storage.py','v4_crypto.py','license_v4_storage.py','v3_handlers.py','native_v4.py','mnsl_app_sso.py','mobile_admin_auth.py','asgi.py',
         'native_routes.py','routes.json','ha_migrate.py','ha_export.py','ha_snapshot.py',
         'openapi-catalog.json','api-catalog/openapi.json','api/v4/activate.html')
 }
@@ -192,8 +192,16 @@ foreach ($destination in $targets) {
             $v2Body = $v2.Content|ConvertFrom-Json
             if (-not $v2.Headers['X-Request-ID'] -or ([int]$v2.StatusCode -ne 400 -and -not ([int]$v2.StatusCode -eq 503 -and $v2Body.error -eq 'server_not_writable'))) { throw 'V2 authentication protection failed.' }
             $catalog = Invoke-RestMethod -Uri "https://$domain/license/api-catalog/index.php?document=openapi.json" -TimeoutSec 30
-            $expectedCatalogVersion = if ($Profile -eq 'LicenseV4') { '1.19.0' } else { '1.16.0' }
-            if ($catalog.info.version -ne $expectedCatalogVersion) { throw 'License API specification not updated.' }
+            # Compare against the catalog actually being deployed instead of a
+            # hardcoded version, which goes stale as the catalog advances.
+            $catalogSourcePath = Join-Path $source 'api-catalog/openapi.json'
+            $expectedCatalogVersion = if (Test-Path -LiteralPath $catalogSourcePath -PathType Leaf) {
+                ((Get-Content -LiteralPath $catalogSourcePath -Raw -Encoding UTF8) | ConvertFrom-Json).info.version
+            } else { '' }
+            if (-not $expectedCatalogVersion) { throw 'Local License API catalog version is unavailable.' }
+            if ($catalog.info.version -ne $expectedCatalogVersion) {
+                throw "License API specification not updated (served $($catalog.info.version), expected $expectedCatalogVersion)."
+            }
             if ($Profile -eq 'LicenseV4') {
                 $guide = Invoke-WebRequest -Uri "https://$domain/license/api/v4/activate.php" -TimeoutSec 30 -SkipHttpErrorCheck
                 if ([int]$guide.StatusCode -ne 200 -or -not ([string]$guide.Content).Contains('License API v4')) { throw 'V4 developer guide is unavailable.' }
