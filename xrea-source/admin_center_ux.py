@@ -28,7 +28,7 @@ CSS = '''
 .quick-nav a.active small{color:#08796d}
 .quick-nav a:focus-visible,.cmdk-item:focus-visible,.copy-button:focus-visible{outline:2px solid #08796d;outline-offset:2px}
 .list-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0 0}
-.list-tools label{margin:0;white-space:nowrap}
+.license-key-input{flex:1;min-width:260px}.csv-textarea{width:100%;box-sizing:border-box}.list-tools label{margin:0;white-space:nowrap}
 .list-tools input{flex:1 1 240px;min-width:0}
 #license-results{max-height:70vh;overflow:auto;border-radius:4px}
 .license-query{display:grid;grid-template-columns:minmax(220px,2fr) repeat(3,minmax(120px,1fr)) auto;align-items:end;gap:9px;margin:14px 0 0;padding:12px;border:1px solid #dce9e6;border-radius:12px;background:#f7fbfa}
@@ -43,7 +43,7 @@ CSS = '''
 #license-results td button{margin:2px}
 #license-results tbody tr:hover{background:#f8fbfa}
 .copy-button{min-height:30px;margin:4px 0 4px 8px;padding:4px 9px;font-size:12px}
-.toast-region{position:fixed;right:18px;bottom:18px;z-index:1200;display:flex;flex-direction:column;gap:8px;width:min(380px,calc(100vw - 36px));pointer-events:none}
+.copy-fallback{position:fixed;opacity:0;pointer-events:none}.toast-region{position:fixed;right:18px;bottom:18px;z-index:1200;display:flex;flex-direction:column;gap:8px;width:min(380px,calc(100vw - 36px));pointer-events:none}
 .toast{display:flex;align-items:flex-start;gap:10px;padding:11px 12px;border:1px solid #cfe3df;border-left:4px solid #08796d;border-radius:10px;background:#fff;box-shadow:0 10px 30px #17343b24;color:#18353b;font-size:13px;line-height:1.5;pointer-events:auto;animation:toast-in .18s ease-out}
 .toast.error{border-left-color:#b33a46;color:#8d2530}
 .toast.success{border-left-color:#18825c}
@@ -230,8 +230,7 @@ JS = r'''
       const area = document.createElement('textarea');
       area.value = value;
       area.setAttribute('readonly', '');
-      area.style.position = 'fixed';
-      area.style.opacity = '0';
+      area.className = 'copy-fallback';
       document.body.append(area);
       area.select();
       try {

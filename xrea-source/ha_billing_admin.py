@@ -321,17 +321,48 @@ def invoice_admin(request_context):
         if action == 'list':
             stage = 'invoice_list_query'
             tenant = max(0, php_int_cast(data.get('tenant_id')))
-            raw_limit = data.get('limit', 200)
-            limit = max(1, min(500, php_int_cast(200 if raw_limit is None else raw_limit)))
+            page = max(1, php_int_cast(data.get('page', 1)))
+            raw_limit = data.get('limit', 25)
+            limit = max(1, min(100, php_int_cast(25 if raw_limit is None else raw_limit)))
+            offset = (page - 1) * limit
+            query_text = str(data.get('q', '') or '').strip()[:120]
+            status = str(data.get('status', '') or '').strip()
+            where, args = [], []
+            if tenant:
+                where.append('i.account_tenant_id=%s')
+                args.append(tenant)
+            if query_text:
+                where.append('(i.invoice_number LIKE %s OR i.customer_name LIKE %s OR t.slug LIKE %s)')
+                args.extend(['%' + query_text + '%'] * 3)
+            if status in {'draft', 'issued', 'paid', 'void'}:
+                where.append('i.status=%s')
+                args.append(status)
+            where_sql = (' WHERE ' + ' AND '.join(where)) if where else ''
+            base_from = ' FROM api_billing_invoices i JOIN tenants t ON t.id=i.account_tenant_id'
             with connection.cursor() as cursor:
-                sql = 'SELECT i.*,t.slug account_slug FROM api_billing_invoices i JOIN tenants t ON t.id=i.account_tenant_id'
-                if tenant:
-                    sql += ' WHERE i.account_tenant_id=%s'
-                    cursor.execute(sql + ' ORDER BY i.billing_period DESC,i.id DESC LIMIT ' + str(limit), (tenant,))
-                else:
-                    cursor.execute(sql + ' ORDER BY i.billing_period DESC,i.id DESC LIMIT ' + str(limit))
-                rows = [_invoice_row(row) for row in cursor.fetchall()]
-            return json_response('200 OK', {'ok': True, 'invoices': rows})
+                cursor.execute("SELECT COUNT(*) total_count,"
+                               " SUM(CASE WHEN i.status='draft' THEN 1 ELSE 0 END) draft_count,"
+                               " SUM(CASE WHEN i.status='issued' THEN 1 ELSE 0 END) issued_count,"
+                               " SUM(CASE WHEN i.status='paid' THEN 1 ELSE 0 END) paid_count,"
+                               " SUM(CASE WHEN i.status='void' THEN 1 ELSE 0 END) void_count,"
+                               " COALESCE(SUM(CASE WHEN i.status='paid' THEN i.total_units ELSE 0 END),0) paid_units"
+                               + base_from + where_sql, tuple(args))
+                summary_row = cursor.fetchone() or {}
+                sql = 'SELECT i.*,t.slug account_slug' + base_from + where_sql + ' ORDER BY i.billing_period DESC,i.id DESC LIMIT %s OFFSET %s'
+                cursor.execute(sql, tuple(args) + (limit + 1, offset))
+                all_rows = cursor.fetchall()
+            has_next = len(all_rows) > limit
+            rows = [_invoice_row(row) for row in all_rows[:limit]]
+            summary = {
+                'total': int(summary_row.get('total_count') or 0),
+                'draft': int(summary_row.get('draft_count') or 0),
+                'issued': int(summary_row.get('issued_count') or 0),
+                'paid': int(summary_row.get('paid_count') or 0),
+                'void': int(summary_row.get('void_count') or 0),
+                'paid_total_yen': credit(int(summary_row.get('paid_units') or 0)),
+            }
+            return json_response('200 OK', {'ok': True, 'invoices': rows, 'page': page, 'limit': limit,
+                                             'has_next': has_next, 'summary': summary})
         if action == 'get':
             stage = 'invoice_get'
             return json_response('200 OK', {'ok': True, 'invoice': _get_invoice(connection, php_int_cast(data.get('invoice_id')))})

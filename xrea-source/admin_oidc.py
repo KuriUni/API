@@ -566,7 +566,7 @@ def callback(request_context):
             session_cookie = SESSION_COOKIE + '=' + local_token + site_url('; Path=/license/python-migration/; Max-Age=') + str(max(1, expires - int(time.time()))) + '; Secure; HttpOnly; SameSite=Lax'
             csrf_cookie = CSRF_COOKIE + '=' + csrf + site_url('; Path=/license/python-migration/; Max-Age=') + str(max(1, expires - int(time.time()))) + '; Secure; SameSite=Lax'
             return _redirect(destination, headers=[*clear_headers, ('Set-Cookie', session_cookie), ('Set-Cookie', csrf_cookie), ('Referrer-Policy', 'no-referrer')])
-        destination = 'ops-app/' if target == 'admin' and flow.get('return_app') == 'ops' else 'admin_api.php'
+        destination = 'admin_api.php'
         cookie_path = site_url('/license/python-migration/')
         cookie_max_age = str(max(1, expires - int(time.time())))
         reset = _clear_admin_cookie_paths((SESSION_COOKIE, CSRF_COOKIE))
