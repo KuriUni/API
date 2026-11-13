@@ -21,9 +21,9 @@ import baas_handlers
 import web_passkey_auth
 
 
-def _render_admin_page():
+def _render_admin_page(role="security-admin"):
     with mock.patch.object(baas_handlers, "_decode_admin_session", lambda token: {"sub": "ui-test", "reauthenticated_at": 0}), \
-            mock.patch.object(admin_api_handlers, "_effective_admin_role", lambda claims: "security-admin"):
+            mock.patch.object(admin_api_handlers, "_effective_admin_role", lambda claims: role):
         context = {
             "method": "GET",
             "query": "",
@@ -69,6 +69,14 @@ class AdminCenterStaticTests(unittest.TestCase):
         identifiers = __import__("re").findall(r'id="([^"]+)"', page)
         self.assertEqual(len(identifiers), len(set(identifiers)))
 
+    def test_permission_gated_sections_are_hidden(self):
+        operator = _render_admin_page("operator")
+        self.assertIn('id="tenant-management" hidden', operator)
+        self.assertNotIn("view=api-invoices", operator.split("quick-nav", 1)[-1].split("</nav>", 1)[0])
+        viewer = _render_admin_page("viewer")
+        self.assertIn('id="tenant-management" hidden', viewer)
+        self.assertIn('id="license-issuance" hidden', viewer)
+
     def test_invoice_page_contract(self):
         with mock.patch.object(admin_api_handlers, "_effective_admin_role", lambda claims: "security-admin"):
             context = {
@@ -83,7 +91,7 @@ class AdminCenterStaticTests(unittest.TestCase):
         self.assertIn("発行済み", page)
 
     def test_workbench_page_contract(self):
-        with mock.patch.object(admin_api_handlers, "_effective_admin_role", lambda claims: "security-admin"),                 mock.patch.object(web_passkey_auth, "_encode_token", lambda claims: "test-token"):
+        with mock.patch.object(admin_api_handlers, "_effective_admin_role", lambda claims: "security-admin"),                 mock.patch.object(web_passkey_auth, "_encode_token", lambda claims: "test-token"),                 mock.patch.dict(os.environ, {"PYTHON_MIGRATION_URL_PREFIX": "/license"}):
             context = {
                 "method": "GET", "query": "view=reception", "header:host": "2415.jp",
                 "header:cookie": "tuti_python_migration_admin_session=test; tuti_python_migration_admin_csrf=test-csrf",
@@ -94,6 +102,8 @@ class AdminCenterStaticTests(unittest.TestCase):
         self.assertIn('id="copy-result"', page)
         self.assertIn('id="request-history"', page)
         self.assertIn("JSONを保存", page)
+        self.assertIn('name="api-base" content="/license"', page)
+        self.assertNotIn("'/license/python-migration/api/baas/v1/service.php'", page)
 
     def test_ops_app_is_redirected_to_admin_center(self):
         page = (ROOT / "xrea-source" / "ops-app" / "index.html").read_text(encoding="utf-8")
@@ -104,9 +114,9 @@ class AdminCenterStaticTests(unittest.TestCase):
 @unittest.skipUnless(_browser_path(), "A Chromium/Edge browser is required for the UI E2E test.")
 class AdminCenterBrowserTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.page_path = pathlib.Path(self.temp.name) / "admin_center.html"
+        self.temp_path = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(self.temp_path, ignore_errors=True))
+        self.page_path = self.temp_path / "admin_center.html"
         self.page_path.write_text(_render_admin_page(), encoding="utf-8")
         port_socket = socket.socket()
         port_socket.bind(("127.0.0.1", 0))
@@ -116,7 +126,7 @@ class AdminCenterBrowserTests(unittest.TestCase):
             [
                 _browser_path(), "--headless=new", "--disable-gpu", "--no-sandbox",
                 f"--remote-debugging-port={self.port}",
-                f"--user-data-dir={pathlib.Path(self.temp.name) / 'profile'}",
+                f"--user-data-dir={self.temp_path / 'profile'}",
                 "--window-size=1200,900",
                 self.page_path.as_uri(),
             ],

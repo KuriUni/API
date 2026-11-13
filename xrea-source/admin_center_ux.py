@@ -348,7 +348,7 @@ JS = r'''
     { label: 'APIクライアント一覧を表示', detail: 'テナント管理', keys: 'api key client apiキー', section: 'tenant-management', button: 'load-tenant-keys' },
     { label: '管理者一覧を取得', detail: '管理者設定', keys: 'admin principal 管理者', section: 'admin-principal-management', button: 'load-admin-principals' },
     { label: '共通IDの所属を確認', detail: '共通ID・所属', keys: 'sso membership 所属', section: 'common-id-management', button: 'load-common-id-memberships' },
-    { label: 'API請求書を開く', detail: '請求書管理', keys: 'invoice billing 請求', href: 'admin_api.php?view=api-invoices' },
+    { label: 'API請求書を開く', detail: '請求書管理', keys: 'invoice billing 請求', section: 'api-invoices-link', href: 'admin_api.php?view=api-invoices' },
     { label: '管理者向けヘルプを開く', detail: '操作手順と困ったとき', keys: 'help ヘルプ', href: 'admin_api.php?view=help' }
   ];
   const cmdk = byId('cmdk');
