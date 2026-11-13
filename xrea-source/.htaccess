@@ -135,8 +135,8 @@ ErrorDocument 504 /license/error.php
     Header always set Strict-Transport-Security "max-age=31536000"
     Header always set X-Content-Type-Options "nosniff"
     Header always set X-Frame-Options "DENY"
-    Header always set Content-Security-Policy "base-uri 'self'; object-src 'none'; frame-ancestors 'none'"
-    Header always set Referrer-Policy "same-origin"
+    Header setifempty Content-Security-Policy "base-uri 'self'; object-src 'none'; frame-ancestors 'none'"
+    Header setifempty Referrer-Policy "same-origin"
     Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(self)"
 </IfModule>
 
