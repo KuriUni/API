@@ -1,3 +1,4 @@
+import inspect
 import json
 import os
 import pathlib
@@ -136,7 +137,10 @@ class AdminCenterBrowserTests(unittest.TestCase):
         self.addCleanup(self._stop_browser)
         self.target = self._wait_for_target()
         from websockets.sync.client import connect
-        self.websocket = connect(self.target["webSocketDebuggerUrl"])
+        # websockets 15 uses connect() directly; newer releases offer legacy=True
+        # to avoid the context-manager deprecation warning.
+        kwargs = {"legacy": True} if "legacy" in inspect.signature(connect).parameters else {}
+        self.websocket = connect(self.target["webSocketDebuggerUrl"], **kwargs)
         self.addCleanup(self.websocket.close)
         self.counter = 0
         self.errors = []
