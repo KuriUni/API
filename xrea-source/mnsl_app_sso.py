@@ -473,7 +473,11 @@ def handle(context):
             _provider(identity)
             if method == 'POST':
                 body = _body(context)
-                if context.get('header:origin') != 'https://'+host or not hmac.compare_digest(str(body.get('csrf') or ''), row['csrf']):
+                from mobile_admin_auth import _origin_header_check
+                mismatched, observed_origin, observed_referer = _origin_header_check(context)
+                if mismatched:
+                    raise FlowError(403, 'origin_rejected:' + (observed_origin or '-') + '|' + (observed_referer or '-') + '|' + host)
+                if not hmac.compare_digest(str(body.get('csrf') or ''), row['csrf']):
                     raise FlowError(403, 'csrf_rejected')
                 token = _b64(secrets.token_bytes(32))
                 with _store() as rows:

@@ -110,10 +110,44 @@ def _resume_sso(token):
         _write_store(path, store)
     return ({'credential_id_hash': credential_hash, 'role': role, 'expires': expires}, issue_principal_token(credential_hash, 'admin_mobile', 300))
 
+def _origin_header_check(request_context):
+    """Classify the Origin/Referer headers for CSRF defense.
+
+    Origin takes precedence when present; otherwise Referer is used. A header
+    that is absent is acceptable (Referrer-Policy: no-referrer, same-origin
+    form POST on Firefox). Returns (mismatched, origin, referer).
+    """
+    from urllib.parse import urlsplit
+    host = _host(request_context).lower()
+    origin = str(request_context.get('header:origin', '') or '').strip()
+    referer = str(request_context.get('header:referer', '') or '').strip()
+    picked = origin or referer
+    if not picked:
+        return (False, origin, referer)
+    try:
+        parts = urlsplit(picked)
+    except Exception:
+        return (True, origin, referer)
+    def _bare(value):
+        value = (value or '').lower()
+        for suffix in (':443', ':80'):
+            if value.endswith(suffix):
+                return value[:-len(suffix)]
+        return value
+    if parts.scheme != 'https' or _bare(parts.netloc) != _bare(host):
+        return (True, origin, referer)
+    return (False, origin, referer)
+
+def _origin_present_and_mismatched(request_context):
+    return _origin_header_check(request_context)[0]
+
+def _origin_matches_host(request_context):
+    return not _origin_present_and_mismatched(request_context)
+
 @legacy_compatible(callback_index=None, request_index=0)
 def _csrf_valid(request_context, csrf):
     cookies = _cookies(request_context)
-    return request_context.get('header:origin', '') == 'https://' + _host(request_context) and bool(cookies.get(CSRF_COOKIE)) and hmac.compare_digest(str(cookies[CSRF_COOKIE]), str(csrf or ''))
+    return _origin_matches_host(request_context) and bool(cookies.get(CSRF_COOKIE)) and hmac.compare_digest(str(cookies[CSRF_COOKIE]), str(csrf or ''))
 
 def _session_token(claims):
     """Sign the browser session for PHP's 30-minute idle window.
