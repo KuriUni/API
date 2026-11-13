@@ -7,8 +7,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 HELP_PATH = ROOT / "TUTI-Help.html"
-UPDATED = "2026-11-11"
-GENERATED_AT = "2026-11-11"
+UPDATED = "2026-11-14"
+GENERATED_AT = "2026-11-14"
 
 ARTICLES = [
     ("docs/OIDC-DISCOVERY.md", "BaaS-Contractor", "authentication"),
@@ -22,6 +22,7 @@ ARTICLES = [
     ("docs/MNSL-SSO-ISSUE-HELP.md", "MyNumberSmartLogin", "operations"),
     ("docs/BILLING-STRIPE-SANDBOX.md", "BaaS-Operator", "billing"),
     ("docs/SSO-SECURITY-HARDENING.md", "sso-service", "security"),
+    ("docs/ADMIN-CENTER.md", "BaaS-Operator", "operations"),
 ]
 
 
