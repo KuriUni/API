@@ -14,24 +14,22 @@
 
 ## 起動方法
 
-既存の `business-ops/.venv` を使う場合:
+`customer-crm/.venv` を使います。Python 3.13 で作成済みです。
 
 ```powershell
-cd C:\Users\t\Documents\API\customer-crm
-..\business-ops\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8766
+cd "$env:USERPROFILE\Documents\API\customer-crm"
+.\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8766
 ```
 
-専用の仮想環境を作る場合:
+仮想環境を作り直す場合:
 
 ```powershell
-cd C:\Users\t\Documents\API\customer-crm
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-py -m uvicorn main:app --host 127.0.0.1 --port 8766
+cd "$env:USERPROFILE\Documents\API\customer-crm"
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-`Start-CustomerCrm.ps1` を使うと、ローカルデモ用の環境変数を設定して起動できます。
+`Start-CustomerCrm.ps1` を使うと、ローカルデモ用の環境変数を設定して起動できます（`.venv` が無い場合は `business-ops/.venv` も探します）。
 
 ```powershell
 .\Start-CustomerCrm.ps1
@@ -103,9 +101,10 @@ py -m uvicorn main:app --host 127.0.0.1 --port 8766
 ## テスト
 
 ```powershell
-cd C:\Users\t\Documents\API
-$env:PYTHONPATH='tools\vendor\pymysql-1.2.3-py3-none-any.whl'
-business-ops\.venv\Scripts\python.exe -m unittest tests.test_customer_crm -v
+cd "$env:USERPROFILE\Documents\API"
+customer-crm\.venv\Scripts\python.exe -m unittest tests.test_customer_crm -v
 ```
+
+外部依存を追加しないため、`PYTHONPATH` の設定は不要です。
 
 画面のE2Eは、ヘッドレスEdge/Chromeが利用できる環境で手動またはCDPスクリプトから確認できます。

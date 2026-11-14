@@ -30,14 +30,14 @@ https://2415.jp/license/admin_api.php?admin_sso_start=1&return_app=desktop
 Rust 1.88以降とWindows MSVC Build Toolsを用意します。PowerShellから次を実行してください。
 
 ```powershell
-cd C:\Users\t\Documents\API\XreaOperationsDesktop
+cd "$env:USERPROFILE\Documents\API\XreaOperationsDesktop"
 .\Build-Rust.ps1
 ```
 
 実行ファイルは`rust\target\x86_64-pc-windows-msvc\release\TutiOperations.exe`に出力されます。画面表示にはWindowsの`yumin.ttf`日本語フォントを使います（アプリには同梱しません）。依存関係のコンパイル確認だけを行う場合は次を使います。
 
 ```powershell
-cd C:\Users\t\Documents\API\XreaOperationsDesktop\rust
+cd "$env:USERPROFILE\Documents\API\XreaOperationsDesktop\rust"
 cargo check
 ```
 

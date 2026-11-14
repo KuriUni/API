@@ -7,7 +7,7 @@ Windows向けの管理者用PCアプリです。Rust版を現在の開発ベー�
 Rust 1.88以降とWindowsのC++ Build Tools（MSVC）を用意し、PowerShellから次を実行します。
 
 ```powershell
-cd C:\Users\t\Documents\API\XreaOperationsDesktop\rust
+cd "$env:USERPROFILE\Documents\API\XreaOperationsDesktop\rust"
 cargo run --release --target x86_64-pc-windows-msvc
 ```
 
