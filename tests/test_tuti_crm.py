@@ -1,4 +1,4 @@
-"""Tests for the TUTI-specialised CRM (customers = TUTI tenants)."""
+"""Tests for the administrator TUTI CRM (admin SSO + admin APIs)."""
 import http.server
 import json
 import os
@@ -8,49 +8,92 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.error
 import urllib.parse
+import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 _DATA_OWNER = "main" not in sys.modules
-_TEMP_DATA = tempfile.mkdtemp(prefix="tuti-crm-test-")
+_TEMP_DATA = tempfile.mkdtemp(prefix="tuti-admin-test-")
 os.environ["CRM_DATA"] = _TEMP_DATA
 os.environ["CRM_SECRET"] = "unit-test-secret"
 os.environ["CRM_PASSWORD"] = "test-password"
 os.environ["CRM_SESSION_KEY"] = "test-session-key-" + "x" * 40
 os.environ["CRM_SECURE_COOKIES"] = "0"
+os.environ.pop("TUTI_ADMIN_SESSION", None)
 sys.path.insert(0, str(ROOT / "customer-crm"))
 
+import admin_api  # noqa: E402
+import admin_sso  # noqa: E402
 import main  # noqa: E402
 import secrets_store  # noqa: E402
-import tuti_api  # noqa: E402
 
 DATA = str(main.DATA_DIR)
-KEY = "baas_sandbox_" + "k" * 40
+TOKEN = "test-admin-session-token-" + "t" * 40
+
+TENANTS = [
+    {"id": 12, "name": "みなと商事", "slug": "minato", "status": "active", "environment": "production", "plan_code": "pro"},
+    {"id": 13, "name": "北陸システム", "slug": "kita", "status": "active", "environment": "production", "plan_code": "basic"},
+]
 
 LICENSES = [
-    {"id": 11, "product_id": 3, "product_code": "TUTI-DESK", "environment": "production", "label": "本社 5台",
-     "active": 1, "max_devices": 5, "expires_at": "2027-03-31", "created_at": "2026-04-02"},
-    {"id": 12, "product_id": 4, "product_code": "TUTI-MOBILE", "environment": "sandbox", "label": "評価用",
-     "active": 0, "max_devices": 1, "expires_at": None, "created_at": "2026-05-01"},
+    {"id": 1041, "tenant_id": 12, "label": "本社 5台", "active": True, "max_devices": 5, "active_sessions": 3,
+     "expires_at": "2099-03-31 00:00:00", "revoked_at": None, "created_at": "2026-04-02 09:12:00"},
+    {"id": 1042, "tenant_id": 12, "label": "大阪支社", "active": False, "max_devices": 3, "active_sessions": 0,
+     "expires_at": None, "revoked_at": None, "created_at": "2026-05-18 14:40:00"},
+    {"id": 2051, "tenant_id": 13, "label": "全社 20台", "active": True, "max_devices": 20, "active_sessions": 18,
+     "expires_at": "2020-01-01 00:00:00", "revoked_at": None, "created_at": "2025-09-10 00:00:00"},
+]
+
+INVOICES = [
+    {"id": 88, "account_tenant_id": 12, "invoice_number": "INV-2026-0011", "billing_period": "2026-11",
+     "customer_name": "みなと商事", "status": "issued", "total_yen": 24800, "issue_date": "2026-11-01",
+     "due_date": "2026-11-30"},
+    {"id": 91, "account_tenant_id": 13, "invoice_number": "INV-2026-0014", "billing_period": "2026-11",
+     "customer_name": "北陸システム", "status": "paid", "total_yen": 9800, "issue_date": "2026-11-01",
+     "due_date": "2026-11-30"},
 ]
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
     requests: list = []
-    failures: dict = {}
-    payloads: dict = {}
+    unauthorized = False
 
-    def do_GET(self):  # noqa: N802
-        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-        service = (query.get("service") or [""])[0]
-        type(self).requests.append({"service": service, "key": self.headers.get("X-Tenant-API-Key", "")})
-        if service in type(self).failures:
-            status, body = type(self).failures[service]
-            raw = json.dumps(body).encode()
-            self.send_response(status)
-        else:
-            raw = json.dumps(type(self).payloads.get(service, {"ok": True})).encode()
-            self.send_response(200)
+    def do_POST(self):  # noqa: N802
+        length = int(self.headers.get("Content-Length", "0"))
+        payload = json.loads(self.rfile.read(length) or b"{}")
+        type(self).requests.append({"path": self.path, "payload": payload,
+                                    "token": self.headers.get("X-HA-Session", "")})
+        if type(self).unauthorized:
+            body = {"success": False, "error": "invalid_admin_session", "message": "セッションが無効です"}
+            self._send(401, body)
+            return
+        action = payload.get("action")
+        if self.path.endswith("admin_api.php"):
+            if action == "list_tenants":
+                self._send(200, {"success": True, "tenants": TENANTS, "page": 1, "limit": 100, "has_next": False})
+            elif action == "list_licenses":
+                self._send(200, {"success": True, "licenses": LICENSES, "page": 1, "limit": 100, "has_next": False})
+            else:
+                self._send(400, {"success": False, "error": "unknown_action"})
+            return
+        if self.path.endswith("api-billing-admin.php"):
+            if action in ("list", None):
+                self._send(200, {"ok": True, "invoices": INVOICES, "page": 1, "limit": 100, "has_next": False,
+                                 "summary": {"total": 2, "draft": 0, "issued": 1, "paid": 1, "void": 0,
+                                             "paid_total_yen": "9800.000"}})
+            elif action == "tenants":
+                self._send(200, {"ok": True, "tenants": TENANTS})
+            elif action == "get":
+                self._send(200, {"ok": True, "invoice": INVOICES[0]})
+            else:
+                self._send(400, {"ok": False, "error": "unknown_action"})
+            return
+        self._send(404, {"ok": False, "error": "not_found"})
+
+    def _send(self, status, body):
+        raw = json.dumps(body).encode()
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
@@ -58,22 +101,6 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, *args):
         pass
-
-
-def default_payloads():
-    return {
-        "service.status": {"ok": True, "tenant": {"slug": "sample"}, "usage": {"products": 2, "licenses": 2, "active_licenses": 1}},
-        "products.list": {"ok": True, "products": [{"id": 3, "code": "TUTI-DESK", "name": "Desktop"}]},
-        "licenses.list": {"ok": True, "licenses": LICENSES},
-        "usage.summary": {"ok": True, "period": "2026-11", "total_requests": 100, "billable_requests": 90,
-                          "total_charge_yen_equivalent": "1234.500",
-                          "details": [{"api": "licenses.list", "requests": 10, "unit_credit": "0.001", "charge_credit": "0.010"}]},
-        "billing.invoices": {"ok": True, "invoices": [
-            {"id": 5, "invoice_number": "INV-1", "billing_period": "2026-11", "total_yen": 24800,
-             "status": "issued", "issue_date": "2026-11-01", "due_date": "2026-11-30"}]},
-        "audit.list": {"ok": True, "events": [
-            {"id": 9, "operation": "licenses.list", "status_code": 200, "request_id": "r-9", "used_at": "2026-11-14 08:00:00"}]},
-    }
 
 
 class _Request:
@@ -85,45 +112,40 @@ class _Request:
         self.client = type("Client", (), {"host": "127.0.0.1"})()
 
 
+class BaseUrlTests(unittest.TestCase):
+    def test_admin_base_requires_https(self):
+        self.assertEqual(admin_api.base_url("https://2415.jp/"), "https://2415.jp")
+        with self.assertRaises(ValueError):
+            admin_api.base_url("http://2415.jp")
+        with self.assertRaises(ValueError):
+            admin_api.base_url("https://user:pass@2415.jp")
+
+    def test_sso_url_matches_desktop_flow(self):
+        url = admin_api.sso_url("https://2415.jp", "http://127.0.0.1:51000/callback", "a" * 64)
+        self.assertIn("admin_sso_start=1", url)
+        self.assertIn("return_app=desktop", url)
+        self.assertIn("desktop_redirect=http%3A%2F%2F127.0.0.1%3A51000%2Fcallback", url)
+        self.assertIn("desktop_state=" + "a" * 64, url)
+        with self.assertRaises(ValueError):
+            admin_api.sso_url("https://2415.jp", "http://evil.example/callback", "a" * 64)
+
+
 class SecretStoreTests(unittest.TestCase):
-    def test_round_trip_and_wrong_key(self):
+    def test_token_round_trip(self):
         key = secrets_store.load_data_key(pathlib.Path(DATA))
-        blob = secrets_store.encrypt(key, KEY)
-        self.assertNotIn(KEY, blob)
-        self.assertEqual(secrets_store.decrypt(key, blob), KEY)
+        blob = secrets_store.encrypt(key, TOKEN)
+        self.assertNotIn(TOKEN, blob)
+        self.assertEqual(secrets_store.decrypt(key, blob), TOKEN)
         with self.assertRaises(secrets_store.SecretError):
             secrets_store.decrypt(b"\x00" * 32, blob)
 
-    def test_key_hint_is_partial(self):
-        hint = secrets_store.key_hint(KEY)
-        self.assertTrue(hint.startswith("baas_sandb"))
-        self.assertTrue(hint.endswith(KEY[-4:]))
-        self.assertNotIn(KEY, hint)
 
-
-class BaseUrlTests(unittest.TestCase):
-    def test_https_is_default(self):
-        self.assertEqual(tuti_api.normalize_base_url(""), tuti_api.DEFAULT_BASE)
-        self.assertEqual(tuti_api.normalize_base_url("https://example.jp/"), "https://example.jp")
-
-    def test_loopback_http_is_allowed(self):
-        self.assertEqual(tuti_api.normalize_base_url("http://127.0.0.1:8799"), "http://127.0.0.1:8799")
-
-    def test_remote_http_and_credentials_are_rejected(self):
-        with self.assertRaises(ValueError):
-            tuti_api.normalize_base_url("http://example.jp")
-        with self.assertRaises(ValueError):
-            tuti_api.normalize_base_url("https://user:pass@example.jp")
-        with self.assertRaises(ValueError):
-            tuti_api.normalize_base_url("ftp://example.jp")
-
-
-class CrmApiTests(unittest.TestCase):
+class AdminSyncTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
-        cls.base = f"http://127.0.0.1:{cls.server.server_port}"
+        cls.base = f"https://2415.jp"
         main.initialize()
 
     @classmethod
@@ -135,109 +157,92 @@ class CrmApiTests(unittest.TestCase):
 
     def setUp(self):
         _Handler.requests = []
-        _Handler.failures = {}
-        _Handler.payloads = default_payloads()
-        os.environ["CRM_SECRET"] = "unit-test-secret"
+        _Handler.unauthorized = False
+        os.environ["TUTI_ADMIN_SESSION"] = TOKEN
+        os.environ["TUTI_ADMIN_BASE"] = "https://2415.jp"
         with main.closing(main.connect()) as db:
-            db.execute("DELETE FROM customers")
-            db.execute("DELETE FROM customer_cache")
+            for table in ("tenants", "licenses", "invoices", "sync_state", "admin_auth"):
+                db.execute(f"DELETE FROM {table}")
             db.commit()
+        original = admin_api._post
+        self.addCleanup(setattr, admin_api, "_post", original)
 
-    def _create(self, name="サンプル商事", **overrides):
-        payload = main.CustomerIn(name=name, base_url=self.base, api_key=KEY, **overrides)
-        return main.create_customer(payload, _Request())
+        def fake_post(base, path, token, payload):
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{self.server.server_port}{path}",
+                data=json.dumps(payload).encode(), method="POST",
+                headers={"Content-Type": "application/json", "X-HA-Session": token})
+            try:
+                with urllib.request.urlopen(request) as response:
+                    return json.loads(response.read().decode())
+            except urllib.error.HTTPError as error:
+                raise admin_api._error_for_http(error, str(payload.get("action") or "")) from error
+        admin_api._post = fake_post
 
-    def test_create_encrypts_key_and_hides_it(self):
-        created = self._create()
-        self.assertNotIn("api_key", created)
-        self.assertNotIn(KEY, json.dumps(created))
-        self.assertTrue(created["key_hint"].endswith(KEY[-4:]))
-        with main.closing(main.connect()) as db:
-            stored = db.execute("SELECT api_key_enc FROM customers WHERE id=?", (created["id"],)).fetchone()[0]
-        self.assertTrue(stored.startswith("v1:"))
-        self.assertNotIn(KEY, stored)
-        self.assertEqual(secrets_store.decrypt(main.data_key(), stored), KEY)
+    def tearDown(self):
+        os.environ.pop("TUTI_ADMIN_SESSION", None)
+        os.environ.pop("TUTI_ADMIN_BASE", None)
 
-    def test_duplicate_name_and_bad_key_are_rejected(self):
-        self._create()
-        with self.assertRaises(main.HTTPException) as ctx:
-            self._create()
-        self.assertEqual(ctx.exception.status_code, 400)
-        with self.assertRaises(ValueError):
-            main.CustomerIn(name="x", api_key="not-a-key")
-
-    def test_sync_fills_cache_and_dashboard(self):
-        created = self._create()
-        result = main.sync_customer(created["id"], _Request())
+    def test_sync_uses_admin_session_and_billing_api(self):
+        result = main.sync(_Request())
         self.assertTrue(result["ok"], result)
-        services = sorted(call["service"] for call in _Handler.requests)
-        self.assertEqual(services, sorted([
-            "service.status", "products.list", "licenses.list",
-            "usage.summary", "billing.invoices", "audit.list"]))
-        self.assertTrue(all(call["key"] == KEY for call in _Handler.requests))
+        self.assertEqual(result["counts"], {"tenants": 2, "licenses": 3, "invoices": 2})
+        paths = [call["path"] for call in _Handler.requests]
+        self.assertEqual(paths.count("/license/admin_api.php"), 2)
+        self.assertEqual(paths.count("/license/ha/api-billing-admin.php"), 1)
+        self.assertTrue(all(call["token"] == TOKEN for call in _Handler.requests))
+        actions = [call["payload"].get("action") for call in _Handler.requests]
+        self.assertIn("list_tenants", actions)
+        self.assertIn("list_licenses", actions)
+        self.assertIn("list", actions)
 
-        dashboard = main.dashboard(_Request())
-        self.assertEqual(dashboard["kpis"]["customers"], 1)
-        self.assertEqual(dashboard["kpis"]["licenses"], 2)
-        self.assertEqual(dashboard["kpis"]["active_licenses"], 1)
-        self.assertEqual(dashboard["kpis"]["unpaid_count"], 1)
-        self.assertEqual(dashboard["kpis"]["month_charge"], 1234.5)
-        self.assertEqual(dashboard["events"][0]["operation"], "licenses.list")
-        self.assertEqual(dashboard["events"][0]["customer_name"], "サンプル商事")
+    def test_license_states_are_derived(self):
+        main.sync(_Request())
+        with main.closing(main.connect()) as db:
+            states = {row[0]: row[1] for row in db.execute("SELECT license_id, state FROM licenses").fetchall()}
+        self.assertEqual(states[1041], "active")
+        self.assertEqual(states[1042], "paused")
+        self.assertEqual(states[2051], "expired")
 
-        detail = main.get_customer(created["id"], _Request())
-        self.assertEqual(detail["usage"]["total_requests"], 100)
+    def test_dashboard_and_tenant_rollups(self):
+        main.sync(_Request())
+        data = main.dashboard(_Request())
+        self.assertEqual(data["kpis"]["tenants"], 2)
+        self.assertEqual(data["kpis"]["licenses"], 3)
+        self.assertEqual(data["kpis"]["active_licenses"], 1)
+        self.assertEqual(data["kpis"]["expired_licenses"], 1)
+        self.assertEqual(data["kpis"]["unpaid_count"], 1)
+        self.assertEqual(data["kpis"]["unpaid_amount"], 24800)
+        detail = main.tenant_detail(12, _Request())
+        self.assertEqual(detail["tenant"]["name"], "みなと商事")
+        self.assertEqual(detail["summary"]["licenses"], 2)
         self.assertEqual(len(detail["invoices"]), 1)
 
-    def test_sync_keeps_previous_data_on_failure(self):
-        created = self._create()
-        main.sync_customer(created["id"], _Request())
-        _Handler.failures = {"licenses.list": (401, {"ok": False, "error": "invalid_api_key"})}
-        result = main.sync_customer(created["id"], _Request())
+    def test_filters_and_pagination(self):
+        main.sync(_Request())
+        self.assertEqual(len(main.licenses(_Request())["items"]), 3)
+        self.assertEqual([row["license_id"] for row in main.licenses(_Request(), state="paused")["items"]], [1042])
+        self.assertEqual(len(main.licenses(_Request(), tenant_id=13)["items"]), 1)
+        self.assertEqual([row["license_id"] for row in main.licenses(_Request(), q="大阪")["items"]], [1042])
+        issued = main.invoices(_Request(), status="issued")["items"]
+        self.assertEqual([row["invoice_number"] for row in issued], ["INV-2026-0011"])
+        first = main.invoices(_Request(), limit=1)["items"]
+        self.assertEqual(len(first), 1)
+        self.assertEqual(main.invoices(_Request(), limit=1)["total"], 2)
+
+    def test_expired_admin_session_is_reported(self):
+        _Handler.unauthorized = True
+        result = main.sync(_Request())
         self.assertFalse(result["ok"])
-        self.assertEqual(result["results"]["licenses"]["code"], "invalid_api_key")
-        detail = main.get_customer(created["id"], _Request())
-        self.assertEqual(len(detail["licenses"]), 2)
-        self.assertIn("APIキー", detail["scopes"]["licenses"]["error"])
-        self.assertLessEqual(len(detail["scopes"]), len(tuti_api.SCOPES))
-
-    def test_license_and_invoice_filters(self):
-        created = self._create()
-        main.sync_customer(created["id"], _Request())
-        all_rows = main.licenses(_Request())["items"]
-        self.assertEqual(len(all_rows), 2)
-        sandbox = main.licenses(_Request(), environment="sandbox")["items"]
-        self.assertEqual([row["id"] for row in sandbox], [12])
-        active = main.licenses(_Request(), status="active")["items"]
-        self.assertEqual([row["id"] for row in active], [11])
-        search = main.licenses(_Request(), q="mobile")["items"]
-        self.assertEqual([row["id"] for row in search], [12])
-        invoices = main.invoices(_Request(), period="2026-11")["items"]
-        self.assertEqual(len(invoices), 1)
-        self.assertEqual(invoices[0]["customer_name"], "サンプル商事")
-        self.assertEqual(main.invoices(_Request(), period="2026-10")["items"], [])
-
-    def test_update_keeps_key_when_blank(self):
-        created = self._create()
-        updated = main.update_customer(created["id"], main.CustomerIn(
-            name="改名商事", slug="renamed", base_url=self.base, api_key=""), _Request())
-        self.assertEqual(updated["name"], "改名商事")
-        self.assertEqual(updated["slug"], "renamed")
+        self.assertTrue(result["expired"])
+        self.assertIn("tenants", result["errors"])
         with main.closing(main.connect()) as db:
-            stored = db.execute("SELECT api_key_enc FROM customers WHERE id=?", (created["id"],)).fetchone()[0]
-        self.assertEqual(secrets_store.decrypt(main.data_key(), stored), KEY)
-
-    def test_delete_removes_customer_and_cache(self):
-        created = self._create()
-        main.sync_customer(created["id"], _Request())
-        main.delete_customer(created["id"], _Request())
-        with main.closing(main.connect()) as db:
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM customers").fetchone()[0], 0)
-            self.assertEqual(db.execute("SELECT COUNT(*) FROM customer_cache").fetchone()[0], 0)
+            state = main._sync_state(db)
+        self.assertTrue(state["tenants"]["error"])
 
     def test_write_endpoints_require_csrf(self):
         with self.assertRaises(main.HTTPException) as ctx:
-            main.create_customer(main.CustomerIn(name="x", base_url=self.base, api_key=KEY), _Request(csrf="bad"))
+            main.sync(_Request(csrf="wrong"))
         self.assertEqual(ctx.exception.status_code, 403)
 
     def test_session_is_required(self):
@@ -245,26 +250,68 @@ class CrmApiTests(unittest.TestCase):
             headers: dict = {}
             cookies: dict = {}
             client = type("Client", (), {"host": "127.0.0.1"})()
+        for endpoint in (main.dashboard, main.tenants, main.connection):
+            with self.assertRaises(main.HTTPException) as ctx:
+                endpoint(Anonymous())
+            self.assertEqual(ctx.exception.status_code, 401)
+
+    def test_connection_reports_env_session(self):
+        data = main.connection(_Request())
+        self.assertTrue(data["connected"])
+        self.assertEqual(data["source"], "environment")
+
+    def test_sync_requires_connection(self):
+        os.environ.pop("TUTI_ADMIN_SESSION")
+        with main.closing(main.connect()) as db:
+            db.execute("DELETE FROM admin_auth")
+            db.commit()
         with self.assertRaises(main.HTTPException) as ctx:
-            main.dashboard(Anonymous())
-        self.assertEqual(ctx.exception.status_code, 401)
+            main.sync(_Request())
+        self.assertEqual(ctx.exception.status_code, 409)
 
-    def test_csv_exports(self):
-        created = self._create()
-        main.sync_customer(created["id"], _Request())
-        license_csv = main.export_licenses(_Request())
-        self.assertIn("text/csv", license_csv.media_type)
-        invoice_csv = main.export_invoices(_Request())
-        self.assertIn("text/csv", invoice_csv.media_type)
+    def test_exports_are_csv(self):
+        main.sync(_Request())
+        self.assertIn("text/csv", main.export_licenses(_Request()).media_type)
+        self.assertIn("text/csv", main.export_invoices(_Request()).media_type)
 
-    def test_sync_all_reports_each_customer(self):
-        self._create("A社")
-        payload = main.CustomerIn(name="B社", base_url=self.base, api_key="baas_sandbox_" + "z" * 40)
-        main.create_customer(payload, _Request())
-        result = main.sync_all(_Request())
-        self.assertEqual(result["total"], 2)
-        self.assertEqual(result["synced"], 2)
-        self.assertTrue(result["ok"])
+
+class SsoLoopbackTests(unittest.TestCase):
+    def test_loopback_page_and_state_validation(self):
+        flow = admin_sso.start("https://2415.jp")
+        self.addCleanup(admin_sso.cancel, flow["state"])
+        redirect = urllib.parse.parse_qs(urllib.parse.urlparse(flow["url"]).query)["desktop_redirect"][0]
+        port = urllib.parse.urlparse(redirect).port
+        self.assertTrue(49152 <= port <= 65535)
+        self.assertEqual(redirect, f"http://127.0.0.1:{port}/callback")
+        with urllib.request.urlopen(redirect, timeout=5) as response:
+            body = response.read().decode()
+        self.assertIn("SSO応答をアプリへ返しています", body)
+        self.assertIn("Content-Security-Policy", str(response.headers))
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/complete",
+            data=json.dumps({"session": "x" * 60, "state": "b" * 64}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port}"})
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(request, timeout=5)
+        self.assertEqual(ctx.exception.code, 403)
+        self.assertEqual(admin_sso.poll(flow["state"])["status"], "error")
+
+    def test_complete_flow_returns_token_once(self):
+        flow = admin_sso.start("https://2415.jp")
+        redirect = urllib.parse.parse_qs(urllib.parse.urlparse(flow["url"]).query)["desktop_redirect"][0]
+        port = urllib.parse.urlparse(redirect).port
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/complete",
+            data=json.dumps({"session": "s" * 80, "state": flow["state"]}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port}"})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertEqual(response.status, 200)
+        result = admin_sso.poll(flow["state"])
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(result["token"], "s" * 80)
+        self.assertEqual(admin_sso.poll(flow["state"])["status"], "unknown")
 
 
 if __name__ == "__main__":

@@ -1,11 +1,13 @@
-"""TUTI CRM — a CRM built on the TUTI BaaS API.
+"""TUTI CRM — administrator console for TUTI tenants.
 
-The unit of the CRM is a customer: one TUTI tenant, identified by its tenant
-API key. For each customer the app reads the tenant-scoped license, billing,
-usage and audit APIs and keeps the last snapshot in SQLite so the screen is
-instant and survives API outages.
+The operator signs in to TUTI once with SSO (Passkey). With that admin session
+the app reads the admin APIs used by the admin center:
 
-Only read services are used. Nothing here issues, pauses or deletes licenses.
+    admin_api.php            tenants, licenses (all tenants)
+    ha/api-billing-admin.php invoices
+
+Nothing is registered per tenant and no tenant API key is stored anywhere.
+The app only reads; issuing, pausing or invoicing stays in the admin center.
 """
 from __future__ import annotations
 
@@ -23,17 +25,18 @@ import threading
 import time
 import urllib.parse
 from contextlib import closing
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field
 
-import tuti_api
-from secrets_store import SecretError, decrypt, encrypt, key_hint, load_data_key
+import admin_api
+import admin_sso
+from secrets_store import SecretError, decrypt, encrypt, load_data_key
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("CRM_DATA", ROOT / "data")).resolve()
@@ -49,12 +52,24 @@ SESSION_COOKIE = "tuti_crm_session"
 SESSION_TTL = 60 * 60 * 12
 COOKIE_SECURE = os.environ.get("CRM_SECURE_COOKIES", "0") == "1"
 
-ENVIRONMENTS = ("", "sandbox", "production")
-ENVIRONMENT_LABELS = {"": "指定なし", "sandbox": "サンドボックス", "production": "本番"}
-API_KEY_RE = re.compile(r"baas_(?:live|prod|sandbox|sdk)_[A-Za-z0-9_-]{32,120}")
+DEFAULT_TUTI_BASE = os.environ.get("TUTI_ADMIN_BASE", admin_api.DEFAULT_BASE)
+
+
+def env_session() -> str:
+    return (os.environ.get("TUTI_ADMIN_SESSION") or "").strip()
+
+
+def env_base() -> str:
+    return os.environ.get("TUTI_ADMIN_BASE") or DEFAULT_TUTI_BASE
+
+LICENSE_STATES = ("active", "paused", "expired", "expiring", "revoked")
+STATE_LABELS = {"active": "有効", "paused": "停止", "expired": "期限切れ", "expiring": "期限間近", "revoked": "失効"}
+INVOICE_LABELS = {"draft": "下書き", "issued": "発行済み", "paid": "入金済み", "void": "無効"}
+TENANT_STATUS_LABELS = {"active": "有効", "suspended": "停止", "deleted": "削除"}
 
 _LOGIN_FAILURES: dict[str, list[float]] = {}
 _LOGIN_LOCK = threading.Lock()
+_SYNC_LOCK = threading.Lock()
 
 app = FastAPI(title="TUTI CRM", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -78,10 +93,6 @@ async def security_headers(request: Request, call_next):
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
-
-
-def _today() -> str:
-    return date.today().isoformat()
 
 
 def _b64e(value: bytes) -> str:
@@ -167,72 +178,74 @@ def data_key() -> bytes:
 def initialize() -> None:
     with closing(connect()) as db:
         db.executescript("""
-        CREATE TABLE IF NOT EXISTS customers (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT NOT NULL,
-          slug TEXT NOT NULL DEFAULT '',
+        CREATE TABLE IF NOT EXISTS admin_auth (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
           base_url TEXT NOT NULL,
-          environment TEXT NOT NULL DEFAULT '' CHECK(environment IN ('','sandbox','production')),
-          api_key_enc TEXT NOT NULL,
-          key_hint TEXT NOT NULL DEFAULT '',
-          note TEXT NOT NULL DEFAULT '',
-          active INTEGER NOT NULL DEFAULT 1,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
+          token_enc TEXT NOT NULL,
+          connected_at TEXT NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS customer_cache (
-          customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-          scope TEXT NOT NULL,
-          payload TEXT NOT NULL DEFAULT 'null',
+        CREATE TABLE IF NOT EXISTS tenants (
+          tenant_id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL DEFAULT '',
+          slug TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT '',
+          environment TEXT NOT NULL DEFAULT '',
+          plan_code TEXT NOT NULL DEFAULT '',
+          fetched_at TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS licenses (
+          license_id INTEGER PRIMARY KEY,
+          tenant_id INTEGER NOT NULL DEFAULT 0,
+          label TEXT NOT NULL DEFAULT '',
+          state TEXT NOT NULL DEFAULT '',
+          active INTEGER NOT NULL DEFAULT 0,
+          max_devices INTEGER NOT NULL DEFAULT 1,
+          active_sessions INTEGER NOT NULL DEFAULT 0,
+          expires_at TEXT NOT NULL DEFAULT '',
+          revoked_at TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT '',
+          fetched_at TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS invoices (
+          invoice_id INTEGER PRIMARY KEY,
+          tenant_id INTEGER NOT NULL DEFAULT 0,
+          invoice_number TEXT NOT NULL DEFAULT '',
+          billing_period TEXT NOT NULL DEFAULT '',
+          customer_name TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT '',
+          total_yen INTEGER NOT NULL DEFAULT 0,
+          issue_date TEXT NOT NULL DEFAULT '',
+          due_date TEXT NOT NULL DEFAULT '',
+          fetched_at TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS sync_state (
+          scope TEXT PRIMARY KEY,
           fetched_at TEXT NOT NULL DEFAULT '',
           error TEXT NOT NULL DEFAULT '',
-          PRIMARY KEY (customer_id, scope)
+          total INTEGER NOT NULL DEFAULT 0
         );
-        CREATE INDEX IF NOT EXISTS customers_name_idx ON customers(name);
+        CREATE INDEX IF NOT EXISTS licenses_tenant_idx ON licenses(tenant_id);
+        CREATE INDEX IF NOT EXISTS licenses_state_idx ON licenses(state);
+        CREATE INDEX IF NOT EXISTS invoices_status_idx ON invoices(status);
+        CREATE INDEX IF NOT EXISTS invoices_tenant_idx ON invoices(tenant_id);
         """)
-        # This app replaced a generic sales CRM prototype; its tables are not used.
-        for legacy in ("activities", "tasks", "deals", "contacts", "companies", "tuti_cache"):
+        for legacy in ("customers", "customer_cache", "companies", "contacts", "deals", "activities", "tasks", "tuti_cache"):
             db.execute(f"DROP TABLE IF EXISTS {legacy}")
         db.commit()
 
 
 # ---------------------------------------------------------------------------
-# Models
+# Models and local admin login
 # ---------------------------------------------------------------------------
-class CustomerIn(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
-
-    name: str = Field(min_length=1, max_length=120)
-    slug: str = Field(default="", max_length=80)
-    base_url: str = Field(default="", max_length=300)
-    environment: Literal["", "sandbox", "production"] = ""
-    api_key: str = Field(default="", max_length=140)
-    note: str = Field(default="", max_length=2000)
-    active: bool = True
-
-    @field_validator("slug")
-    @classmethod
-    def _slug(cls, value: str) -> str:
-        if value and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,79}", value):
-            raise ValueError("slug は英小文字・数字・ハイフンのみ使用できます")
-        return value
-
-    @field_validator("api_key")
-    @classmethod
-    def _api_key(cls, value: str) -> str:
-        if value and not API_KEY_RE.fullmatch(value):
-            raise ValueError("APIキーの形式が不正です（baas_live_… / baas_sandbox_… など）")
-        return value
-
-
 class LoginIn(BaseModel):
     username: str = Field(max_length=120)
     password: str = Field(max_length=200)
 
 
-# ---------------------------------------------------------------------------
-# Auth pages
-# ---------------------------------------------------------------------------
+class BaseIn(BaseModel):
+    base_url: str = Field(default="", max_length=300)
+
+
 @app.on_event("startup")
 def startup() -> None:
     initialize()
@@ -295,392 +308,429 @@ def login_page(request: Request):
 
 
 # ---------------------------------------------------------------------------
-# Cache helpers
+# TUTI admin session
 # ---------------------------------------------------------------------------
-def _cache_for(db: sqlite3.Connection, customer_id: int) -> dict:
-    rows = db.execute("SELECT scope, payload, fetched_at, error FROM customer_cache WHERE customer_id=?",
-                      (customer_id,)).fetchall()
-    return {row["scope"]: {"payload": json.loads(row["payload"] or "null"),
-                           "fetched_at": row["fetched_at"], "error": row["error"]} for row in rows}
+def _stored_session(db: sqlite3.Connection) -> Optional[dict]:
+    row = db.execute("SELECT base_url, token_enc, connected_at FROM admin_auth WHERE id=1").fetchone()
+    if not row:
+        return None
+    try:
+        token = decrypt(data_key(), row["token_enc"])
+    except SecretError:
+        return None
+    return {"base_url": row["base_url"], "token": token, "connected_at": row["connected_at"], "source": "sso"}
 
 
-def _cache_all(db: sqlite3.Connection) -> dict[int, dict]:
-    result: dict[int, dict] = {}
-    rows = db.execute("SELECT customer_id, scope, payload, fetched_at, error FROM customer_cache").fetchall()
-    for row in rows:
-        bucket = result.setdefault(row["customer_id"], {})
-        bucket[row["scope"]] = {"payload": json.loads(row["payload"] or "null"),
-                                "fetched_at": row["fetched_at"], "error": row["error"]}
+def current_auth(db: sqlite3.Connection) -> Optional[dict]:
+    """Return the active admin credential (env override wins)."""
+    if env_session():
+        return {"base_url": admin_api.base_url(env_base()), "token": env_session(),
+                "connected_at": "", "source": "environment"}
+    return _stored_session(db)
+
+
+def _client(db: sqlite3.Connection) -> admin_api.AdminClient:
+    auth = current_auth(db)
+    if not auth:
+        raise HTTPException(409, "TUTIに接続していません。SSOでログインしてください")
+    return admin_api.AdminClient(auth["base_url"], auth["token"])
+
+
+def _sync_state(db: sqlite3.Connection) -> dict:
+    rows = db.execute("SELECT scope, fetched_at, error, total FROM sync_state").fetchall()
+    return {row["scope"]: {"fetched_at": row["fetched_at"], "error": row["error"], "total": row["total"]}
+            for row in rows}
+
+
+def _mark_sync(db: sqlite3.Connection, scope: str, error: str = "", total: int = 0) -> None:
+    db.execute("INSERT INTO sync_state (scope, fetched_at, error, total) VALUES (?,?,?,?) "
+               "ON CONFLICT(scope) DO UPDATE SET fetched_at=excluded.fetched_at, error=excluded.error, total=excluded.total",
+               (scope, _now(), error, total))
+
+
+def _license_state(row: dict) -> str:
+    if row.get("revoked_at"):
+        return "revoked"
+    if not row.get("active"):
+        return "paused"
+    expires = str(row.get("expires_at") or "")
+    if expires:
+        try:
+            when = datetime.strptime(expires[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        except ValueError:
+            when = None
+        if when is not None:
+            now = datetime.now(timezone.utc)
+            if when <= now:
+                return "expired"
+            if (when - now).days <= 30:
+                return "expiring"
+    return "active"
+
+
+@app.get("/api/connection")
+def connection(request: Request) -> dict:
+    _require(request)
+    with closing(connect()) as db:
+        auth = current_auth(db)
+        state = _sync_state(db)
+        tenants = db.execute("SELECT COUNT(*) FROM tenants").fetchone()[0]
+    return {
+        "connected": bool(auth),
+        "base_url": auth["base_url"] if auth else admin_api.base_url(env_base()),
+        "connected_at": auth["connected_at"] if auth else "",
+        "source": auth["source"] if auth else "",
+        "loopback": admin_sso.loopback_available(),
+        "tenants": tenants,
+        "sync": state,
+        "last_sync": max((item["fetched_at"] for item in state.values()), default=""),
+        "env_configured": bool(env_session()),
+    }
+
+
+@app.post("/api/connection/start")
+def connection_start(payload: BaseIn, request: Request) -> dict:
+    _require(request, write=True)
+    if env_session():
+        raise HTTPException(400, "TUTI_ADMIN_SESSION が設定されています。環境変数を外すとSSOログインを使えます")
+    try:
+        base = admin_api.base_url(payload.base_url or env_base())
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    flow = admin_sso.start(base)
+    return {"state": flow["state"], "url": flow["url"], "expires_in": flow["expires_in"]}
+
+
+@app.get("/api/connection/poll")
+def connection_poll(request: Request, state: str = "") -> dict:
+    _require(request)
+    if not state:
+        raise HTTPException(400, "state が必要です")
+    result = admin_sso.poll(state)
+    if result.get("status") == "complete":
+        token = result["token"]
+        base = result.get("base_url") or ""
+        with closing(connect()) as db:
+            client = admin_api.AdminClient(base or current_base(db), token)
+            try:
+                client.check()
+            except admin_api.AdminApiError as error:
+                raise HTTPException(400, f"管理者セッションを確認できません: {error}") from error
+            db.execute("INSERT INTO admin_auth (id, base_url, token_enc, connected_at) VALUES (1,?,?,?) "
+                       "ON CONFLICT(id) DO UPDATE SET base_url=excluded.base_url, token_enc=excluded.token_enc, "
+                       "connected_at=excluded.connected_at",
+                       (client.base, encrypt(data_key(), token), _now()))
+            db.commit()
+        return {"status": "connected"}
     return result
 
 
-def _write_cache(db: sqlite3.Connection, customer_id: int, scope: str, payload, error: str = "") -> None:
-    db.execute(
-        "INSERT INTO customer_cache (customer_id, scope, payload, fetched_at, error) VALUES (?,?,?,?,?) "
-        "ON CONFLICT(customer_id, scope) DO UPDATE SET payload=excluded.payload, "
-        "fetched_at=excluded.fetched_at, error=excluded.error",
-        (customer_id, scope, json.dumps(payload, ensure_ascii=False), _now(), error),
-    )
+def current_base(db: sqlite3.Connection) -> str:
+    auth = current_auth(db)
+    return auth["base_url"] if auth else admin_api.base_url(env_base())
 
 
-def _customer_dict(row: sqlite3.Row) -> dict:
-    """Public customer shape. The encrypted key is never returned."""
-    return {
-        "id": row["id"], "name": row["name"], "slug": row["slug"], "base_url": row["base_url"],
-        "environment": row["environment"], "environment_label": ENVIRONMENT_LABELS.get(row["environment"], ""),
-        "key_hint": row["key_hint"], "note": row["note"], "active": bool(row["active"]),
-        "created_at": row["created_at"], "updated_at": row["updated_at"],
-    }
-
-
-def _licenses_of(cache: dict) -> list:
-    payload = (cache.get("licenses") or {}).get("payload") or {}
-    rows = payload.get("licenses")
-    return rows if isinstance(rows, list) else []
-
-
-def _usage_of(cache: dict) -> dict:
-    payload = (cache.get("usage") or {}).get("payload") or {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _invoices_of(cache: dict) -> list:
-    payload = (cache.get("invoices") or {}).get("payload") or {}
-    rows = payload.get("invoices")
-    return rows if isinstance(rows, list) else []
-
-
-def _events_of(cache: dict) -> list:
-    payload = (cache.get("audit") or {}).get("payload") or {}
-    rows = payload.get("events")
-    return rows if isinstance(rows, list) else []
-
-
-def _products_of(cache: dict) -> list:
-    payload = (cache.get("products") or {}).get("payload") or {}
-    rows = payload.get("products")
-    return rows if isinstance(rows, list) else []
-
-
-def _charge_of(cache: dict) -> float:
-    usage = _usage_of(cache)
-    for key in ("total_charge_yen_equivalent", "total_charge_credit"):
-        value = usage.get(key)
-        if value in (None, ""):
-            continue
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            continue
-    return 0.0
-
-
-def _customer_metrics(customer: dict, cache: dict) -> dict:
-    licenses = _licenses_of(cache)
-    invoices = _invoices_of(cache)
-    unpaid = [row for row in invoices if str(row.get("status")) == "issued"]
-    return {
-        **customer,
-        "licenses": len(licenses),
-        "active_licenses": sum(1 for row in licenses if row.get("active")),
-        "sandbox_licenses": sum(1 for row in licenses if row.get("environment") == "sandbox"),
-        "products": len(_products_of(cache)),
-        "month_charge": _charge_of(cache),
-        "usage_period": _usage_of(cache).get("period", ""),
-        "unpaid_count": len(unpaid),
-        "unpaid_amount": sum(int(row.get("total_yen") or 0) for row in unpaid),
-        "last_sync": max((item.get("fetched_at", "") for item in cache.values()), default=""),
-        "errors": [scope for scope, item in cache.items() if item.get("error")],
-        "error_message": next((item.get("error") for item in cache.values() if item.get("error")), ""),
-    }
-
-
-def _customers_with_metrics(db: sqlite3.Connection) -> list:
-    cache = _cache_all(db)
-    rows = db.execute("SELECT * FROM customers ORDER BY name COLLATE NOCASE, id").fetchall()
-    return [_customer_metrics(_customer_dict(row), cache.get(row["id"], {})) for row in rows]
-
-
-def _get_customer(db: sqlite3.Connection, customer_id: int) -> sqlite3.Row:
-    row = db.execute("SELECT * FROM customers WHERE id=?", (customer_id,)).fetchone()
-    if not row:
-        raise HTTPException(404, "顧客が見つかりません")
-    return row
-
-
-def _client_for(row: sqlite3.Row) -> tuti_api.TutiClient:
-    try:
-        api_key = decrypt(data_key(), row["api_key_enc"])
-    except SecretError as error:
-        raise HTTPException(409, str(error)) from error
-    return tuti_api.TutiClient(row["base_url"], api_key, row["environment"])
-
-
-def _sync_customer(db: sqlite3.Connection, row: sqlite3.Row, period: str) -> dict:
-    client = _client_for(row)
-    previous = _cache_for(db, row["id"])
-    results = client.fetch_many(period)
-    for scope, result in results.items():
-        if result["ok"]:
-            _write_cache(db, row["id"], scope, result["payload"])
-        else:
-            kept = (previous.get(scope) or {}).get("payload")
-            _write_cache(db, row["id"], scope, kept, result["error"])
-    db.commit()
-    return {
-        "customer_id": row["id"], "customer": row["name"],
-        "ok": all(item["ok"] for item in results.values()),
-        "results": {scope: {"ok": item["ok"], "error": item["error"], "code": item["code"]}
-                    for scope, item in results.items()},
-    }
-
-
-# ---------------------------------------------------------------------------
-# Dashboard
-# ---------------------------------------------------------------------------
-@app.get("/api/dashboard")
-def dashboard(request: Request) -> dict:
-    _require(request)
-    month = _today()[:7]
-    with closing(connect()) as db:
-        customers = _customers_with_metrics(db)
-        cache = _cache_all(db)
-    active = [item for item in customers if item["active"]]
-    events = []
-    for customer in customers:
-        for event in _events_of(cache.get(customer["id"], {})):
-            events.append({**event, "customer_id": customer["id"], "customer_name": customer["name"]})
-    events.sort(key=lambda item: str(item.get("used_at") or ""), reverse=True)
-    return {
-        "month": month,
-        "kpis": {
-            "customers": len(customers),
-            "active_customers": len(active),
-            "licenses": sum(item["licenses"] for item in active),
-            "active_licenses": sum(item["active_licenses"] for item in active),
-            "sandbox_licenses": sum(item["sandbox_licenses"] for item in active),
-            "month_charge": round(sum(item["month_charge"] for item in active), 2),
-            "unpaid_count": sum(item["unpaid_count"] for item in active),
-            "unpaid_amount": sum(item["unpaid_amount"] for item in active),
-            "synced_customers": sum(1 for item in active if item["last_sync"]),
-            "error_customers": sum(1 for item in active if item["error_message"]),
-        },
-        "customers": customers,
-        "events": events[:10],
-    }
-
-
-# ---------------------------------------------------------------------------
-# Customers
-# ---------------------------------------------------------------------------
-@app.get("/api/customers")
-def list_customers(request: Request) -> dict:
-    _require(request)
-    with closing(connect()) as db:
-        customers = _customers_with_metrics(db)
-    return {"items": customers, "total": len(customers)}
-
-
-@app.post("/api/customers", status_code=201)
-def create_customer(payload: CustomerIn, request: Request) -> dict:
+@app.post("/api/connection/disconnect")
+def connection_disconnect(request: Request) -> dict:
     _require(request, write=True)
-    if not payload.api_key:
-        raise HTTPException(400, "テナントAPIキーを入力してください")
-    try:
-        base_url = tuti_api.normalize_base_url(payload.base_url)
-    except ValueError as error:
-        raise HTTPException(400, str(error)) from error
+    admin_sso.cancel_all()
     with closing(connect()) as db:
-        if db.execute("SELECT 1 FROM customers WHERE api_key_enc<>'' AND name=? COLLATE NOCASE",
-                      (payload.name,)).fetchone():
-            raise HTTPException(400, "同じ名前の顧客が既にあります")
-        now = _now()
-        cursor = db.execute(
-            "INSERT INTO customers (name, slug, base_url, environment, api_key_enc, key_hint, note, active, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (payload.name, payload.slug, base_url, payload.environment,
-             encrypt(data_key(), payload.api_key), key_hint(payload.api_key),
-             payload.note, 1 if payload.active else 0, now, now),
-        )
-        db.commit()
-        row = _get_customer(db, int(cursor.lastrowid))
-    return _customer_metrics(_customer_dict(row), {})
-
-
-@app.get("/api/customers/{customer_id}")
-def get_customer(customer_id: int, request: Request) -> dict:
-    _require(request)
-    with closing(connect()) as db:
-        row = _get_customer(db, customer_id)
-        cache = _cache_for(db, customer_id)
-    return {
-        "customer": _customer_metrics(_customer_dict(row), cache),
-        "scopes": cache,
-        "licenses": _licenses_of(cache),
-        "products": _products_of(cache),
-        "usage": _usage_of(cache),
-        "invoices": _invoices_of(cache),
-        "events": _events_of(cache),
-    }
-
-
-@app.put("/api/customers/{customer_id}")
-def update_customer(customer_id: int, payload: CustomerIn, request: Request) -> dict:
-    _require(request, write=True)
-    try:
-        base_url = tuti_api.normalize_base_url(payload.base_url)
-    except ValueError as error:
-        raise HTTPException(400, str(error)) from error
-    with closing(connect()) as db:
-        row = _get_customer(db, customer_id)
-        clash = db.execute("SELECT id FROM customers WHERE name=? COLLATE NOCASE AND id<>?",
-                           (payload.name, customer_id)).fetchone()
-        if clash:
-            raise HTTPException(400, "同じ名前の顧客が既にあります")
-        key_enc = row["api_key_enc"]
-        hint = row["key_hint"]
-        if payload.api_key:
-            key_enc = encrypt(data_key(), payload.api_key)
-            hint = key_hint(payload.api_key)
-        db.execute(
-            "UPDATE customers SET name=?, slug=?, base_url=?, environment=?, api_key_enc=?, key_hint=?, "
-            "note=?, active=?, updated_at=? WHERE id=?",
-            (payload.name, payload.slug, base_url, payload.environment, key_enc, hint,
-             payload.note, 1 if payload.active else 0, _now(), customer_id),
-        )
-        db.commit()
-        row = _get_customer(db, customer_id)
-        metrics = _customer_metrics(_customer_dict(row), _cache_for(db, customer_id))
-    return metrics
-
-
-@app.delete("/api/customers/{customer_id}")
-def delete_customer(customer_id: int, request: Request) -> dict:
-    _require(request, write=True)
-    with closing(connect()) as db:
-        _get_customer(db, customer_id)
-        db.execute("DELETE FROM customers WHERE id=?", (customer_id,))
+        db.execute("DELETE FROM admin_auth")
+        for table in ("tenants", "licenses", "invoices", "sync_state"):
+            db.execute(f"DELETE FROM {table}")
         db.commit()
     return {"ok": True}
 
 
-@app.post("/api/customers/{customer_id}/sync")
-def sync_customer(customer_id: int, request: Request) -> dict:
-    _require(request, write=True)
-    period = _today()[:7]
-    with closing(connect()) as db:
-        row = _get_customer(db, customer_id)
-        try:
-            return _sync_customer(db, row, period)
-        except tuti_api.TutiApiError as error:
-            raise HTTPException(502, str(error)) from error
+# ---------------------------------------------------------------------------
+# Sync
+# ---------------------------------------------------------------------------
+def _sync_all(db: sqlite3.Connection) -> dict:
+    client = _client(db)
+    errors: dict[str, str] = {}
+    counts = {"tenants": 0, "licenses": 0, "invoices": 0}
 
+    tenant_rows: list = []
+    try:
+        page = 1
+        while page <= 20:
+            data = client.tenants(page=page, limit=100)
+            tenant_rows.extend(data["items"])
+            if not data["has_next"]:
+                break
+            page += 1
+    except admin_api.AdminApiError as error:
+        errors["tenants"] = str(error)
+        _mark_sync(db, "tenants", str(error))
+        if error.unauthenticated:
+            db.commit()
+            return {"ok": False, "expired": True, "counts": counts, "errors": errors}
+    else:
+        with db:
+            db.execute("DELETE FROM tenants")
+            for row in tenant_rows:
+                db.execute("INSERT OR REPLACE INTO tenants (tenant_id,name,slug,status,environment,plan_code,fetched_at) "
+                           "VALUES (?,?,?,?,?,?,?)",
+                           (int(row.get("id") or 0), str(row.get("name") or ""), str(row.get("slug") or ""),
+                            str(row.get("status") or ""), str(row.get("environment") or ""),
+                            str(row.get("plan_code") or ""), _now()))
+        counts["tenants"] = len(tenant_rows)
+        _mark_sync(db, "tenants", "", len(tenant_rows))
 
-@app.post("/api/sync-all")
-def sync_all(request: Request) -> dict:
-    _require(request, write=True)
-    period = _today()[:7]
-    results = []
-    with closing(connect()) as db:
-        rows = db.execute("SELECT * FROM customers WHERE active=1 ORDER BY id").fetchall()
-        for row in rows:
-            try:
-                results.append(_sync_customer(db, row, period))
-            except (tuti_api.TutiApiError, HTTPException) as error:
-                message = getattr(error, "detail", None) or str(error)
-                results.append({"customer_id": row["id"], "customer": row["name"], "ok": False,
-                                "results": {scope: {"ok": False, "error": str(message), "code": "sync_failed"}
-                                            for scope in tuti_api.SCOPES}})
+    license_rows: list = []
+    try:
+        page = 1
+        while page <= 50:
+            data = client.licenses(page=page, limit=100)
+            license_rows.extend(data["items"])
+            if not data["has_next"]:
+                break
+            page += 1
+    except admin_api.AdminApiError as error:
+        errors["licenses"] = str(error)
+        _mark_sync(db, "licenses", str(error))
+    else:
+        with db:
+            db.execute("DELETE FROM licenses")
+            for row in license_rows:
+                db.execute(
+                    "INSERT OR REPLACE INTO licenses (license_id,tenant_id,label,state,active,max_devices,"
+                    "active_sessions,expires_at,revoked_at,created_at,fetched_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (int(row.get("id") or 0), int(row.get("tenant_id") or 0), str(row.get("label") or ""),
+                     _license_state(row), 1 if row.get("active") else 0, int(row.get("max_devices") or 1),
+                     int(row.get("active_sessions") or 0), str(row.get("expires_at") or ""),
+                     str(row.get("revoked_at") or ""), str(row.get("created_at") or ""), _now()))
+        counts["licenses"] = len(license_rows)
+        _mark_sync(db, "licenses", "", len(license_rows))
+
+    invoice_rows: list = []
+    try:
+        page = 1
+        while page <= 20:
+            data = client.invoices(page=page, limit=100)
+            invoice_rows.extend(data["items"])
+            if not data["has_next"]:
+                break
+            page += 1
+    except admin_api.AdminApiError as error:
+        errors["invoices"] = str(error)
+        _mark_sync(db, "invoices", str(error))
+    else:
+        with db:
+            db.execute("DELETE FROM invoices")
+            for row in invoice_rows:
+                db.execute(
+                    "INSERT OR REPLACE INTO invoices (invoice_id,tenant_id,invoice_number,billing_period,customer_name,"
+                    "status,total_yen,issue_date,due_date,fetched_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (int(row.get("id") or 0), int(row.get("account_tenant_id") or 0),
+                     str(row.get("invoice_number") or ""), str(row.get("billing_period") or ""),
+                     str(row.get("customer_name") or ""), str(row.get("status") or ""),
+                     int(float(row.get("total_yen") or 0)), str(row.get("issue_date") or ""),
+                     str(row.get("due_date") or ""), _now()))
+        counts["invoices"] = len(invoice_rows)
+        _mark_sync(db, "invoices", "", len(invoice_rows))
+
+    db.commit()
+    state = _sync_state(db)
     return {
-        "ok": all(item["ok"] for item in results),
-        "synced": sum(1 for item in results if item["ok"]),
-        "total": len(results),
-        "items": results,
+        "ok": not errors,
+        "expired": any("無効" in message or "期限切れ" in message for message in errors.values()),
+        "counts": counts,
+        "errors": errors,
+        "last_sync": max((item["fetched_at"] for item in state.values()), default=""),
     }
 
 
+@app.post("/api/sync")
+def sync(request: Request) -> dict:
+    _require(request, write=True)
+    if not _SYNC_LOCK.acquire(blocking=False):
+        raise HTTPException(429, "同期が実行中です。少し待って再試行してください")
+    try:
+        with closing(connect()) as db:
+            return _sync_all(db)
+    finally:
+        _SYNC_LOCK.release()
+
+
 # ---------------------------------------------------------------------------
-# Cross-customer views
+# Views over the cached admin data
 # ---------------------------------------------------------------------------
-@app.get("/api/licenses")
-def licenses(request: Request, q: str = "", environment: str = "", status: str = "", customer_id: int = 0) -> dict:
+def _tenant_rows(db: sqlite3.Connection) -> list:
+    rows = db.execute("""
+      SELECT t.*,
+        (SELECT COUNT(*) FROM licenses l WHERE l.tenant_id=t.tenant_id) AS licenses,
+        (SELECT COUNT(*) FROM licenses l WHERE l.tenant_id=t.tenant_id AND l.state IN ('active','expiring')) AS active_licenses,
+        (SELECT COUNT(*) FROM licenses l WHERE l.tenant_id=t.tenant_id AND l.state='expiring') AS expiring_licenses,
+        (SELECT COUNT(*) FROM invoices i WHERE i.tenant_id=t.tenant_id AND i.status='issued') AS unpaid_count,
+        (SELECT COALESCE(SUM(i.total_yen),0) FROM invoices i WHERE i.tenant_id=t.tenant_id AND i.status='issued') AS unpaid_amount,
+        (SELECT COALESCE(SUM(i.total_yen),0) FROM invoices i WHERE i.tenant_id=t.tenant_id AND i.status='paid') AS paid_amount
+      FROM tenants t ORDER BY t.name COLLATE NOCASE, t.tenant_id
+    """).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.get("/api/dashboard")
+def dashboard(request: Request) -> dict:
+    _require(request)
+    with closing(connect()) as db:
+        tenants = _tenant_rows(db)
+        state = _sync_state(db)
+        counts = db.execute("""
+          SELECT
+            (SELECT COUNT(*) FROM licenses) AS licenses,
+            (SELECT COUNT(*) FROM licenses WHERE state IN ('active','expiring')) AS active_licenses,
+            (SELECT COUNT(*) FROM licenses WHERE state='expiring') AS expiring_licenses,
+            (SELECT COUNT(*) FROM licenses WHERE state='expired') AS expired_licenses,
+            (SELECT COUNT(*) FROM invoices WHERE status='issued') AS unpaid_count,
+            (SELECT COALESCE(SUM(total_yen),0) FROM invoices WHERE status='issued') AS unpaid_amount,
+            (SELECT COALESCE(SUM(total_yen),0) FROM invoices WHERE status='paid') AS paid_amount,
+            (SELECT COUNT(*) FROM invoices) AS invoices
+        """).fetchone()
+        recent = [dict(row) for row in db.execute(
+            "SELECT * FROM invoices ORDER BY billing_period DESC, invoice_id DESC LIMIT 6").fetchall()]
+        top = [row for row in tenants if row["licenses"]][:8]
+    return {
+        "kpis": {
+            "tenants": len(tenants),
+            "active_tenants": sum(1 for row in tenants if row["status"] == "active"),
+            "licenses": counts["licenses"],
+            "active_licenses": counts["active_licenses"],
+            "expiring_licenses": counts["expiring_licenses"],
+            "expired_licenses": counts["expired_licenses"],
+            "invoices": counts["invoices"],
+            "unpaid_count": counts["unpaid_count"],
+            "unpaid_amount": counts["unpaid_amount"],
+            "paid_amount": counts["paid_amount"],
+        },
+        "tenants": top,
+        "recent_invoices": recent,
+        "sync": state,
+        "last_sync": max((item["fetched_at"] for item in state.values()), default=""),
+    }
+
+
+@app.get("/api/tenants")
+def tenants(request: Request, q: str = "") -> dict:
     _require(request)
     needle = (q or "").strip().lower()
     with closing(connect()) as db:
-        customers = {row["id"]: _customer_dict(row) for row in db.execute("SELECT * FROM customers").fetchall()}
-        cache = _cache_all(db)
-    rows = []
-    for cid, customer in customers.items():
-        if customer_id and cid != customer_id:
-            continue
-        for license_row in _licenses_of(cache.get(cid, {})):
-            item = {
-                **license_row,
-                "customer_id": cid, "customer_name": customer["name"],
-                "customer_environment": customer["environment"],
-            }
-            if environment and item.get("environment") != environment:
-                continue
-            if status == "active" and not item.get("active"):
-                continue
-            if status == "paused" and item.get("active"):
-                continue
-            if needle and needle not in " ".join(str(item.get(key, "")) for key in
-                                                 ("id", "label", "product_code", "customer_name")).lower():
-                continue
-            rows.append(item)
-    rows.sort(key=lambda item: (item.get("customer_name", ""), int(item.get("id") or 0)), reverse=False)
+        rows = _tenant_rows(db)
+    if needle:
+        rows = [row for row in rows if needle in f"{row['name']} {row['slug']}".lower()]
     return {"items": rows, "total": len(rows)}
+
+
+@app.get("/api/tenants/{tenant_id}")
+def tenant_detail(tenant_id: int, request: Request) -> dict:
+    _require(request)
+    with closing(connect()) as db:
+        tenant = db.execute("SELECT * FROM tenants WHERE tenant_id=?", (tenant_id,)).fetchone()
+        if not tenant:
+            raise HTTPException(404, "契約先が見つかりません")
+        licenses = [dict(row) for row in db.execute(
+            "SELECT * FROM licenses WHERE tenant_id=? ORDER BY license_id DESC", (tenant_id,)).fetchall()]
+        invoices = [dict(row) for row in db.execute(
+            "SELECT * FROM invoices WHERE tenant_id=? ORDER BY billing_period DESC, invoice_id DESC",
+            (tenant_id,)).fetchall()]
+        summary = db.execute("""
+          SELECT COUNT(*) AS licenses,
+            COALESCE(SUM(CASE WHEN state IN ('active','expiring') THEN 1 ELSE 0 END),0) AS active_licenses,
+            COALESCE(SUM(CASE WHEN state='expiring' THEN 1 ELSE 0 END),0) AS expiring_licenses
+          FROM licenses WHERE tenant_id=?
+        """, (tenant_id,)).fetchone()
+        billing = db.execute("""
+          SELECT COALESCE(SUM(CASE WHEN status='issued' THEN total_yen ELSE 0 END),0) AS unpaid_amount,
+                 COUNT(CASE WHEN status='issued' THEN 1 END) AS unpaid_count,
+                 COALESCE(SUM(CASE WHEN status='paid' THEN total_yen ELSE 0 END),0) AS paid_amount
+          FROM invoices WHERE tenant_id=?
+        """, (tenant_id,)).fetchone()
+    return {
+        "tenant": dict(tenant),
+        "summary": {**dict(summary), **dict(billing)},
+        "licenses": licenses,
+        "invoices": invoices,
+    }
+
+
+@app.get("/api/licenses")
+def licenses(request: Request, q: str = "", state: str = "", tenant_id: int = 0, page: int = 1,
+             limit: int = 50) -> dict:
+    _require(request)
+    page = max(1, min(int(page or 1), 100_000))
+    limit = max(1, min(int(limit or 50), 200))
+    needle = (q or "").strip().lower()
+    where, args = [], []
+    if state in LICENSE_STATES:
+        where.append("l.state=?")
+        args.append(state)
+    if tenant_id:
+        where.append("l.tenant_id=?")
+        args.append(tenant_id)
+    if needle:
+        where.append("(CAST(l.license_id AS TEXT) LIKE ? OR l.label LIKE ? OR t.name LIKE ? OR t.slug LIKE ?)")
+        args.extend([f"%{needle}%"] * 4)
+    clause = (" WHERE " + " AND ".join(where)) if where else ""
+    offset = (max(1, page) - 1) * limit
+    with closing(connect()) as db:
+        total = db.execute(f"SELECT COUNT(*) FROM licenses l LEFT JOIN tenants t ON t.tenant_id=l.tenant_id{clause}",
+                           tuple(args)).fetchone()[0]
+        rows = db.execute(
+            "SELECT l.*, t.name AS tenant_name, t.slug AS tenant_slug FROM licenses l "
+            f"LEFT JOIN tenants t ON t.tenant_id=l.tenant_id{clause} "
+            "ORDER BY l.license_id DESC LIMIT ? OFFSET ?", tuple(args) + (limit, offset)).fetchall()
+    return {"items": [dict(row) for row in rows], "total": total, "page": max(1, page), "limit": limit}
 
 
 @app.get("/api/invoices")
-def invoices(request: Request, period: str = "", status: str = "", customer_id: int = 0) -> dict:
+def invoices(request: Request, q: str = "", status: str = "", tenant_id: int = 0, page: int = 1,
+             limit: int = 50) -> dict:
     _require(request)
+    page = max(1, min(int(page or 1), 100_000))
+    limit = max(1, min(int(limit or 50), 200))
+    needle = (q or "").strip().lower()
+    where, args = [], []
+    if status in ("draft", "issued", "paid", "void"):
+        where.append("i.status=?")
+        args.append(status)
+    if tenant_id:
+        where.append("i.tenant_id=?")
+        args.append(tenant_id)
+    if needle:
+        where.append("(i.invoice_number LIKE ? OR i.customer_name LIKE ? OR t.slug LIKE ?)")
+        args.extend([f"%{needle}%"] * 3)
+    clause = (" WHERE " + " AND ".join(where)) if where else ""
+    offset = (max(1, page) - 1) * limit
     with closing(connect()) as db:
-        customers = {row["id"]: _customer_dict(row) for row in db.execute("SELECT * FROM customers").fetchall()}
-        cache = _cache_all(db)
-    rows = []
-    for cid, customer in customers.items():
-        if customer_id and cid != customer_id:
-            continue
-        for invoice in _invoices_of(cache.get(cid, {})):
-            if period and str(invoice.get("billing_period")) != period:
-                continue
-            if status and str(invoice.get("status")) != status:
-                continue
-            rows.append({**invoice, "customer_id": cid, "customer_name": customer["name"]})
-    rows.sort(key=lambda item: (str(item.get("billing_period") or ""), int(item.get("id") or 0)), reverse=True)
-    return {"items": rows, "total": len(rows)}
-
-
-@app.get("/api/events")
-def events(request: Request, customer_id: int = 0, limit: int = 50) -> dict:
-    _require(request)
-    limit = max(1, min(200, limit))
-    with closing(connect()) as db:
-        customers = {row["id"]: _customer_dict(row) for row in db.execute("SELECT * FROM customers").fetchall()}
-        cache = _cache_all(db)
-    rows = []
-    for cid, customer in customers.items():
-        if customer_id and cid != customer_id:
-            continue
-        for event in _events_of(cache.get(cid, {})):
-            rows.append({**event, "customer_id": cid, "customer_name": customer["name"]})
-    rows.sort(key=lambda item: str(item.get("used_at") or ""), reverse=True)
-    return {"items": rows[:limit], "total": len(rows)}
+        total = db.execute(f"SELECT COUNT(*) FROM invoices i LEFT JOIN tenants t ON t.tenant_id=i.tenant_id{clause}",
+                           tuple(args)).fetchone()[0]
+        rows = db.execute(
+            "SELECT i.*, t.slug AS tenant_slug FROM invoices i "
+            f"LEFT JOIN tenants t ON t.tenant_id=i.tenant_id{clause} "
+            "ORDER BY i.billing_period DESC, i.invoice_id DESC LIMIT ? OFFSET ?",
+            tuple(args) + (limit, offset)).fetchall()
+        summary = db.execute("""
+          SELECT COALESCE(SUM(CASE WHEN status='draft' THEN 1 ELSE 0 END),0) AS draft,
+                 COALESCE(SUM(CASE WHEN status='issued' THEN 1 ELSE 0 END),0) AS issued,
+                 COALESCE(SUM(CASE WHEN status='paid' THEN 1 ELSE 0 END),0) AS paid,
+                 COALESCE(SUM(CASE WHEN status='void' THEN 1 ELSE 0 END),0) AS void,
+                 COALESCE(SUM(CASE WHEN status='paid' THEN total_yen ELSE 0 END),0) AS paid_total
+          FROM invoices
+        """).fetchone()
+    return {"items": [dict(row) for row in rows], "total": total, "page": max(1, page),
+            "limit": limit, "summary": dict(summary)}
 
 
 # ---------------------------------------------------------------------------
-# CSV exports
+# CSV
 # ---------------------------------------------------------------------------
 def _csv_response(rows: list, header: list, filename: str) -> StreamingResponse:
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(header)
     writer.writerows(rows)
-    payload = "\ufeff" + buffer.getvalue()
     return StreamingResponse(
-        iter([payload.encode("utf-8")]),
+        iter([("\ufeff" + buffer.getvalue()).encode("utf-8")]),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{urllib.parse.quote(filename)}"'},
     )
@@ -688,22 +738,29 @@ def _csv_response(rows: list, header: list, filename: str) -> StreamingResponse:
 
 @app.get("/api/export/licenses.csv")
 def export_licenses(request: Request) -> StreamingResponse:
-    data = licenses(request)
-    rows = [[item.get("customer_name", ""), item.get("id", ""), item.get("product_code", ""), item.get("label", ""),
-             "有効" if item.get("active") else "停止", item.get("environment", ""), item.get("max_devices", ""),
-             item.get("expires_at") or "", item.get("created_at") or ""] for item in data["items"]]
-    return _csv_response(rows, ["顧客", "ライセンスID", "製品コード", "ラベル", "状態", "環境", "端末上限",
-                                "有効期限", "発行日"], "TUTIライセンス.csv")
+    _require(request)
+    with closing(connect()) as db:
+        rows = db.execute(
+            "SELECT l.*, t.name AS tenant_name FROM licenses l LEFT JOIN tenants t ON t.tenant_id=l.tenant_id "
+            "ORDER BY t.name, l.license_id").fetchall()
+    data = [[row["tenant_name"] or "", row["license_id"], row["label"], STATE_LABELS.get(row["state"], row["state"]),
+             row["max_devices"], row["active_sessions"], row["expires_at"] or "", row["created_at"] or ""]
+            for row in rows]
+    return _csv_response(data, ["契約先", "ライセンスID", "ラベル", "状態", "端末上限", "接続中端末", "有効期限", "発行日"],
+                         "TUTIライセンス.csv")
 
 
 @app.get("/api/export/invoices.csv")
 def export_invoices(request: Request) -> StreamingResponse:
-    data = invoices(request)
-    rows = [[item.get("customer_name", ""), item.get("invoice_number", ""), item.get("billing_period", ""),
-             item.get("total_yen", 0), item.get("status", ""), item.get("issue_date") or "",
-             item.get("due_date") or ""] for item in data["items"]]
-    return _csv_response(rows, ["顧客", "請求番号", "対象月", "金額", "状態", "発行日", "支払期限"],
-                         "TUTI請求書.csv")
+    _require(request)
+    with closing(connect()) as db:
+        rows = db.execute(
+            "SELECT i.*, t.name AS tenant_name FROM invoices i LEFT JOIN tenants t ON t.tenant_id=i.tenant_id "
+            "ORDER BY i.billing_period DESC, i.invoice_id DESC").fetchall()
+    data = [[row["tenant_name"] or row["customer_name"], row["invoice_number"], row["billing_period"], row["total_yen"],
+             INVOICE_LABELS.get(row["status"], row["status"]), row["issue_date"] or "", row["due_date"] or ""]
+            for row in rows]
+    return _csv_response(data, ["契約先", "請求番号", "対象月", "金額", "状態", "発行日", "支払期限"], "TUTI請求書.csv")
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
