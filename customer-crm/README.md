@@ -1,50 +1,56 @@
-# TUTI CRM（GINIE風 顧客管理システム）
+# TUTI CRM（TUTI API専用の顧客管理）
 
-顧客・連絡先・案件パイプライン・活動履歴・タスクをひとつの画面で管理する、FastAPI + SQLite + Vanilla JS の顧客管理システムです。GINIEのような「顧客情報を見ながら、次の商談とタスクを進める」体験を、追加のフロントエンドビルドなしで動かせることを目指しています。
+TUTI の管理APIだけを使う顧客管理です。1顧客 = 1TUTIテナントで、テナントAPIキーを登録すると、その契約先のライセンス・API利用料・請求書・監査イベントを読み取って表示します。
 
-## 主な機能
+手入力の顧客台帳、連絡先、案件パイプライン、活動履歴、タスクは持ちません。営業CRMではなく、**テナント契約の管理画面**です。
 
-- **ダッシュボード**: 顧客数、進行中案件、パイプライン、今月の受注、期限超過タスク、ステージ別パイプライン、最近の活動、今日のタスク
-- **顧客管理**: 検索、業種・ランク・担当者フィルター、ページ送り、CSV出力、顧客詳細
-- **連絡先管理**: 顧客に紐づく担当者、主担当フラグ、メール・電話、CSV出力は顧客単位
-- **案件管理**: 6ステージのカンバン、ドラッグ＆ドロップでステージ更新、金額・確度・完了予定日、CSV出力
-- **活動履歴**: 商談・電話・メール・訪問・メモのタイムライン、顧客・連絡先・案件への紐づけ
-- **タスク**: 期限・優先度・完了状態、期限超過/今日/今後/完了のグルーピング、顧客・案件への紐づけ
-- **セキュリティ**: 署名付きセッションCookie、CSRFトークン、ログイン試行制限、CSP、Referrer-Policy、SQLパラメータ化
+## 機能
+
+- **ダッシュボード**: 顧客数、ライセンス数（稼働中）、今月のAPI利用料、未払い請求、顧客別サマリ、最近のAPIイベント
+- **顧客**: TUTIテナントの登録・編集・削除、個別/一括同期、APIキーの暗号化保存
+- **ライセンス**: 全顧客横断の検索（顧客・ラベル・製品コード・ID）、環境・状態・顧客で絞り込み、CSV出力
+- **請求**: 全顧客の請求書（対象月・状態で絞り込み、CSV出力）と顧客別の今月の利用料
+
+## 使っているTUTI API
+
+`/api/baas/v1/service.php` に `X-Tenant-API-Key` を付けて読み取ります。すべて読み取り専用です。
+
+| 画面 | API | 内容 |
+| --- | --- | --- |
+| 顧客 | `service.status` | テナントslug、製品数・ライセンス数 |
+| 顧客 | `products.list` | 契約中の製品 |
+| ライセンス | `licenses.list` | 発行済みライセンス、環境、端末上限、有効期限 |
+| 請求 | `usage.summary` | 当月の課金対象リクエストと利用料 |
+| 請求 | `billing.invoices` | 請求書（issued / paid） |
+| ダッシュボード | `audit.list` | 直近のAPI呼び出し |
+
+ライセンスの発行・停止・削除、請求確定、テナント作成は行いません。これらは TUTI 管理センターで操作してください。必要なスコープは `tenant:read` です。
 
 ## 起動方法
 
-`customer-crm/.venv` を使います。Python 3.13 で作成済みです。
+`customer-crm/.venv`（Python 3.13）を使います。
 
 ```powershell
 cd "$env:USERPROFILE\Documents\API\customer-crm"
 .\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8766
 ```
 
-仮想環境を作り直す場合:
-
-```powershell
-cd "$env:USERPROFILE\Documents\API\customer-crm"
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-`Start-CustomerCrm.ps1` を使うと、ローカルデモ用の環境変数を設定して起動できます（`.venv` が無い場合は `business-ops/.venv` も探します）。
+または:
 
 ```powershell
 .\Start-CustomerCrm.ps1
 ```
 
-ブラウザで `http://127.0.0.1:8766/` を開いてください。
+ブラウザで `http://127.0.0.1:8766/` を開きます。デモログインは `admin` / `demo` です（`CRM_PASSWORD` 未設定時のみ）。
 
-## デモログイン
+## 顧客の追加
 
-`CRM_PASSWORD` を設定しない場合、ローカルデモとして以下のアカウントが有効になります。
+1. 右上の「顧客を追加」を押します。
+2. 顧客名・slug・環境を入力します。
+3. TUTI の**テナントAPIキー**（`baas_live_…` / `baas_sandbox_…`）を入力します。
+4. 保存すると自動で同期し、ライセンス・請求・利用料が表示されます。
 
-- ユーザー名: `admin`
-- パスワード: `demo`
-
-**このデモ設定を本番環境で使わないでください。** 本番では `CRM_PASSWORD` と 32文字以上の `CRM_SESSION_KEY` を必ず設定してください。
+APIキーは AES-256-GCM で暗号化して SQLite に保存します。画面には先頭と末尾4文字だけを表示し、復号したキーをAPIレスポンスへ返すことはありません。ベースURLは `https` のみ許可し、`http` は localhost の検証用に限ります。
 
 ## 環境変数
 
@@ -55,93 +61,44 @@ python -m venv .venv
 | `CRM_NAME` | `管理者` | 画面に表示する名前 |
 | `CRM_PASSWORD` | 未設定時 `demo` | ログインパスワード |
 | `CRM_SESSION_KEY` | 起動ごとに生成 | セッション署名鍵（32文字以上推奨） |
+| `CRM_SECRET` | `data/.secret` を自動生成 | APIキー暗号化の元鍵。本番では必ず設定 |
 | `CRM_SECURE_COOKIES` | `0` | HTTPS運用時は `1` |
-| `CRM_SEED` | `1` | 初回起動時のデモデータ投入。`0` で無効 |
-| `TUTI_API_BASE` | `https://2415.jp` | TUTI BaaS API のベースURL |
-| `TUTI_API_KEY` | 未設定 | テナントAPIキー（`baas_live_…` / `baas_sandbox_…`） |
-| `TUTI_API_ENV` | 未設定（自動） | `sandbox` / `production` を明示する場合に設定 |
 
-本番では HTTPS リバースプロキシの背後で動かし、`CRM_SECURE_COOKIES=1` を設定してください。SQLite ファイルと環境変数はGitへコミットしないでください。
-
-## TUTI連携（契約・ライセンス・請求）
-
-`TUTI連携` 画面は、TUTI の管理API（`/api/baas/v1/service.php`）から契約状況を読み取って表示します。CRMの手入力データとは別に、次の情報を同期します。
-
-| 項目 | API | 用途 |
-| --- | --- | --- |
-| サービス状態 | `service.status` | テナントslug、製品数、ライセンス数 |
-| 製品 | `products.list` | 契約中の製品一覧 |
-| ライセンス | `licenses.list` | 発行済みライセンス、環境、端末上限、有効期限 |
-| API利用料 | `usage.summary` | 当月の課金対象リクエストと料金 |
-| 請求書 | `billing.invoices` | 発行済み・支払済みの請求書 |
-| APIイベント | `audit.list` | 直近のAPI呼び出し履歴 |
-
-設定手順:
-
-```powershell
-$env:TUTI_API_BASE='https://2415.jp'
-$env:TUTI_API_KEY='baas_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
-$env:TUTI_API_ENV='production'   # sandbox のキーなら sandbox
-.\Start-CustomerCrm.ps1
-```
-
-- 認証は `X-Tenant-API-Key` ヘッダーです。キーは画面・ログ・DBに保存しません（表示は先頭13文字のみ）。
-- 読み取り専用です。ライセンスの発行・停止・削除は行いません。書き込みが必要な場合は管理センターを使ってください。
-- 取得結果は `tuti_cache` テーブルにキャッシュし、同期に失敗した項目は前回の内容を保持したままエラーを表示します。
-- 「今すぐ同期」はログインセッションとCSRFトークンを要求します。
-- キーが無い場合はセットアップ手順を画面に表示し、ダミーデータは作りません。
+`CRM_SECRET` を変更すると、保存済みAPIキーは復号できなくなります（顧客の再登録が必要）。本番では HTTPS リバースプロキシの背後で動かし、`CRM_SECURE_COOKIES=1` を設定してください。
 
 ## データモデル
 
-- `companies`: 顧客（会社）
-- `contacts`: 連絡先（顧客に属する）
-- `deals`: 案件（顧客に属する）
-- `activities`: 活動履歴（顧客・連絡先・案件に紐づく）
-- `tasks`: タスク（顧客・案件に紐づく）
+- `customers`: 顧客（TUTIテナント）。名前、slug、ベースURL、環境、暗号化したAPIキー、メモ、有効フラグ
+- `customer_cache`: 顧客 × APIスコープの最新スナップショット（最終同期時刻とエラーを保持）
 
-顧客を削除すると、紐づく連絡先・案件・活動・タスクも削除されます。削除前に画面で確認します。
+同期に失敗した項目は前回の内容を保持し、画面にエラーを表示します。APIキーやトークンはログに出しません。
 
 ## APIの概要
 
-すべてのAPIはログインセッションを要求します。書き込み系APIは `X-CSRF-Token` が必要です。
+すべてログインセッションが必要です。書き込み系は `X-CSRF-Token` も必要です。
 
 - `GET /api/dashboard`
-- `GET|POST /api/companies`
-- `GET|PUT|DELETE /api/companies/{id}`
-- `GET|POST /api/contacts`
-- `GET|PUT|DELETE /api/contacts/{id}`
-- `GET|POST /api/deals`
-- `GET|PUT|DELETE /api/deals/{id}`
-- `PATCH /api/deals/{id}/stage`
-- `GET|POST /api/activities`
-- `DELETE /api/activities/{id}`
-- `GET|POST /api/tasks`
-- `GET|PUT|PATCH|DELETE /api/tasks/{id}`
-- `GET /api/export/companies.csv`
-- `GET /api/export/deals.csv`
-- `GET /api/tuti/config`
-- `GET /api/tuti/overview`
-- `POST /api/tuti/sync`
-- `GET /api/export/tuti-licenses.csv`
+- `GET|POST /api/customers`
+- `GET|PUT|DELETE /api/customers/{id}`
+- `POST /api/customers/{id}/sync`
+- `POST /api/sync-all`
+- `GET /api/licenses?q=&environment=&status=&customer_id=`
+- `GET /api/invoices?period=&status=&customer_id=`
+- `GET /api/events?customer_id=&limit=`
+- `GET /api/export/licenses.csv`
+- `GET /api/export/invoices.csv`
 
 ## 制限事項
 
-このアプリは顧客管理のプロトタイプです。
-
+- 読み取り専用です。TUTI側のデータを変更する操作はありません。
 - 単一管理者ログインです。ユーザーごとの権限管理は未実装です。
-- OIDC / SSO 連携は未実装です。必要になった場合は `business-ops/main.py` のOIDC実装を参考に、セッション発行部分を差し替えてください。
-- 複数テナント、監査ログ、メール送信は未実装です。外部連携は TUTI BaaS API の読み取り同期（TUTI連携画面）のみです。
-- TUTI連携は読み取り専用で、ライセンス発行・停止・請求確定は行いません。
 - SQLite は単一プロセス向けです。同時書き込みが多い本番では PostgreSQL などへの移行を検討してください。
 
 ## テスト
 
 ```powershell
 cd "$env:USERPROFILE\Documents\API"
-customer-crm\.venv\Scripts\python.exe -m unittest tests.test_customer_crm tests.test_tuti_api -v
-```
+customer-crm\.venv\Scripts\python.exe -m unittest tests.test_tuti_crm -v
 ```
 
-外部依存を追加しないため、`PYTHONPATH` の設定は不要です。
-
-画面のE2Eは、ヘッドレスEdge/Chromeが利用できる環境で手動またはCDPスクリプトから確認できます。
+APIはローカルの擬似BaaSサーバーに対して検証します（外部通信なし）。

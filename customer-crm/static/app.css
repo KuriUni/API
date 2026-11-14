@@ -270,6 +270,7 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .section-head h2 { margin: 0; font-size: 15px; letter-spacing: -0.02em; }
 .section-head .muted { font-size: 11px; }
 .card {
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
@@ -305,6 +306,7 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .metric .metric-note { margin: 4px 0 0; color: var(--muted); font-size: 10px; }
 .metric.alert strong { color: var(--danger); }
 .dash-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr); gap: 16px; align-items: start; }
+.dash-grid > *, .dash-stack { min-width: 0; }
 .dash-stack { display: grid; gap: 16px; }
 .pipeline-card { padding: 20px; }
 .pipeline-list { display: grid; gap: 12px; margin-top: 16px; }
@@ -369,7 +371,7 @@ progress.meter.small { height: 5px; }
 
 /* Tables */
 .table-card { overflow: hidden; }
-.table-wrap { overflow-x: auto; }
+.table-wrap { overflow-x: auto; max-width: 100%; }
 table.data { width: 100%; border-collapse: collapse; }
 table.data th {
   padding: 11px 14px;
@@ -385,6 +387,9 @@ table.data th {
 table.data td { padding: 13px 14px; border-bottom: 1px solid #f0f2f7; font-size: 12px; vertical-align: middle; }
 table.data tbody tr:last-child td { border-bottom: 0; }
 table.data tbody tr:hover { background: #fbfcff; }
+.table-sub { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.cell-actions { text-align: right; white-space: nowrap; }
+.cell-actions .icon-button { width: 28px; height: 28px; }
 .cell-main { display: flex; align-items: center; gap: 10px; min-width: 180px; }
 .company-avatar {
   display: inline-grid;

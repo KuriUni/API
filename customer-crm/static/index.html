@@ -17,39 +17,27 @@
         <span class="brand-mark">T</span>
         <span class="brand-copy"><strong>TUTI</strong><small>CRM</small></span>
       </a>
-      <div class="workspace-pill"><span class="dot"></span><span>営業ワークスペース</span></div>
+      <div class="workspace-pill"><span class="dot"></span><span>TUTI テナント管理</span></div>
       <nav class="nav" aria-label="メインナビゲーション">
         <button class="nav-item" data-route="/dashboard">
           <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6v-9h-6v9Zm0-16v5h6V4h-6Z"/></svg></span>
           <span>ダッシュボード</span>
         </button>
-        <button class="nav-item" data-route="/companies">
+        <button class="nav-item" data-route="/customers">
           <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21V4a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v4h4a1 1 0 0 1 1 1v12h-6v-4H9v4H4Zm3-4h2v-2H7v2Zm0-4h2v-2H7v2Zm0-4h2V7H7v2Zm5 4h2v-2h-2v2Zm0-4h2V7h-2v2Zm6 8h-1v-2h1v2Zm0-4h-1v-2h1v2Z"/></svg></span>
           <span>顧客</span>
         </button>
-        <button class="nav-item" data-route="/contacts">
-          <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 2c-4.42 0-8 2.24-8 5v2h16v-2c0-2.76-3.58-5-8-5Z"/></svg></span>
-          <span>連絡先</span>
+        <button class="nav-item" data-route="/licenses">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h9a2 2 0 0 1 2 2v3h3a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm0 2v14h14V10h-5V5H5Zm9 0v3h3V6l-3-1ZM7 12h10v2H7v-2Zm0 4h7v2H7v-2Z"/></svg></span>
+          <span>ライセンス</span>
         </button>
-        <button class="nav-item" data-route="/deals">
-          <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19h16v2H4v-2Zm2-2h3V9H6v8Zm5 0h3V5h-3v12Zm5 0h3v-5h-3v5Z"/></svg></span>
-          <span>案件パイプライン</span>
-        </button>
-        <button class="nav-item" data-route="/activities">
-          <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v2H4V4Zm0 5h10v2H4V9Zm0 5h16v2H4v-2Zm0 5h10v2H4v-2Z"/></svg></span>
-          <span>活動履歴</span>
-        </button>
-        <button class="nav-item" data-route="/tasks">
-          <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17Z"/></svg></span>
-          <span>タスク</span>
-        </button>
-        <button class="nav-item" data-route="/tuti">
-          <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 19a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 17.4 8.5 4.25 4.25 0 0 1 17.75 19H6.5Zm0-2h11.25a2.25 2.25 0 0 0 .2-4.49l-1.1-.1-.25-1.08a4 4 0 0 0-7.55-.2l-.42 1.1-1.17-.13A2.5 2.5 0 0 0 6.5 17Z"/></svg></span>
-          <span>TUTI連携</span>
+        <button class="nav-item" data-route="/billing">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h12a1 1 0 0 1 1 1v19l-3-2-2 2-2-2-2 2-2-2-3 2V3a1 1 0 0 1 1-1Zm1 4v2h10V6H7Zm0 4v2h10v-2H7Zm0 4v2h6v-2H7Z"/></svg></span>
+          <span>請求</span>
         </button>
       </nav>
       <div class="sidebar-bottom">
-        <div class="sidebar-tip"><strong>ヒント</strong><p>顧客詳細から活動・案件・タスクをまとめて追加できます。</p></div>
+        <div class="sidebar-tip"><strong>ヒント</strong><p>顧客はTUTIテナントです。テナントAPIキーを登録すると契約データを取得します。</p></div>
         <div class="sidebar-user">
           <span id="sidebar-avatar" class="avatar">管</span>
           <span class="sidebar-user-copy"><strong id="sidebar-name">管理者</strong><small>管理者</small></span>
@@ -67,12 +55,12 @@
         </button>
         <form id="global-search" class="global-search" role="search">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16Zm0-14a6 6 0 1 0 0 12 6 6 0 0 0 0-12Zm6.32 12.9 1.42-1.42 4.24 4.24-1.42 1.42-4.24-4.24Z"/></svg>
-          <input id="global-query" type="search" placeholder="顧客を検索（Ctrl+K）" autocomplete="off" aria-label="全体検索">
+          <input id="global-query" type="search" placeholder="ライセンス・顧客を検索（Ctrl+K）" autocomplete="off" aria-label="全体検索">
         </form>
         <div class="topbar-actions">
           <button id="quick-create" class="button primary small">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z"/></svg>
-            <span>新規</span>
+            <span>顧客を追加</span>
           </button>
           <span id="topbar-date" class="topbar-date"></span>
         </div>

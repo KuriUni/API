@@ -1,4 +1,5 @@
-# TUTI CRM runtime. Keep versions aligned with business-ops/requirements.txt.
-fastapi==0.162.2
+# TUTI CRM runtime. Versions follow xrea-source/requirements.txt where shared.
+fastapi==0.162.0
 pydantic==2.14.2
 uvicorn==0.54.0
+cryptography==50.0.2
