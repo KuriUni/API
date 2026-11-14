@@ -6,6 +6,7 @@
   const RANKS = ['S', 'A', 'B', 'C'];
   const KIND_LABELS = { call: '電話', email: 'メール', meeting: '商談', visit: '訪問', note: 'メモ' };
   const PRIORITY_LABELS = { high: '高', medium: '中', low: '低' };
+  const TUTI_SCOPE_LABELS = { status: 'サービス状態', products: '製品', licenses: 'ライセンス', usage: 'API利用料', invoices: '請求書', audit: 'APIイベント' };
   const RANK_LABELS = { S: 'Sランク', A: 'Aランク', B: 'Bランク', C: 'Cランク' };
   const state = {
     me: null,
@@ -391,6 +392,8 @@
         await renderActivities(params, token);
       } else if (path === '/tasks') {
         await renderTasks(params, token);
+      } else if (path === '/tuti') {
+        await renderTuti(params, token);
       } else {
         setView(emptyState('ページが見つかりません', 'サイドバーから画面を選び直してください。'));
       }
@@ -643,6 +646,108 @@
       ${sections || emptyState('タスクはありません', '顧客や案件に紐づくタスクを追加して、次のアクションを忘れずに進めましょう。', `<button class="button primary" data-action="new-task">${icon('plus')}タスクを追加</button>`)}`);
   }
 
+  async function renderTuti(params, token) {
+    const data = await api('/api/tuti/overview');
+    if (token !== state.routeToken) return;
+    const config = data.config || {};
+    const scopes = data.scopes || {};
+    const payload = scope => (scopes[scope] || {}).payload || null;
+    const status = payload('status');
+    const productRows = (payload('products') || {}).products || [];
+    const licenseRows = (payload('licenses') || {}).licenses || [];
+    const usage = payload('usage');
+    const invoices = (payload('invoices') || {}).invoices || [];
+    const events = (payload('audit') || {}).events || [];
+    const query = (params.get('q') || '').trim().toLowerCase();
+    const visible = query
+      ? licenseRows.filter(row => [row.id, row.label, row.product_code, row.environment].join(' ').toLowerCase().includes(query))
+      : licenseRows;
+    const activeCount = licenseRows.filter(row => row.active).length;
+    const sandboxCount = licenseRows.filter(row => row.environment === 'sandbox').length;
+    const charge = usage ? Number(usage.total_charge_yen_equivalent ?? usage.total_charge_credit ?? 0) : null;
+    const syncButton = config.configured
+      ? '<button class="button primary" data-action="tuti-sync">今すぐ同期</button>'
+      : '';
+    const setup = config.configured ? `
+      <section class="card detail-section">
+        <div class="section-head"><div><p class="eyebrow">CONNECTION</p><h2>接続先</h2></div><span class="badge rank-S">API接続済み</span></div>
+        <div class="tuti-meta">
+          <div><span class="muted">ベースURL</span><strong>${esc(config.base || '')}</strong></div>
+          <div><span class="muted">環境</span><strong>${esc(config.environment || 'auto')}</strong></div>
+          <div><span class="muted">APIキー</span><strong>${esc(config.key_hint || '設定済み')}</strong></div>
+          <div><span class="muted">最終同期</span><strong>${data.last_sync ? esc(formatDateTime(data.last_sync)) : '未同期'}</strong></div>
+        </div>
+      </section>` : `
+      <section class="card detail-section">
+        <div class="section-head"><div><p class="eyebrow">SETUP REQUIRED</p><h2>TUTI APIキーが未設定です</h2></div><span class="badge rank-C">未接続</span></div>
+        <p class="muted">テナントAPIキーを環境変数に設定してアプリを再起動すると、契約・ライセンス・API利用料・請求書をこの画面に取り込めます。キーは画面にもログにも保存しません。</p>
+        <pre class="code-block">$env:TUTI_API_BASE='https://2415.jp'
+$env:TUTI_API_KEY='baas_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+$env:TUTI_API_ENV='production'  # sandbox の場合は sandbox
+.\Start-CustomerCrm.ps1</pre>
+        <p class="muted">キーは TUTI 管理センターでテナントごとに発行され、読み取りには <code>tenant:read</code> スコープが必要です。</p>
+        ${data.last_sync ? `<p class="muted">以下の数値は ${esc(formatDateTime(data.last_sync))} に取得したキャッシュです。キーを設定して再起動したあと「今すぐ同期」で更新してください。</p>` : ''}
+      </section>`;
+    const failureNotice = ['status', 'products', 'licenses', 'usage', 'invoices', 'audit']
+      .filter(scope => (scopes[scope] || {}).error)
+      .map(scope => `<p class="panel-note">${esc(TUTI_SCOPE_LABELS[scope] || scope)}: ${esc(scopes[scope].error)}</p>`)
+      .join('');
+    const licenseTable = visible.length ? `
+      <div class="table-wrap"><table class="data"><thead><tr><th>ID</th><th>製品</th><th>ラベル</th><th>状態</th><th>環境</th><th>端末上限</th><th>有効期限</th><th>発行日</th></tr></thead><tbody>
+      ${visible.map(row => `<tr>
+        <td>#${esc(row.id)}</td>
+        <td>${esc(row.product_code || row.product_id || '')}</td>
+        <td>${esc(row.label || '（ラベルなし）')}</td>
+        <td>${row.active ? '<span class="badge rank-S">稼働中</span>' : '<span class="badge rank-C">停止</span>'}</td>
+        <td>${esc(row.environment || '')}</td>
+        <td>${esc(row.max_devices ?? '')}</td>
+        <td>${row.expires_at ? esc(formatDate(row.expires_at)) : '無期限'}</td>
+        <td>${row.created_at ? esc(formatDate(row.created_at)) : ''}</td>
+      </tr>`).join('')}
+      </tbody></table></div>` : emptyState('ライセンスがありません', config.configured ? '同期すると、このテナントのライセンスがここに並びます。' : 'TUTI APIキーを設定すると、ライセンスを取り込めます。');
+    const usageRows = usage && Array.isArray(usage.details) ? usage.details : [];
+    const invoiceRows = Array.isArray(invoices) ? invoices : ((payload('invoices') || {}).items || []);
+    const invoicesTable = invoiceRows.length ? `
+      <div class="table-wrap"><table class="data"><thead><tr><th>請求番号</th><th>対象月</th><th>金額</th><th>状態</th><th>発行日</th><th>支払期限</th></tr></thead><tbody>
+      ${invoiceRows.map(row => `<tr><td>${esc(row.invoice_number || '')}</td><td>${esc(row.billing_period || '')}</td><td>${esc(yen(row.total_yen ?? 0))}</td><td>${esc(row.status || '')}</td><td>${row.issue_date ? esc(formatDate(row.issue_date)) : ''}</td><td>${row.due_date ? esc(formatDate(row.due_date)) : ''}</td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="panel-note">請求書はまだありません。</p>';
+    const usageTable = usageRows.length ? `
+      <div class="table-wrap"><table class="data"><thead><tr><th>API</th><th>リクエスト数</th><th>単価</th><th>課金単位</th></tr></thead><tbody>
+      ${usageRows.map(row => `<tr><td>${esc(row.api || '')}</td><td>${esc(row.requests ?? 0)}</td><td>${esc(row.unit_credit || '')}</td><td>${esc(row.charge_credit || '')}</td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="panel-note">この期間の課金対象API呼び出しはありません。</p>';
+    const eventRows = events.length ? `
+      <div class="table-wrap"><table class="data"><thead><tr><th>日時</th><th>操作</th><th>HTTP</th><th>リクエストID</th></tr></thead><tbody>
+      ${events.map(row => `<tr><td>${esc(formatDateTime(row.used_at))}</td><td>${esc(row.operation || '')}</td><td>${esc(row.status_code ?? '')}</td><td><code>${esc(row.request_id || '')}</code></td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="panel-note">APIイベントはまだありません。</p>';
+    setView(`
+      ${pageHead('TUTI API', 'TUTI連携', '契約・ライセンス・API利用料・請求書を、TUTIの管理APIから直接読み取ります。', `${syncButton}${config.configured ? '<a class="button quiet" href="/api/export/tuti-licenses.csv">ライセンスCSV</a>' : ''}`)}
+      ${failureNotice ? `<section class="card detail-section"><div class="section-head"><div><p class="eyebrow">SYNC NOTES</p><h2>取得できなかった項目</h2></div></div>${failureNotice}</section>` : ''}
+      ${setup}
+      <section class="metrics">
+        <article class="metric"><span class="metric-label">${icon('briefcase')}ライセンス</span><strong>${numberFormat.format(licenseRows.length)}<small>件</small></strong><p class="metric-note">稼働中 ${numberFormat.format(activeCount)} 件</p></article>
+        <article class="metric"><span class="metric-label">${icon('globe')}サンドボックス</span><strong>${numberFormat.format(sandboxCount)}<small>件</small></strong><p class="metric-note">本番 ${numberFormat.format(licenseRows.length - sandboxCount)} 件</p></article>
+        <article class="metric"><span class="metric-label">${icon('chart')}今月のAPI利用料</span><strong>${charge === null ? '-' : yen(charge)}</strong><p class="metric-note">${usage ? `${numberFormat.format(usage.total_requests || 0)} リクエスト / ${esc(usage.period || '')}` : '未同期'}</p></article>
+        <article class="metric"><span class="metric-label">${icon('users')}製品</span><strong>${numberFormat.format(productRows.length)}<small>件</small></strong><p class="metric-note">${status ? `テナント ${esc((status.tenant || {}).slug || '')}` : '未同期'}</p></article>
+      </section>
+      <section class="card detail-section">
+        <div class="section-head"><div><p class="eyebrow">LICENSES</p><h2>ライセンス <span class="result-count">${visible.length}件</span></h2></div></div>
+        <form class="toolbar" data-filter="tuti"><div class="toolbar-left"><label class="search-field">${icon('search')}<input type="search" name="q" value="${esc(params.get('q') || '')}" placeholder="ラベル・製品コード・IDで絞り込み" aria-label="ライセンスを検索"></label><button class="button" type="submit">絞り込む</button><a class="button quiet" href="#/tuti">解除</a></div></form>
+        ${licenseTable}
+      </section>
+      <section class="card detail-section">
+        <div class="section-head"><div><p class="eyebrow">API USAGE</p><h2>API利用料 ${usage ? `（${esc(usage.period || '')}）` : ''}</h2></div><span class="muted">${usage ? `課金対象 ${numberFormat.format(usage.billable_requests || 0)} / 全体 ${numberFormat.format(usage.total_requests || 0)}` : ''}</span></div>
+        ${usageTable}
+      </section>
+      <section class="card detail-section">
+        <div class="section-head"><div><p class="eyebrow">INVOICES</p><h2>請求書</h2></div></div>
+        ${invoicesTable}
+      </section>
+      <section class="card detail-section">
+        <div class="section-head"><div><p class="eyebrow">AUDIT</p><h2>最近のAPIイベント</h2></div></div>
+        ${eventRows}
+      </section>`);
+  }
+
   async function onViewClick(event) {
     const routeLink = event.target.closest('a[data-route]');
     if (routeLink) {
@@ -680,6 +785,13 @@
       if (action === 'delete-task') return deleteTask(id);
       if (action === 'export-companies') return location.assign('/api/export/companies.csv');
       if (action === 'export-deals') return location.assign('/api/export/deals.csv');
+      if (action === 'tuti-sync') {
+        button.disabled = true;
+        button.textContent = '同期中…';
+        const result = await api('/api/tuti/sync', { method: 'POST' });
+        toast(result.ok ? 'TUTI API と同期しました' : '一部の項目を取得できませんでした', !result.ok);
+        return route();
+      }
     } catch (error) {
       toast(error.message, true);
     }

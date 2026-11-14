@@ -57,8 +57,39 @@ python -m venv .venv
 | `CRM_SESSION_KEY` | 起動ごとに生成 | セッション署名鍵（32文字以上推奨） |
 | `CRM_SECURE_COOKIES` | `0` | HTTPS運用時は `1` |
 | `CRM_SEED` | `1` | 初回起動時のデモデータ投入。`0` で無効 |
+| `TUTI_API_BASE` | `https://2415.jp` | TUTI BaaS API のベースURL |
+| `TUTI_API_KEY` | 未設定 | テナントAPIキー（`baas_live_…` / `baas_sandbox_…`） |
+| `TUTI_API_ENV` | 未設定（自動） | `sandbox` / `production` を明示する場合に設定 |
 
 本番では HTTPS リバースプロキシの背後で動かし、`CRM_SECURE_COOKIES=1` を設定してください。SQLite ファイルと環境変数はGitへコミットしないでください。
+
+## TUTI連携（契約・ライセンス・請求）
+
+`TUTI連携` 画面は、TUTI の管理API（`/api/baas/v1/service.php`）から契約状況を読み取って表示します。CRMの手入力データとは別に、次の情報を同期します。
+
+| 項目 | API | 用途 |
+| --- | --- | --- |
+| サービス状態 | `service.status` | テナントslug、製品数、ライセンス数 |
+| 製品 | `products.list` | 契約中の製品一覧 |
+| ライセンス | `licenses.list` | 発行済みライセンス、環境、端末上限、有効期限 |
+| API利用料 | `usage.summary` | 当月の課金対象リクエストと料金 |
+| 請求書 | `billing.invoices` | 発行済み・支払済みの請求書 |
+| APIイベント | `audit.list` | 直近のAPI呼び出し履歴 |
+
+設定手順:
+
+```powershell
+$env:TUTI_API_BASE='https://2415.jp'
+$env:TUTI_API_KEY='baas_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+$env:TUTI_API_ENV='production'   # sandbox のキーなら sandbox
+.\Start-CustomerCrm.ps1
+```
+
+- 認証は `X-Tenant-API-Key` ヘッダーです。キーは画面・ログ・DBに保存しません（表示は先頭13文字のみ）。
+- 読み取り専用です。ライセンスの発行・停止・削除は行いません。書き込みが必要な場合は管理センターを使ってください。
+- 取得結果は `tuti_cache` テーブルにキャッシュし、同期に失敗した項目は前回の内容を保持したままエラーを表示します。
+- 「今すぐ同期」はログインセッションとCSRFトークンを要求します。
+- キーが無い場合はセットアップ手順を画面に表示し、ダミーデータは作りません。
 
 ## データモデル
 
@@ -88,6 +119,10 @@ python -m venv .venv
 - `GET|PUT|PATCH|DELETE /api/tasks/{id}`
 - `GET /api/export/companies.csv`
 - `GET /api/export/deals.csv`
+- `GET /api/tuti/config`
+- `GET /api/tuti/overview`
+- `POST /api/tuti/sync`
+- `GET /api/export/tuti-licenses.csv`
 
 ## 制限事項
 
@@ -95,14 +130,16 @@ python -m venv .venv
 
 - 単一管理者ログインです。ユーザーごとの権限管理は未実装です。
 - OIDC / SSO 連携は未実装です。必要になった場合は `business-ops/main.py` のOIDC実装を参考に、セッション発行部分を差し替えてください。
-- 複数テナント、監査ログ、メール送信、外部CRM連携は未実装です。
+- 複数テナント、監査ログ、メール送信は未実装です。外部連携は TUTI BaaS API の読み取り同期（TUTI連携画面）のみです。
+- TUTI連携は読み取り専用で、ライセンス発行・停止・請求確定は行いません。
 - SQLite は単一プロセス向けです。同時書き込みが多い本番では PostgreSQL などへの移行を検討してください。
 
 ## テスト
 
 ```powershell
 cd "$env:USERPROFILE\Documents\API"
-customer-crm\.venv\Scripts\python.exe -m unittest tests.test_customer_crm -v
+customer-crm\.venv\Scripts\python.exe -m unittest tests.test_customer_crm tests.test_tuti_api -v
+```
 ```
 
 外部依存を追加しないため、`PYTHONPATH` の設定は不要です。

@@ -31,6 +31,8 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+import tuti_api
+
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("CRM_DATA", ROOT / "data")).resolve()
 DB_PATH = DATA_DIR / "customer-crm.sqlite3"
@@ -240,6 +242,12 @@ def initialize() -> None:
         CREATE INDEX IF NOT EXISTS deals_stage_idx ON deals(stage);
         CREATE INDEX IF NOT EXISTS activities_company_idx ON activities(company_id, occurred_at);
         CREATE INDEX IF NOT EXISTS tasks_status_due_idx ON tasks(status, due_date);
+        CREATE TABLE IF NOT EXISTS tuti_cache (
+          scope TEXT PRIMARY KEY,
+          payload TEXT,
+          fetched_at TEXT NOT NULL DEFAULT '',
+          error TEXT NOT NULL DEFAULT ''
+        );
         """)
         if SEED_DEMO and db.execute("SELECT COUNT(*) FROM companies").fetchone()[0] == 0:
             _seed(db)
@@ -1161,6 +1169,104 @@ def export_deals(request: Request):
              r["expected_close"], r["owner"], r["note"]] for r in rows]
     return _csv_response(data, ["ID", "顧客", "案件", "ステージ", "金額", "確度", "完了予定", "担当", "メモ"],
                          "案件一覧.csv")
+
+
+# ---------------------------------------------------------------------------
+# TUTI BaaS API integration (read-only sync)
+# ---------------------------------------------------------------------------
+TUTI_SCREENS = ("status", "products", "licenses", "usage", "invoices", "audit")
+
+
+def _tuti_cache_read(db: sqlite3.Connection) -> dict:
+    rows = db.execute("SELECT scope, payload, fetched_at, error FROM tuti_cache").fetchall()
+    return {row["scope"]: {"payload": json.loads(row["payload"] or "null"),
+                            "fetched_at": row["fetched_at"], "error": row["error"]} for row in rows}
+
+
+def _tuti_cache_write(db: sqlite3.Connection, scope: str, payload, error: str = "") -> None:
+    db.execute(
+        "INSERT INTO tuti_cache (scope, payload, fetched_at, error) VALUES (?,?,?,?) "
+        "ON CONFLICT(scope) DO UPDATE SET payload=excluded.payload, fetched_at=excluded.fetched_at, error=excluded.error",
+        (scope, json.dumps(payload, ensure_ascii=False), _now(), error),
+    )
+
+
+@app.get("/api/tuti/config")
+def tuti_config(request: Request) -> dict:
+    """Report the API connection state without revealing the key."""
+    _require(request)
+    config = tuti_api.describe()
+    with closing(connect()) as db:
+        cache = _tuti_cache_read(db)
+    config["last_sync"] = max((item["fetched_at"] for item in cache.values()), default="")
+    config["cached"] = {scope: bool(cache.get(scope, {}).get("fetched_at")) for scope in TUTI_SCREENS}
+    return config
+
+
+@app.get("/api/tuti/overview")
+def tuti_overview(request: Request) -> dict:
+    """Serve the last synced snapshot so the screen renders instantly."""
+    _require(request)
+    with closing(connect()) as db:
+        cache = _tuti_cache_read(db)
+    return {
+        "config": tuti_api.describe(),
+        "scopes": {scope: cache.get(scope, {"payload": None, "fetched_at": "", "error": ""})
+                   for scope in TUTI_SCREENS},
+        "last_sync": max((item["fetched_at"] for item in cache.values()), default=""),
+    }
+
+
+@app.post("/api/tuti/sync")
+def tuti_sync(request: Request) -> dict:
+    """Pull tenant status, products, licenses, billing and audit into the cache."""
+    _require(request, write=True)
+    if not tuti_api.configured():
+        raise HTTPException(400, "TUTI_API_KEY が未設定です。環境変数にテナントAPIキーを設定してください")
+    period = _today()[:7]
+    calls = {
+        "status": lambda: tuti_api.status(),
+        "products": lambda: tuti_api.products(limit=50),
+        "licenses": lambda: tuti_api.licenses(limit=200),
+        "usage": lambda: tuti_api.usage(period),
+        "invoices": lambda: tuti_api.invoices(period),
+        "audit": lambda: tuti_api.audit(limit=25),
+    }
+    results: dict = {}
+    with closing(connect()) as db:
+        for scope in TUTI_SCREENS:
+            try:
+                payload = calls[scope]()
+            except tuti_api.TutiApiError as error:
+                previous = _tuti_cache_read(db).get(scope, {}).get("payload")
+                _tuti_cache_write(db, scope, previous, str(error))
+                results[scope] = {"ok": False, "error": str(error), "code": error.code}
+            else:
+                _tuti_cache_write(db, scope, payload)
+                results[scope] = {"ok": True, "error": ""}
+        db.commit()
+        cache = _tuti_cache_read(db)
+    failed = [scope for scope in TUTI_SCREENS if not results[scope]["ok"]]
+    return {
+        "ok": not failed,
+        "period": period,
+        "results": results,
+        "last_sync": max((item["fetched_at"] for item in cache.values()), default=""),
+    }
+
+
+@app.get("/api/export/tuti-licenses.csv")
+def export_tuti_licenses(request: Request):
+    _require(request)
+    with closing(connect()) as db:
+        cache = _tuti_cache_read(db)
+    payload = (cache.get("licenses", {}) or {}).get("payload") or {}
+    rows = payload.get("licenses") or []
+    data = [[r.get("id", ""), r.get("product_code", ""), r.get("label", ""),
+             "有効" if r.get("active") else "停止", r.get("environment", ""),
+             r.get("max_devices", ""), r.get("expires_at") or "", r.get("created_at") or ""] for r in rows]
+    return _csv_response(data, ["ライセンスID", "製品コード", "ラベル", "状態", "環境", "端末上限", "有効期限", "発行日"],
+                         "TUTIライセンス.csv")
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

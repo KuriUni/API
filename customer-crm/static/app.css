@@ -509,6 +509,11 @@ table.data tbody tr:hover { background: #fbfcff; }
 .timeline-sub { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--muted); font-size: 10px; flex-wrap: wrap; }
 .detail-wide { grid-column: 1 / -1; }
 .panel-note { color: var(--muted); font-size: 10px; }
+.code-block { margin: 10px 0 8px; padding: 12px 14px; border: 1px solid #e2e7f1; border-radius: 10px; background: #f7f9fc; color: #24314d; font: 11px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-x: auto; white-space: pre; }
+.tuti-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px 20px; }
+.tuti-meta > div { display: grid; gap: 3px; min-width: 0; }
+.tuti-meta .muted { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
+.tuti-meta strong { font-size: 12px; overflow-wrap: anywhere; }
 
 /* Forms / modal */
 .modal-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 22px; background: rgba(16, 24, 43, 0.5); backdrop-filter: blur(3px); }
