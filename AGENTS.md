@@ -10,6 +10,7 @@
 | `sso-ftp-source-20261103-002438/` | SSO Core サーバーのソース（`server.py` ほか）。テストの参照元 |
 | `suna-core-source/` | Sunabar Core Server のアプリ |
 | `business-ops/` | 業務記録 Web アプリ試作（FastAPI + SQLite + OIDC）。TUTI Operations とは別製品 |
+| `customer-crm/` | GINIE風の顧客管理システム試作（FastAPI + SQLite + Vanilla JS）。顧客・連絡先・案件・活動・タスク |
 | `XreaOperationsDesktop/` | Windows 管理者デスクトップアプリ。Rust 版（`rust/`）が現行開発ベース、C# WinForms 版が旧実装 |
 | `operations/` | 配備・保守用 PowerShell スクリプト（Xrea / MainSite / SSO / Sunabar / Maintenance） |
 | `docs/` | SSO・ライセンス・OIDC・Sunabar の運用手順書 |
@@ -23,7 +24,7 @@
 - Python: 各サブプロジェクトで venv を作成し、`business-ops/requirements.txt` は完全固定バージョン。依存更新はレビュー前提で行う。
 - テスト: `$env:PYTHONPATH='tools/vendor/pymysql-1.2.3-py3-none-any.whl'; python -m unittest discover -s tests`（PowerShell。Node 側は `node tests/test_bulk_jobs.cjs` など個別実行）。管理画面のE2EはEdge/Chromeが見つかる場合のみ実行し、無い環境では自動skip。
 - デスクトップアプリ: `cd XreaOperationsDesktop/rust && cargo check` / `cargo run --release --target x86_64-pc-windows-msvc`。
-- 起動: `business-ops` は `py -m uvicorn main:app --host 127.0.0.1 --port 8765`（環境変数は README 参照）。
+- 起動: `business-ops` は `py -m uvicorn main:app --host 127.0.0.1 --port 8765`（環境変数は README 参照）。`customer-crm` は `Start-CustomerCrm.ps1` または `py -m uvicorn main:app --host 127.0.0.1 --port 8766`。
 
 ## 規約
 

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111a2e">
+  <title>TUTI CRM | 顧客管理</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <div id="sidebar-overlay" class="sidebar-overlay" hidden></div>
+    <aside id="sidebar" class="sidebar">
+      <a class="brand" href="#/dashboard" aria-label="TUTI CRM ホーム">
+        <span class="brand-mark">T</span>
+        <span class="brand-copy"><strong>TUTI</strong><small>CRM</small></span>
+      </a>
+      <div class="workspace-pill"><span class="dot"></span><span>営業ワークスペース</span></div>
+      <nav class="nav" aria-label="メインナビゲーション">
+        <button class="nav-item" data-route="/dashboard">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6v-9h-6v9Zm0-16v5h6V4h-6Z"/></svg></span>
+          <span>ダッシュボード</span>
+        </button>
+        <button class="nav-item" data-route="/companies">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21V4a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v4h4a1 1 0 0 1 1 1v12h-6v-4H9v4H4Zm3-4h2v-2H7v2Zm0-4h2v-2H7v2Zm0-4h2V7H7v2Zm5 4h2v-2h-2v2Zm0-4h2V7h-2v2Zm6 8h-1v-2h1v2Zm0-4h-1v-2h1v2Z"/></svg></span>
+          <span>顧客</span>
+        </button>
+        <button class="nav-item" data-route="/contacts">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 2c-4.42 0-8 2.24-8 5v2h16v-2c0-2.76-3.58-5-8-5Z"/></svg></span>
+          <span>連絡先</span>
+        </button>
+        <button class="nav-item" data-route="/deals">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19h16v2H4v-2Zm2-2h3V9H6v8Zm5 0h3V5h-3v12Zm5 0h3v-5h-3v5Z"/></svg></span>
+          <span>案件パイプライン</span>
+        </button>
+        <button class="nav-item" data-route="/activities">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v2H4V4Zm0 5h10v2H4V9Zm0 5h16v2H4v-2Zm0 5h10v2H4v-2Z"/></svg></span>
+          <span>活動履歴</span>
+        </button>
+        <button class="nav-item" data-route="/tasks">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17Z"/></svg></span>
+          <span>タスク</span>
+        </button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="sidebar-tip"><strong>ヒント</strong><p>顧客詳細から活動・案件・タスクをまとめて追加できます。</p></div>
+        <div class="sidebar-user">
+          <span id="sidebar-avatar" class="avatar">管</span>
+          <span class="sidebar-user-copy"><strong id="sidebar-name">管理者</strong><small>管理者</small></span>
+          <button id="logout-button" class="icon-button" title="ログアウト" aria-label="ログアウト">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17v-3H3v-4h7V7l5 5-5 5Zm2-14h7a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-7v-2h7V5h-7V3Z"/></svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <div class="shell-main">
+      <header class="topbar">
+        <button id="menu-button" class="icon-button menu-button" aria-label="メニューを開く">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18v2H3V6Zm0 5h18v2H3v-2Zm0 5h18v2H3v-2Z"/></svg>
+        </button>
+        <form id="global-search" class="global-search" role="search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16Zm0-14a6 6 0 1 0 0 12 6 6 0 0 0 0-12Zm6.32 12.9 1.42-1.42 4.24 4.24-1.42 1.42-4.24-4.24Z"/></svg>
+          <input id="global-query" type="search" placeholder="顧客を検索（Ctrl+K）" autocomplete="off" aria-label="全体検索">
+        </form>
+        <div class="topbar-actions">
+          <button id="quick-create" class="button primary small">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z"/></svg>
+            <span>新規</span>
+          </button>
+          <span id="topbar-date" class="topbar-date"></span>
+        </div>
+      </header>
+      <main id="view" class="view" aria-live="polite"></main>
+    </div>
+  </div>
+  <div id="modal-root"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

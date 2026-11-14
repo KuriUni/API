@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111a2e">
+  <title>ログイン | TUTI CRM</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/login.js" defer></script>
+</head>
+<body class="login-body">
+  <main class="login-shell">
+    <section class="login-story">
+      <div class="login-brand"><span class="brand-mark">T</span><span><strong>TUTI</strong> CRM</span></div>
+      <div class="login-story-copy">
+        <p class="eyebrow light">CUSTOMER RELATIONSHIP MANAGEMENT</p>
+        <h1>顧客との<br><em>次の一手</em>が、<br>ひと目でわかる。</h1>
+        <p>顧客、連絡先、案件、活動履歴、タスクをひとつのワークスペースに。<br>チームの営業活動を、静かに前へ進めます。</p>
+      </div>
+      <div class="login-story-foot">
+        <span>顧客管理</span><span>パイプライン</span><span>活動履歴</span><span>タスク</span>
+      </div>
+    </section>
+    <section class="login-panel">
+      <div class="login-box">
+        <p class="eyebrow">WELCOME BACK</p>
+        <h2>ワークスペースにログイン</h2>
+        <p class="muted">登録済みの管理者アカウントでログインしてください。</p>
+        <form id="login-form" class="form-stack" action="/login" method="post" novalidate>
+          <label class="field">
+            <span>ユーザー名</span>
+            <input id="username" name="username" type="text" value="admin" autocomplete="username" required>
+          </label>
+          <label class="field">
+            <span>パスワード</span>
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <p id="login-error" class="form-error" role="alert" hidden></p>
+          <button id="login-submit" class="button primary wide" type="submit">ログイン</button>
+        </form>
+        <p id="demo-hint" class="demo-hint" hidden>デモ環境の初期パスワードは <code>demo</code> です。</p>
+        <p class="login-note">この画面はプロトタイプです。本番運用では <code>CRM_PASSWORD</code> と <code>CRM_SESSION_KEY</code> を必ず設定してください。</p>
+      </div>
+      <p class="login-copyright">TUTI CRM · Customer workspace</p>
+    </section>
+  </main>
+</body>
+</html>

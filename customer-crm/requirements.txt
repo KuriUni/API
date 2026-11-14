@@ -1,0 +1,4 @@
+# TUTI CRM runtime. Keep versions aligned with business-ops/requirements.txt.
+fastapi==0.162.2
+pydantic==2.14.2
+uvicorn==0.54.0
