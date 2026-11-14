@@ -7,11 +7,11 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DATA = tempfile.mkdtemp(prefix="crm-test-")
-os.environ.setdefault("CRM_DATA", DATA)
-os.environ.setdefault("CRM_PASSWORD", "test-password")
-os.environ.setdefault("CRM_SESSION_KEY", "test-session-key-" + "x" * 40)
-os.environ.setdefault("CRM_SEED", "1")
-os.environ.setdefault("CRM_SECURE_COOKIES", "0")
+os.environ["CRM_DATA"] = DATA
+os.environ["CRM_PASSWORD"] = "test-password"
+os.environ["CRM_SESSION_KEY"] = "test-session-key-" + "x" * 40
+os.environ["CRM_SEED"] = "1"
+os.environ["CRM_SECURE_COOKIES"] = "0"
 sys.path.insert(0, str(ROOT / "customer-crm"))
 
 import main  # noqa: E402
